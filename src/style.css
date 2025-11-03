@@ -99,7 +99,7 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
 .container { height: calc(100% - 32px); position: relative; }
 /* 所见模式：整体容器背景替换为专用色 */
 .container.wysiwyg { /* legacy overlay 标记，保留但不隐藏容器，避免误伤 */ }
-.container.wysiwyg-v2 { background: #e9edf5; }
+.container.wysiwyg-v2 { background: var(--wysiwyg-bg) !important; }
 
 .editor {
   width: 100%; height: 100%;
@@ -169,7 +169,15 @@ body > .block-menu { display: none !important; }
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--fg);
+  /* 居中与阅读宽度（对齐预览的 preview-body） */
+  max-width: 860px;
+  margin: 0 auto;
+  background: transparent;
+  box-sizing: border-box;
 }
+.container.wysiwyg-v2 .ProseMirror img,
+.container.wysiwyg-v2 .ProseMirror video { max-width: 100%; height: auto; }
+.container.wysiwyg-v2 .ProseMirror table { width: auto; max-width: 100%; }
 .container.wysiwyg-v2 .ProseMirror:focus { outline: none; }
 .container.wysiwyg-v2 .ProseMirror p { margin: 0.6em 0; }
 .container.wysiwyg-v2 .ProseMirror pre { background: rgba(127,127,127,0.08); padding: 10px; border-radius: 8px; overflow: auto; }
