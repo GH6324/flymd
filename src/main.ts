@@ -2907,12 +2907,12 @@ async function openUploaderDialog() {
   overlay.addEventListener('click', onOverlayClick)
 }
 
+// 库面板显示/隐藏：使用覆盖式抽屉，不再改动容器布局（避免编辑区被右移抖动）
 function showLibrary(show: boolean) {
   const lib = document.getElementById('library') as HTMLDivElement | null
-  const container = document.querySelector('.container') as HTMLDivElement | null
-  if (!lib || !container) return
-  if (show) { lib.classList.remove('hidden'); container.classList.add('with-library') }
-  else { lib.classList.add('hidden'); container.classList.remove('with-library') }
+  if (!lib) return
+  // 仅切换库自身的 hidden 类，不再在容器上加/减 with-library
+  lib.classList.toggle('hidden', !show)
 }
 
 async function pickLibraryRoot(): Promise<string | null> {
