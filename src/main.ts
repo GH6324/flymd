@@ -183,6 +183,8 @@ function stopDotBlink() {
 // 库侧栏选中状态
 let selectedFolderPath: string | null = null
 let selectedNodeEl: HTMLElement | null = null
+// 库面板停靠状态：true=固定在左侧并收缩编辑区；false=覆盖式抽屉
+let libraryDocked = false
 function selectLibraryNode(el: HTMLElement | null, path: string | null, isDir: boolean) {
   try {
     if (selectedNodeEl) selectedNodeEl.classList.remove('selected')
@@ -1180,6 +1182,18 @@ let _wheelHandlerRef: ((e: WheelEvent)=>void) | null = null
     if (elPath) elPath.textContent = '\u672a\u9009\u62e9\u5e93\u76ee\u5f55'
     if (elChoose) elChoose.textContent = '\u9009\u62e9\u5e93'
     if (elRefresh) elRefresh.textContent = '\u5237\u65b0'
+  } catch {}
+  // 动态插入“固定”按钮，允许切换覆盖/固定两种模式
+  try {
+    const hdr = library.querySelector('.lib-header') as HTMLDivElement | null
+    if (hdr && !document.getElementById('lib-pin')) {
+      const elPin = document.createElement('button') as HTMLButtonElement
+      elPin.className = 'lib-btn'
+      elPin.id = 'lib-pin'
+      hdr.appendChild(elPin)
+      ;(async () => { try { libraryDocked = await getLibraryDocked(); elPin.textContent = libraryDocked ? '\\u53d6\\u6d88\\u56fa\\u5b9a' : '\\u56fa\\u5b9a'; applyLibraryLayout() } catch {} })()
+      elPin.addEventListener('click', () => { void setLibraryDocked(!libraryDocked) })
+    }
   } catch {}
         // 重新创建关于对话框并挂载
         const about = document.createElement('div')
@@ -2908,11 +2922,39 @@ async function openUploaderDialog() {
 }
 
 // 库面板显示/隐藏：使用覆盖式抽屉，不再改动容器布局（避免编辑区被右移抖动）
+function applyLibraryLayout() {
+  try {
+    const lib = document.getElementById('library') as HTMLDivElement | null
+    const container = document.querySelector('.container') as HTMLDivElement | null
+    if (!lib || !container) return
+    const visible = !lib.classList.contains('hidden')
+    // 仅当可见且为“固定”模式时，才给容器加 with-library，使编辑区缩进让位
+    if (visible && libraryDocked) container.classList.add('with-library')
+    else container.classList.remove('with-library')
+  } catch {}
+}
+
+// 库面板显示/隐藏：使用覆盖式抽屉为默认；若开启“固定”，则并排显示
 function showLibrary(show: boolean) {
   const lib = document.getElementById('library') as HTMLDivElement | null
   if (!lib) return
-  // 仅切换库自身的 hidden 类，不再在容器上加/减 with-library
   lib.classList.toggle('hidden', !show)
+  applyLibraryLayout()
+}
+
+async function setLibraryDocked(docked: boolean) {
+  libraryDocked = !!docked
+  try { if (store) { await store.set('libraryDocked', libraryDocked); await store.save() } } catch {}
+  // 更新按钮文案
+  try {
+    const btn = document.getElementById('lib-pin') as HTMLButtonElement | null
+    if (btn) btn.textContent = libraryDocked ? '\u53d6\u6d88\u56fa\u5b9a' : '\u56fa\u5b9a'
+  } catch {}
+  applyLibraryLayout()
+}
+
+async function getLibraryDocked(): Promise<boolean> {
+  try { if (!store) return libraryDocked; const v = await store.get('libraryDocked'); return !!v } catch { return libraryDocked }
 }
 
 async function pickLibraryRoot(): Promise<string | null> {
