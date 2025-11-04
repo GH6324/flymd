@@ -4094,14 +4094,14 @@ function bindEvents() {
       let wantSave = false
 
       try {
-        // 第一步：是否保存后退出？
-        const saveThenExit = await ask('检测到当前文档有未保存的更改。是否保存后退出？', { title: '退出确认' })
+        // 单次确认：是否保存后退出？
+        // 用户选"是"→保存并退出；选"否"→不保存直接退出
+        const saveThenExit = await ask('检测到当前文档有未保存的更改。是否保存后退出？\n\n选择"否"将放弃更改直接退出。', { title: '退出确认' })
         if (saveThenExit) {
           wantSave = true
         } else {
-          // 第二步：不保存直接退出？
-          const discard = await ask('不保存更改直接退出？', { title: '退出确认' })
-          shouldExit = !!discard
+          // 用户选择"否"，不保存直接退出
+          shouldExit = true
         }
       } catch (e) {
         // 插件不可用或权限不足时，降级到浏览器 confirm
