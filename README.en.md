@@ -56,6 +56,12 @@ UI/UX
 - Follow system light/dark theme; flicker‑free overlay preview
 - Window state is persisted
 
+Language Support
+- UI supports Chinese and English
+- Default “Auto” follows the system language; click the globe (🌍) next to “Extensions” to toggle (Auto / 中文 / English)
+- Coverage: top menus, sidebar tabs, dialogs, About, and key UI labels
+- Lightweight implementation with no extra runtime dependency
+
 Performance
 - Lazy load highlighter and renderer; pure TypeScript; lean event wiring
 
