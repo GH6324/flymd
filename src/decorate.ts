@@ -35,11 +35,7 @@ export function decorateCodeBlocks(preview: HTMLElement) {
             // 行高与字号（像素）
             const lhStr = cs.lineHeight
             const fsStr = cs.fontSize
-            const lsStr = cs.letterSpacing
-            // 同步字体大小、行高、字符间距，确保完美对齐
             if (lhStr && lhStr !== 'normal') lnWrap.style.lineHeight = lhStr
-            if (fsStr) lnWrap.style.fontSize = fsStr
-            if (lsStr && lsStr !== 'normal') lnWrap.style.letterSpacing = lsStr
             const lh = parseFloat(lhStr || '0')
             const fs = parseFloat(fsStr || '0')
             const pt = parseFloat(csPre.paddingTop || '0')

@@ -1049,10 +1049,13 @@ html, body { overflow: hidden; }
   top: 0; bottom: 0; left: 0;
   width: 3.5em;                /* 预留固定列宽 */
   padding-left: 0.6em;         /* 数字向内缩进，贴齐左侧 */
-  /* padding-top 由JS动态计算设置，确保精确对齐 */
+  padding-top: 20px !important; /* 强制与pre的padding-top一致，不使用JS计算 */
   box-sizing: border-box;
   color: var(--code-muted);
-  /* font-size 和 line-height 由JS动态读取code元素的计算样式并设置，避免CSS覆盖 */
+  /* 所有影响行高的属性必须与代码完全一致 */
+  font-size: 14px !important;
+  line-height: 1.7 !important; /* 与代码行高一致，避免累积误差 */
+  letter-spacing: 0.02em;      /* 与代码字符间距一致，避免累积误差 */
   font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-variant-numeric: tabular-nums; /* 等宽数字，纵向对齐更整齐 */
   text-align: right;
@@ -1062,7 +1065,6 @@ html, body { overflow: hidden; }
   user-select: none;
   border-right: 1px solid var(--code-border);
   padding-right: 0.8em;
-  /* 不设置 line-height、font-size、letter-spacing，让JS动态计算以确保完美对齐 */
 }
 .codebox .code-lnums .ln { display: block; }
 /* 为行号列让出内边距，避免覆盖代码文本 */
