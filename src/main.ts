@@ -549,6 +549,61 @@ initPlatformIntegration().catch((e) => console.error('[Platform] Initialization 
 const editor = document.getElementById('editor') as HTMLTextAreaElement
 const preview = document.getElementById('preview') as HTMLDivElement
 const filenameLabel = document.getElementById('filename') as HTMLDivElement
+// 任务列表：扫描与回写（阅读模式）
+let _taskMapLast: Array<{ line: number; ch: number }> = []
+let _taskEventsBound = false
+
+function scanTaskList(md: string): Array<{ line: number; ch: number }> {
+  try {
+    const lines = String(md || '').split('\n')
+    const out: Array<{ line: number; ch: number }> = []
+    let fenceOpen = false
+    let fenceCh = ''
+    for (let i = 0; i < lines.length; i++) {
+      const s = lines[i]
+      const mFence = s.match(/^ {0,3}(`{3,}|~{3,})/)
+      if (mFence) {
+        const ch = mFence[1][0]
+        if (!fenceOpen) { fenceOpen = true; fenceCh = ch } else if (ch === fenceCh) { fenceOpen = false; fenceCh = '' }
+      }
+      if (fenceOpen) continue
+      const m = s.match(/^(\s*)(?:[-+*]|\d+[.)])\s+\[( |x|X)\]\s+/)
+      if (!m) continue
+      const start = m[1].length
+      const bpos = s.indexOf('[', start) + 1
+      if (bpos <= 0) continue
+      out.push({ line: i, ch: bpos })
+    }
+    return out
+  } catch { return [] }
+}
+
+function onTaskCheckboxChange(ev: Event) {
+  try {
+    if (wysiwyg) return
+    const el = ev.target as HTMLInputElement | null
+    if (!el || el.type !== 'checkbox') return
+    if (!(el.classList && el.classList.contains('task-list-item-checkbox'))) return
+    const id = Number((el as any).dataset?.taskId ?? -1)
+    if (!Number.isFinite(id) || id < 0) return
+    const map = _taskMapLast || []
+    const m = map[id]
+    if (!m) return
+    const content = String((editor as HTMLTextAreaElement).value || '')
+    const lines = content.split('\n')
+    const ln = lines[m.line] || ''
+    const idx = m.ch >>> 0
+    if (!(idx > 0 && idx < ln.length)) return
+    const before = ln.slice(0, idx)
+    const after = ln.slice(idx + 1)
+    const nextCh = el.checked ? 'x' : ' '
+    lines[m.line] = before + nextCh + after
+    ;(editor as HTMLTextAreaElement).value = lines.join('\n')
+    try { (window as any).dirty = true } catch {}
+    try { refreshTitle(); refreshStatus() } catch {}
+    try { renderPreview() } catch {}
+  } catch {}
+}
 const status = document.getElementById('status') as HTMLDivElement
 
 // 所见模式：输入即渲染 + 覆盖式同窗显示
@@ -654,7 +709,7 @@ async function renderPreviewLight() {
   }
   const safe = sanitizeHtml!(html, {
     ADD_TAGS: ['svg','path','circle','rect','line','polyline','polygon','g','text','tspan','defs','marker','use','clipPath','mask','pattern','foreignObject'],
-    ADD_ATTR: ['viewBox','xmlns','fill','stroke','stroke-width','d','x','y','x1','y1','x2','y2','cx','cy','r','rx','ry','width','height','transform','class','id','style','points','preserveAspectRatio','markerWidth','markerHeight','refX','refY','orient','markerUnits','fill-opacity','stroke-dasharray','data-pos-start','data-line'],
+    ADD_ATTR: ['viewBox','xmlns','fill','stroke','stroke-width','d','x','y','x1','y1','x2','y2','cx','cy','r','rx','ry','width','height','transform','class','id','style','points','preserveAspectRatio','markerWidth','markerHeight','refX','refY','orient','markerUnits','fill-opacity','stroke-dasharray','data-pos-start','data-line','for','type','checked','disabled','value','aria-checked','role','data-task-id'],
     KEEP_CONTENT: true,
     RETURN_DOM: false,
     RETURN_DOM_FRAGMENT: false,
@@ -1687,6 +1742,53 @@ async function initStore() {
 }
 
 // 延迟加载高亮库并创建 markdown-it
+// 任务列表（阅读模式）：将 "- [ ]" / "- [x]" 渲染为复选框
+function applyMdTaskListPlugin(md: any) {
+  try {
+    md.core.ruler.after('inline', 'task-list', function (state: any) {
+      try {
+        const tokens = state.tokens || []
+        const TokenCtor = state.Token
+        for (let i = 0; i < tokens.length; i++) {
+          const tInline = tokens[i]
+          if (!tInline || tInline.type !== 'inline') continue
+          // 寻找前置 list_item_open（兼容是否有 paragraph_open）
+          let liIdx = -1
+          const tPrev = tokens[i - 1]
+          const tPrev2 = tokens[i - 2]
+          if (tPrev && tPrev.type === 'paragraph_open' && tPrev2 && tPrev2.type === 'list_item_open') liIdx = i - 2
+          else if (tPrev && tPrev.type === 'list_item_open') liIdx = i - 1
+          if (liIdx < 0) continue
+          const tLiOpen = tokens[liIdx]
+          const children = (tInline.children || [])
+          if (children.length === 0) continue
+          const first = children[0]
+          if (!first || first.type !== 'text') continue
+          const m = (first.content || '').match(/^(\s*)\[( |x|X)\]\s+/)
+          if (!m) continue
+          try { tLiOpen.attrJoin('class', 'task-list-item') } catch {}
+          try {
+            const level = tLiOpen.level - 1
+            for (let j = liIdx - 1; j >= 0; j--) {
+              const tj = tokens[j]
+              if (!tj) continue
+              if ((tj.type === 'bullet_list_open' || tj.type === 'ordered_list_open') && tj.level === level) { try { tj.attrJoin('class', 'task-list') } catch {}; break }
+            }
+          } catch {}
+          try {
+            first.content = (first.content || '').replace(/^(\s*)\[(?: |x|X)\]\s+/, '')
+            const box = new TokenCtor('html_inline', '', 0)
+            const checked = (m[2] || '').toLowerCase() === 'x'
+            box.content = `<input class="task-list-item-checkbox" type="checkbox"${checked ? ' checked' : ''}>`
+            children.unshift(box)
+            tInline.children = children
+          } catch {}
+        }
+      } catch {}
+      return false
+    })
+  } catch {}
+}
 async function ensureRenderer() {
   if (md) return
   if (!hljsLoaded) {
@@ -1720,6 +1822,7 @@ async function ensureRenderer() {
     try {
       const katexPlugin = (await import('./plugins/markdownItKatex')).default as any
       if (typeof katexPlugin === 'function') md.use(katexPlugin)
+      try { applyMdTaskListPlugin(md) } catch {}
     } catch (e) {
       console.warn('markdown-it-katex 加载失败：', e)
     }
@@ -1865,7 +1968,7 @@ async function renderPreview() {
   const safe = sanitizeHtml!(html, {
     // 允许基础 SVG/Math 相关标签
     ADD_TAGS: ['svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g', 'text', 'tspan', 'defs', 'marker', 'use', 'clipPath', 'mask', 'pattern', 'foreignObject'],
-    ADD_ATTR: ['viewBox', 'xmlns', 'fill', 'stroke', 'stroke-width', 'd', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'transform', 'class', 'id', 'style', 'points', 'preserveAspectRatio', 'markerWidth', 'markerHeight', 'refX', 'refY', 'orient', 'markerUnits', 'fill-opacity', 'stroke-dasharray', 'data-pos-start', 'data-line'],
+    ADD_ATTR: ['viewBox','xmlns','fill','stroke','stroke-width','d','x','y','x1','y1','x2','y2','cx','cy','r','rx','ry','width','height','transform','class','id','style','points','preserveAspectRatio','markerWidth','markerHeight','refX','refY','orient','markerUnits','fill-opacity','stroke-dasharray','data-pos-start','data-line','for','type','checked','disabled','value','aria-checked','role','data-task-id'],
     KEEP_CONTENT: true,
     RETURN_DOM: false,
     RETURN_DOM_FRAGMENT: false,
@@ -1893,6 +1996,17 @@ async function renderPreview() {
     const buf = document.createElement('div') as HTMLDivElement
     buf.className = 'preview-body'
     buf.innerHTML = safe
+    // 任务列表映射与事件绑定（仅阅读模式）
+    try {
+      if (!wysiwyg) {
+        const _rawForTasks = (editor as HTMLTextAreaElement).value
+        const taskMapNow = scanTaskList(_rawForTasks)
+        const boxes = Array.from(buf.querySelectorAll('input.task-list-item-checkbox')) as HTMLInputElement[]
+        boxes.forEach((el, i) => { try { (el as HTMLInputElement).setAttribute('type','checkbox') } catch {}; try { (el as any).dataset.taskId = String(i) } catch {} })
+        _taskMapLast = taskMapNow
+        if (!_taskEventsBound) { try { preview.addEventListener('click', onTaskCheckboxChange as any, true); preview.addEventListener('change', onTaskCheckboxChange, true) } catch {} ; _taskEventsBound = true }
+      }
+    } catch {}
     try {
       const codeBlocks = buf.querySelectorAll('pre > code.language-mermaid') as NodeListOf<HTMLElement>
       codeBlocks.forEach((code) => {
@@ -5747,6 +5861,8 @@ async function loadAndActivateEnabledPlugins(): Promise<void> {
 
 // 将所见模式开关暴露到全局，便于在 WYSIWYG V2 覆盖层中通过双击切换至源码模式
 try { (window as any).flymdSetWysiwygEnabled = async (enable: boolean) => { try { await setWysiwygEnabled(enable) } catch (e) { console.error('flymdSetWysiwygEnabled 调用失败', e) } } } catch {}
+
+
 
 
 

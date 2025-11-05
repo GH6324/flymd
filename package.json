@@ -44,6 +44,7 @@
     "markdown-it-katex": "^2.0.3",
     "mermaid": "^11.10.0",
     "pdfjs-dist": "^5.4.394",
-    "punycode": "^2.3.0"
+    "punycode": "^2.3.0",
+    "markdown-it-task-lists": "^2.1.1"
   }
 }

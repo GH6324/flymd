@@ -436,6 +436,10 @@ body > .block-menu { display: none !important; }
 
 /* Markdown 基础排版（预览） */
 .preview h1,.preview h2,.preview h3,.preview h4,.preview h5,.preview h6 { margin: 1.2em 0 0.6em; }
+/* 任务列表（GFM） */
+.preview-body ul.task-list, .preview-body ol.task-list { list-style: none; padding-left: 1.2em; }
+.preview-body li.task-list-item { list-style: none; }
+.preview-body input.task-list-item-checkbox { margin-right: .5em; vertical-align: middle; }
 .preview p { margin: 0.6em 0; }
 .preview pre { background: var(--code-bg); border: 1px solid var(--code-border); padding: 16px; border-radius: 8px; overflow: auto; }
 .preview code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background: var(--code-bg); border: 1px solid var(--code-border); padding: 2px 6px; border-radius: 4px; }
