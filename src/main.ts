@@ -4273,7 +4273,216 @@ function bindEvents() {
   if (btnSave) btnSave.addEventListener('click', guard(() => saveFile()))
   if (btnSaveas) btnSaveas.addEventListener('click', guard(() => saveAs()))
   if (btnToggle) btnToggle.addEventListener('click', guard(() => toggleMode()))
-  if (btnWysiwyg) btnWysiwyg.addEventListener('click', guard(() => toggleWysiwyg()))  // 编辑模式：Tab/Shift+Tab 段落缩进/反缩进
+  if (btnWysiwyg) btnWysiwyg.addEventListener('click', guard(() => toggleWysiwyg()))
+  // 查找替换对话框（编辑模式，Ctrl+H）
+  let _findPanel: HTMLDivElement | null = null
+  let _findInput: HTMLInputElement | null = null
+  let _replaceInput: HTMLInputElement | null = null
+  let _findCase: HTMLInputElement | null = null
+  let _lastFind = ''
+  function ensureFindPanel() {
+    if (_findPanel) return
+    const panel = document.createElement('div')
+    panel.id = 'find-replace-panel'
+    panel.style.position = 'fixed'
+    panel.style.right = '16px'
+    panel.style.top = '56px'
+    panel.style.zIndex = '9999'
+    panel.style.background = 'var(--bg)'
+    panel.style.color = 'var(--fg)'
+    panel.style.border = '1px solid var(--border)'
+    panel.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15)'
+    panel.style.borderRadius = '8px'
+    panel.style.padding = '10px 12px'
+    panel.style.display = 'none'
+    panel.style.minWidth = '300px'
+    panel.innerHTML = 
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+        <input id="find-text" type="text" placeholder="查找... (Enter=下一个, Shift+Enter=上一个)" style="flex:1; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--fg);" />
+        <label title="区分大小写" style="display:flex; align-items:center; gap:4px; user-select:none;">
+          <input id="find-case" type="checkbox" />Aa
+        </label>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input id="replace-text" type="text" placeholder="替换为..." style="flex:1; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--fg);" />
+        <button id="btn-find-prev" style="padding:6px 8px;">上一个</button>
+        <button id="btn-find-next" style="padding:6px 8px;">下一个</button>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+        <button id="btn-replace" style="padding:6px 10px;">替换</button>
+        <button id="btn-replace-all" style="padding:6px 10px;">全部替换</button>
+        <button id="btn-close-find" style="margin-left:auto; padding:6px 10px;">关闭 (Esc)</button>
+      </div>
+    
+    document.body.appendChild(panel)
+    _findPanel = panel
+    _findInput = panel.querySelector('#find-text') as HTMLInputElement
+    _replaceInput = panel.querySelector('#replace-text') as HTMLInputElement
+    _findCase = panel.querySelector('#find-case') as HTMLInputElement
+    const btnPrev = panel.querySelector('#btn-find-prev') as HTMLButtonElement
+    const btnNext = panel.querySelector('#btn-find-next') as HTMLButtonElement
+    const btnRep = panel.querySelector('#btn-replace') as HTMLButtonElement
+    const btnAll = panel.querySelector('#btn-replace-all') as HTMLButtonElement
+    const btnClose = panel.querySelector('#btn-close-find') as HTMLButtonElement
+
+    function norm(s: string) { return (_findCase?.checked ? s : s.toLowerCase()) }
+    function getSel() { return { s: editor.selectionStart >>> 0, e: editor.selectionEnd >>> 0 } }
+    function setSel(s: number, e: number) { editor.selectionStart = s; editor.selectionEnd = e; try { editor.focus() } catch {} }
+
+    function findNext(fromCaret = true) {
+      const term = String(_findInput?.value || '')
+      if (!term) return
+      const val = String(editor.value || '')
+      const hay = norm(val)
+      const needle = norm(term)
+      const { s, e } = getSel()
+      const startPos = fromCaret ? Math.max(e, 0) : 0
+      let idx = hay.indexOf(needle, startPos)
+      if (idx < 0 && startPos > 0) idx = hay.indexOf(needle, 0) // 循环查找
+      if (idx >= 0) setSel(idx, idx + term.length)
+    }
+    function findPrev() {
+      const term = String(_findInput?.value || '')
+      if (!term) return
+      const val = String(editor.value || '')
+      const hay = norm(val)
+      const needle = norm(term)
+      const { s } = getSel()
+      const before = hay.slice(0, Math.max(s - 1, 0))
+      const idx = before.lastIndexOf(needle)
+      if (idx >= 0) setSel(idx, idx + term.length)
+    }
+    function replaceOne() {
+      const term = String(_findInput?.value || '')
+      const rep = String(_replaceInput?.value || '')
+      if (!term) return
+      const { s, e } = getSel()
+      const cur = editor.value.slice(s, e)
+      const match = (_findCase?.checked ? cur === term : cur.toLowerCase() === term.toLowerCase())
+      if (!match) { findNext(false); return }
+      const val = String(editor.value || '')
+      editor.value = val.slice(0, s) + rep + val.slice(e)
+      const pos = s + rep.length
+      setSel(pos, pos)
+      dirty = true; refreshTitle(); refreshStatus(); if (mode === 'preview') { void renderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
+      findNext(false)
+    }
+    function replaceAll() {
+      const term = String(_findInput?.value || '')
+      if (!term) return
+      const rep = String(_replaceInput?.value || '')
+      const val = String(editor.value || '')
+      const hay = norm(val)
+      const needle = norm(term)
+      if (!needle) return
+      let i = 0, changed = val, count = 0
+      if (_findCase?.checked) {
+        // 大小写敏感：直接遍历替换
+        for (;;) {
+          const idx = changed.indexOf(term, i)
+          if (idx < 0) break
+          changed = changed.slice(0, idx) + rep + changed.slice(idx + term.length)
+          i = idx + rep.length; count++
+        }
+      } else {
+        // 不区分大小写：逐段查找对齐替换
+        let pos = 0
+        while (pos < changed.length) {
+          const seg = changed.slice(pos)
+          const idx = seg.toLowerCase().indexOf(term.toLowerCase())
+          if (idx < 0) break
+          const real = pos + idx
+          changed = changed.slice(0, real) + rep + changed.slice(real + term.length)
+          pos = real + rep.length; count++
+        }
+      }
+      if (count > 0) {
+        editor.value = changed
+        const caret = Math.min(editor.value.length, editor.selectionEnd + rep.length)
+        setSel(caret, caret)
+        dirty = true; refreshTitle(); refreshStatus(); if (mode === 'preview') { void renderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
+      }
+    }
+
+    _findInput?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); if (ev.shiftKey) findPrev(); else findNext() } })
+    btnPrev?.addEventListener('click', () => findPrev())
+    btnNext?.addEventListener('click', () => findNext())
+    btnRep?.addEventListener('click', () => replaceOne())
+    btnAll?.addEventListener('click', () => replaceAll())
+    btnClose?.addEventListener('click', () => { panel.style.display = 'none'; try { editor.focus() } catch {} })
+  }
+  function showFindPanel() {
+    ensureFindPanel()
+    if (!_findPanel) return
+    // 选区文本用作初始查找词
+    try { const sel = editor.value.slice(editor.selectionStart >>> 0, editor.selectionEnd >>> 0); if (sel) { (_findInput as HTMLInputElement).value = sel; _lastFind = sel } } catch {}
+    _findPanel.style.display = 'block'
+    setTimeout(() => { try { (_findInput as HTMLInputElement).focus(); (_findInput as HTMLInputElement).select() } catch {} }, 0)
+  }
+
+  // 全局快捷键：Ctrl+H 打开查找替换
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    try {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'h') { e.preventDefault(); showFindPanel(); return }
+      if (e.key === 'Escape' && _findPanel && _findPanel.style.display !== 'none') { e.preventDefault(); _findPanel.style.display = 'none'; try { editor.focus() } catch {}; return }
+    } catch {}
+  })
+
+  // 编辑模式：成对标记补全（自动/环绕/跳过/成对删除）
+  try {
+    (editor as HTMLTextAreaElement).addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const openClose: Record<string, string> = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'", '': '', '*': '*', '_': '_' }
+      const closers = new Set(Object.values(openClose))
+      const ta = editor as HTMLTextAreaElement
+      const val = String(ta.value || '')
+      const s = ta.selectionStart >>> 0
+      const epos = ta.selectionEnd >>> 0
+
+      // 成对删除：Backspace 位于一对括号/引号之间
+      if (e.key === 'Backspace' && s === epos && s > 0 && s < val.length) {
+        const prev = val[s - 1]
+        const next = val[s]
+        if (openClose[prev] && openClose[prev] === next) {
+          e.preventDefault()
+          ta.value = val.slice(0, s - 1) + val.slice(s + 1)
+          ta.selectionStart = ta.selectionEnd = s - 1
+          dirty = true; try { refreshTitle(); refreshStatus() } catch {}
+          if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+          return
+        }
+      }
+
+      // 跳过右侧：输入右括号/引号，若当前位置已是相同字符，则只移动光标
+      if (closers.has(e.key) && s === epos && val[s] === e.key) {
+        e.preventDefault()
+        ta.selectionStart = ta.selectionEnd = s + 1
+        return
+      }
+
+      // 自动/环绕补全
+      const close = openClose[e.key]
+      if (!close) return
+      e.preventDefault()
+      if (s !== epos) {
+        // 环绕选区
+        const before = val.slice(0, s)
+        const mid = val.slice(s, epos)
+        const after = val.slice(epos)
+        ta.value = before + e.key + mid + close + after
+        ta.selectionStart = s + 1
+        ta.selectionEnd = s + 1 + mid.length
+      } else {
+        // 插入成对并定位中间
+        const before = val.slice(0, s)
+        const after = val.slice(epos)
+        ta.value = before + e.key + close + after
+        ta.selectionStart = ta.selectionEnd = s + 1
+      }
+      dirty = true; try { refreshTitle(); refreshStatus() } catch {}
+      if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+    })
+  } catch {}  // 编辑模式：Tab/Shift+Tab 段落缩进/反缩进
   try {
     (editor as HTMLTextAreaElement).addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key !== 'Tab' || e.ctrlKey || e.metaKey) return
@@ -5916,6 +6125,7 @@ async function loadAndActivateEnabledPlugins(): Promise<void> {
 
 // 将所见模式开关暴露到全局，便于在 WYSIWYG V2 覆盖层中通过双击切换至源码模式
 try { (window as any).flymdSetWysiwygEnabled = async (enable: boolean) => { try { await setWysiwygEnabled(enable) } catch (e) { console.error('flymdSetWysiwygEnabled 调用失败', e) } } } catch {}
+
 
 
 
