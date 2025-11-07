@@ -80,17 +80,18 @@ jobs:
 
       - name: Generate icons from flymd.png
         run: npx tauri icon ./flymd.png
-      - name: Build Tauri app (macOS)
+      - name: Install macOS DMG toolchain
         if: startsWith(matrix.platform, 'macos-')
-        run: npm run tauri:build -- --bundles dmg
-      - name: Build Tauri app (Windows)
-        if: matrix.platform == 'windows-latest'
-        run: npm run tauri:build -- --bundles nsis
-      - name: Build Tauri app (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: npm run tauri:build -- --bundles deb appimage
-
-      - name: Zip .app for convenience (macOS optional)
+        run: |
+          brew update || true
+          brew list create-dmg >/dev/null 2>&1 || brew install create-dmg
+          xcrun --find SetFile >/dev/null 2>&1 || sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer || true
+      - name: Build .app (macOS)
+        if: startsWith(matrix.platform, 'macos-')
+        env:
+          RUST_LOG: trace
+        run: npm run tauri:build -- --bundles app --verbose
+      - name: Zip .app for convenience (macOS)
         if: startsWith(matrix.platform, 'macos-')
         run: |
           APP_DIR="src-tauri/target/release/bundle/macos/flymd.app"
@@ -98,6 +99,44 @@ jobs:
           if [ -d "$APP_DIR" ]; then
             (cd "$OUT_DIR" && zip -qry flymd_${{ matrix.arch }}.app.zip flymd.app)
           fi
+      - name: Build DMG (macOS, with fallback)
+        if: startsWith(matrix.platform, 'macos-')
+        env:
+          RUST_LOG: trace
+        run: |
+          set -e
+          APP_DIR="src-tauri/target/release/bundle/macos/flymd.app"
+          DMG_DIR="src-tauri/target/release/bundle/dmg"
+          mkdir -p "$DMG_DIR"
+          echo "== Try tauri bundler (dmg) =="
+          if npm run tauri:build -- --bundles dmg --verbose; then
+            echo "Tauri DMG build OK"
+          else
+            echo "::warning::Tauri DMG failed. Fallback to create-dmg"
+            brew list create-dmg >/dev/null 2>&1 || brew install create-dmg
+            OUT_DMG="$DMG_DIR/flymd_${{ matrix.arch }}.dmg"
+            if [ ! -d "$APP_DIR" ]; then
+              echo "::error::App not found for DMG fallback: $APP_DIR"
+              exit 1
+            fi
+            rm -f "$OUT_DMG"
+            create-dmg --overwrite --dmg-title "flymd" --volname "flymd" --icon-size 128 \
+              --app-drop-link 480 180 --icon "flymd.app" 160 180 \
+              "$OUT_DMG" "$APP_DIR" || { echo "::error::Fallback create-dmg failed"; ls -la "$DMG_DIR"; exit 1; }
+          fi
+      - name: Upload DMG workdir on failure
+        if: failure() && startsWith(matrix.platform, 'macos-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-workdir-${{ matrix.arch }}
+          path: src-tauri/target/release/bundle/dmg/
+
+      - name: Build Tauri app (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: npm run tauri:build -- --bundles nsis
+      - name: Build Tauri app (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: npm run tauri:build -- --bundles deb appimage
 
       - name: Create portable zip (Windows)
         if: matrix.platform == 'windows-latest'
@@ -168,3 +207,8 @@ jobs:
             flymd-macOS-x64/**/*
           draft: true
           generate_release_notes: true
+
+
+
+
+
