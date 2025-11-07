@@ -2,6 +2,12 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+
+## 即将发布 v0.1.9
+ - 新增: 文档库支持拖拽文档更换所属文件夹
+
+
+
 ## 更新 v0.1.8
 - 新增：支持另存为PDF
 - 新增：支持另存为Docx、Wps（不支持Mermaid）
