@@ -236,6 +236,19 @@
           }
           rememberPrev(); return
         }
+        // 中文输入法：连续输入两个￥/¥ 映射为 $$（用于 Markdown 数学环境）
+        // - 组合提交（一次性插入两个字符）
+        if (inserted === '\uFFE5\uFFE5' || inserted === '\u00A5\u00A5' || inserted === '\uFFE5\u00A5' || inserted === '\u00A5\uFFE5') {
+          const token = '$$'
+          if (hadSel) {
+            ta.value = prev.slice(0, a) + token + removed + token + prev.slice(prev.length - b)
+            ta.selectionStart = a + token.length; ta.selectionEnd = a + token.length + removed.length
+          } else {
+            ta.value = prev.slice(0, a) + token + token + prev.slice(prev.length - b)
+            ta.selectionStart = ta.selectionEnd = a + token.length
+          }
+          rememberPrev(); return
+        }
         // fence
         if (inserted === '```') {
           const content = hadSel ? ('\n' + removed + '\n') : ('\n\n')
@@ -251,6 +264,18 @@
           rememberPrev(); return
         }
         if (inserted.length === 1) {
+        // 连续两个￥/¥（逐个按键提交）：将左侧的 ￥/¥ + 当前 ￥/¥ 一起替换为 $$，并将光标置于两 $ 中间
+        if ((inserted === '\uFFE5' || inserted === '\u00A5') && a > 0) {
+          const L = prev.slice(a - 1, a)
+          if (L === '\uFFE5' || L === '\u00A5') {
+            const left = prev.slice(0, a - 1)
+            const right = prev.slice(prev.length - b)
+            const token = '$$'
+            ta.value = left + token + right
+            ta.selectionStart = ta.selectionEnd = (a - 1 + token.length)
+            rememberPrev(); return
+          }
+        }
         if (inserted === '*' || (inserted && inserted.charCodeAt(0) === 0xFF0A)) {
           // 仅在 compositionend 调用路径或无法区分时启用（依赖上方 skip 规则避免英文重复）
           if (a > 0 && prev.slice(a - 1, a + 1) === '**') {
