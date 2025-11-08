@@ -10,8 +10,6 @@
 
 
 
-https://github.com/user-attachments/assets/46a22746-5fae-4fe3-878a-6ef5ebcecdd7
-
 
 
 ## ✨ 项目特色
