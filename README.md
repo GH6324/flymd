@@ -1,4 +1,4 @@
-# 飞速MarkDown（flyMD）
+# 飞速MarkDown（FlyMD）
 
 [简体中文](README.md) | [English](README.en.md)
 
@@ -28,7 +28,7 @@
 - 自动同步：Webdav同步功能
 - 插件扩展：支持插件扩展功能，可以自行开发也可以一键安装已上架的扩展/插件
 - 格式支持：支持另存为PDF Docx Wps 
-## 📸 界面预览 0.0.4版本
+## 📸 界面预览 0.2.2版本
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/27fc876d-0b94-4a94-8733-a0cb7b05466b" width="32%" alt="Markdown Editor Screenshot 1"/>
