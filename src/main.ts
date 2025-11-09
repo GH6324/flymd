@@ -48,6 +48,42 @@ import { initPlatformIntegration, mobileSaveFile, isMobilePlatform } from './pla
 // 应用版本号（用于窗口标题/关于弹窗）
 const APP_VERSION: string = (pkg as any)?.version ?? '0.0.0'
 
+// ===== UI 缩放（Ctrl/Cmd + 滚轮） =====
+const UI_ZOOM_KEY = 'flymd:uiZoom'
+const UI_ZOOM_DEFAULT = 1.0
+const UI_ZOOM_MIN = 0.6
+const UI_ZOOM_MAX = 2.0
+const UI_ZOOM_STEP = 0.1
+
+function getUiZoom(): number {
+  try {
+    const v = localStorage.getItem(UI_ZOOM_KEY)
+    const n = v ? parseFloat(v) : NaN
+    if (Number.isFinite(n) && n >= UI_ZOOM_MIN && n <= UI_ZOOM_MAX) return n
+  } catch {}
+  return UI_ZOOM_DEFAULT
+}
+function saveUiZoom(z: number): void { try { localStorage.setItem(UI_ZOOM_KEY, String(z)) } catch {} }
+function clamp(n: number, a: number, b: number): number { return Math.max(a, Math.min(b, n)) }
+function applyUiZoom(): void {
+  try {
+    const scale = getUiZoom()
+    // 编辑器字号基准 14px
+    try { const ed = document.getElementById('editor') as HTMLTextAreaElement | null; if (ed) ed.style.fontSize = (14 * scale).toFixed(2) + 'px' } catch {}
+    // 预览/WYSIWYG 字号基准 16px
+    try { const pv = document.getElementById('preview') as HTMLDivElement | null; if (pv) pv.style.fontSize = (16 * scale).toFixed(2) + 'px' } catch {}
+    try { const pm = document.querySelector('#md-wysiwyg-root .ProseMirror') as HTMLElement | null; if (pm) pm.style.fontSize = (16 * scale).toFixed(2) + 'px' } catch {}
+  } catch {}
+}
+function setUiZoom(next: number): void {
+  const z = clamp(Math.round(next * 100) / 100, UI_ZOOM_MIN, UI_ZOOM_MAX)
+  saveUiZoom(z)
+  applyUiZoom()
+}
+function zoomIn(): void { setUiZoom(getUiZoom() + UI_ZOOM_STEP) }
+function zoomOut(): void { setUiZoom(getUiZoom() - UI_ZOOM_STEP) }
+function zoomReset(): void { setUiZoom(UI_ZOOM_DEFAULT) }
+
 type Mode = 'edit' | 'preview'
 type LibSortMode = 'name_asc' | 'name_desc' | 'mtime_asc' | 'mtime_desc'
 
@@ -1097,6 +1133,8 @@ async function setWysiwygEnabled(enable: boolean) {
         const __st = (editor as HTMLTextAreaElement).selectionStart >>> 0; let __mdInit = (editor as HTMLTextAreaElement).value; try { if (__st > 0 && __mdInit[__st-1] === '\n' && (__st < 2 || __mdInit[__st-2] !== '\n')) { const before = __mdInit.slice(0, __st-1); const after = __mdInit.slice(__st-1); if (!/  $/.test(before)) { __mdInit = before + '  ' + after } } } catch {} await enableWysiwygV2(root!, __mdInit, (mdNext) => { try { const _md = String(mdNext || '').replace(/\u2003/g,'&emsp;'); if (_md !== editor.value) { editor.value = _md; dirty = true; refreshTitle(); refreshStatus() } } catch {} })
         wysiwygV2Active = true
         if (container) { container.classList.remove('wysiwyg-v2-loading'); container.classList.add('wysiwyg-v2'); }
+        // 所见模式启用后应用当前缩放
+        try { applyUiZoom() } catch {}
         try { if (root) (root as HTMLElement).style.display = 'block' } catch {}
         try { preview.classList.add('hidden') } catch {}
         // 根据“库是否固定”应用布局：WYSIWYG V2 在固定库时仍占满全宽
@@ -1587,6 +1625,23 @@ const aboutBtn = document.createElement('div')
       } catch {}
 }
 const containerEl = document.querySelector('.container') as HTMLDivElement
+// Ctrl/Cmd + 滚轮：缩放/放大编辑、预览、所见模式字号
+try {
+  const wheelZoom = (e: WheelEvent) => {
+    try {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        const dy = e.deltaY || 0
+        if (dy < 0) zoomIn(); else if (dy > 0) zoomOut()
+      }
+    } catch {}
+  }
+  // 容器上监听，passive: false 以便阻止默认行为（浏览器页面缩放）
+  if (containerEl) containerEl.addEventListener('wheel', wheelZoom, { passive: false })
+} catch {}
+
+// 初始化应用缩放：读取已保存缩放并应用到编辑/预览/WYSIWYG
+try { applyUiZoom() } catch {}
 let _wheelHandlerRef: ((e: WheelEvent)=>void) | null = null
   if (containerEl) {
   // 修复在所见模式中滚轮无法滚动编辑区的问题：
