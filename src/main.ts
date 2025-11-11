@@ -3455,13 +3455,13 @@ async function openFile(preset?: string) {
       }
     }
 
-    let selected: any = preset ?? (await open({ multiple: false, filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] }))
+    // 兼容 macOS 场景：部分环境下 multiple:false 仍可能返回数组；若为数组取首个
+     let selected: any = preset ?? (await open({ multiple: false, filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] }))
     if (!selected) return
     if (Array.isArray(selected)) {
       if (selected.length < 1) return
       selected = selected[0]
     }
-
     const selectedPath = (typeof selected === 'string')
       ? selected
       : ((selected as any)?.path ?? (selected as any)?.filePath ?? String(selected))
@@ -3531,6 +3531,7 @@ async function openFile2(preset?: unknown) {
       }
     }
 
+    // 兼容 macOS 场景：部分环境下 multiple:false 仍可能返回数组；若为数组取首个
     let selected: any = (typeof preset === 'string')
       ? preset
       : (await open({ multiple: false, filters: [
@@ -3538,10 +3539,7 @@ async function openFile2(preset?: unknown) {
         { name: 'PDF', extensions: ['pdf'] },
       ] }))
     if (!selected) return
-    if (Array.isArray(selected)) {
-      if (selected.length < 1) return
-      selected = selected[0]
-    }
+    if (Array.isArray(selected)) { if (selected.length < 1) return; selected = selected[0] }
 
     const selectedPath = normalizePath(selected)
     logDebug('openFile2.selected', { typeof: typeof selected, selected })

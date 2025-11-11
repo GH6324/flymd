@@ -353,6 +353,34 @@ fn main() {
           }
         }
       }
+      // macOS：Finder 通过“打开方式/双击”传入的文件参数处理
+      #[cfg(target_os = "macos")]
+      {
+        use std::env;
+        use std::path::PathBuf;
+        use std::time::Duration;
+        if let Some(win) = app.get_webview_window("main") {
+          let args: Vec<PathBuf> = env::args_os().skip(1).map(PathBuf::from).collect();
+          if let Some(p) = args.into_iter().find(|p| {
+            if !p.exists() { return false; }
+            match p.extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()) {
+              Some(ext) => ext == "md" || ext == "markdown" || ext == "txt" || ext == "pdf",
+              None => false,
+            }
+          }) {
+            let win_clone = win.clone();
+            let path = p.to_string_lossy().to_string();
+            if let Some(state) = app.try_state::<PendingOpenPath>() {
+              if let Ok(mut slot) = state.0.lock() { *slot = Some(path.clone()); }
+            }
+            std::thread::spawn(move || {
+              std::thread::sleep(Duration::from_millis(500));
+              let _ = win_clone.emit("open-file", path);
+              let _ = win_clone.set_focus();
+            });
+          }
+        }
+      }
       // 其它初始化逻辑
       if let Some(win) = app.get_webview_window("main") {
         #[cfg(target_os = "windows")]
