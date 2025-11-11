@@ -1,8 +1,8 @@
 {
   "html": "<p>其他公告</p><ul><li>升级前建议备份重要数据</li><li>升级过程中请勿强制退出应用</li></ul>",
   "links": [
-    { "text": "作者博客", "href": "https://www.llingfei.com" },
-    { "text": "项目主页", "href": "https://github.com/flyhunterl/flymd" }
+    { "text": "官方网站", "href": "https://flymd.llingfei.com" },
+    { "text": "更新历史", "href": "https://github.com/flyhunterl/flymd/blob/main/ROADMAP.md" }
   ]
 }
 

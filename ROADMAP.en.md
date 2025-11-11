@@ -2,6 +2,10 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.2.5 (upcoming)
+- Added: Mermaid zoom support in Reading/WYSIWYG modes
+- Added: Export Mermaid as standalone SVG
+
 ## Update v0.2.4
 - Added: Editor/Plugin APIs to empower AI extensions (insert at cursor, streaming output, replace selection)
 - Added: Plugin store sorting and "Featured" badge styling

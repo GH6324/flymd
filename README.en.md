@@ -126,6 +126,7 @@ See: [ROADMAP.en.md](ROADMAP.en.md)
 ### Cross-platform Support
 - [x] Windows 10/11
 - [x] Linux (Desktop environment)
+- [x] macOS
 
 
 ## 🤝 Contributing
