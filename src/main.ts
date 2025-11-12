@@ -1153,6 +1153,8 @@ async function renderPreviewLight() {
   const safe = sanitizeHtml!(html, {
     ADD_TAGS: ['svg','path','circle','rect','line','polyline','polygon','g','text','tspan','defs','marker','use','clipPath','mask','pattern','foreignObject'],
     ADD_ATTR: ['viewBox','xmlns','fill','stroke','stroke-width','d','x','y','x1','y1','x2','y2','cx','cy','r','rx','ry','width','height','transform','class','id','style','points','preserveAspectRatio','markerWidth','markerHeight','refX','refY','orient','markerUnits','fill-opacity','stroke-dasharray','data-pos-start','data-line','for','type','checked','disabled','value','aria-checked','role','data-task-id'],
+    // 修复 KaTeX SVG 渲染：明确标记 SVG 属性为安全，避免被 ALLOWED_URI_REGEXP 过滤
+    ADD_URI_SAFE_ATTR: ['viewBox', 'd', 'xmlns', 'width', 'height', 'preserveAspectRatio', 'fill', 'stroke', 'stroke-width', 'transform', 'points'],
     KEEP_CONTENT: true,
     RETURN_DOM: false,
     RETURN_DOM_FRAGMENT: false,
@@ -2534,6 +2536,8 @@ async function renderPreview() {
     // 允许基础 SVG/Math 相关标签
     ADD_TAGS: ['svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g', 'text', 'tspan', 'defs', 'marker', 'use', 'clipPath', 'mask', 'pattern', 'foreignObject'],
     ADD_ATTR: ['viewBox','xmlns','fill','stroke','stroke-width','d','x','y','x1','y1','x2','y2','cx','cy','r','rx','ry','width','height','transform','class','id','style','points','preserveAspectRatio','markerWidth','markerHeight','refX','refY','orient','markerUnits','fill-opacity','stroke-dasharray','data-pos-start','data-line','for','type','checked','disabled','value','aria-checked','role','data-task-id'],
+    // 修复 KaTeX SVG 渲染：明确标记 SVG 属性为安全，避免被 ALLOWED_URI_REGEXP 过滤
+    ADD_URI_SAFE_ATTR: ['viewBox', 'd', 'xmlns', 'width', 'height', 'preserveAspectRatio', 'fill', 'stroke', 'stroke-width', 'transform', 'points'],
     KEEP_CONTENT: true,
     RETURN_DOM: false,
     RETURN_DOM_FRAGMENT: false,
