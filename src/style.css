@@ -2001,21 +2001,158 @@ textarea:focus {
 /* 保障标题栏总在侧栏之上，避免滚动时图标越界压住菜单 */
 .titlebar { position: relative; z-index: 20; }
 
+/* === 查找替换面板样式优化 === */
+#find-replace-panel {
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08) !important;
+  padding: 12px 14px !important;
+  min-width: 340px !important;
+}
+
+/* 输入框统一样式 */
+#find-replace-panel input[type="text"] {
+  padding: 7px 10px !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+  transition: all 0.2s ease !important;
+  outline: none !important;
+}
+
+#find-replace-panel input[type="text"]:focus {
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+}
+
+#find-replace-panel input[type="text"]::placeholder {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+/* 区分大小写复选框美化 */
+#find-replace-panel label {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: var(--muted) !important;
+  cursor: pointer !important;
+  padding: 4px 8px !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease !important;
+  white-space: nowrap !important;
+}
+
+#find-replace-panel label:hover {
+  background: rgba(127,127,127,0.08) !important;
+  color: var(--fg) !important;
+}
+
+#find-replace-panel input[type="checkbox"] {
+  cursor: pointer !important;
+  width: 15px !important;
+  height: 15px !important;
+  accent-color: #2563eb !important;
+}
+
+/* 按钮统一样式 */
+#find-replace-panel button {
+  padding: 7px 12px !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 8px !important;
+  background: rgba(127,127,127,0.05) !important;
+  color: var(--fg) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  white-space: nowrap !important;
+}
+
+#find-replace-panel button:hover {
+  background: rgba(127,127,127,0.12) !important;
+  border-color: var(--fg) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+
+#find-replace-panel button:active {
+  transform: translateY(0) !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06) !important;
+}
+
+/* 主要操作按钮强调色 */
+#find-replace-panel #btn-find-next,
+#find-replace-panel #btn-replace-all {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+  color: #fff !important;
+  border-color: #1d4ed8 !important;
+  font-weight: 600 !important;
+}
+
+#find-replace-panel #btn-find-next:hover,
+#find-replace-panel #btn-replace-all:hover {
+  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%) !important;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3) !important;
+}
+
+/* 关闭按钮特殊样式 */
+#find-replace-panel #btn-close-find {
+  color: var(--muted) !important;
+  border-color: var(--border) !important;
+}
+
+#find-replace-panel #btn-close-find:hover {
+  color: var(--fg) !important;
+  background: rgba(239,68,68,0.08) !important;
+  border-color: #ef4444 !important;
+}
+
+/* 行间距优化 */
+#find-replace-panel > div {
+  margin-bottom: 8px !important;
+}
+
+#find-replace-panel > div:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Ctrl+F 查找模式（隐藏替换功能） */
 #find-replace-panel[data-mode="find-only"] #replace-text,
 #find-replace-panel[data-mode="find-only"] #btn-replace,
 #find-replace-panel[data-mode="find-only"] #btn-replace-all {
-  display: none;
+  display: none !important;
 }
 
-/* Ctrl+F 查找模式下，把“上一个 / 下一个 / 关闭”三按钮挤到同一行 */
+/* Ctrl+F 查找模式下的布局优化 */
 #find-replace-panel[data-mode="find-only"] > div:nth-of-type(2) {
   display: inline-flex !important;
+  gap: 6px !important;
 }
+
 #find-replace-panel[data-mode="find-only"] > div:nth-of-type(3) {
   display: inline-flex !important;
   margin-top: 0 !important;
-  margin-left: 8px;
+  margin-left: 8px !important;
 }
+
 #find-replace-panel[data-mode="find-only"] #btn-close-find {
   margin-left: 8px !important;
+}
+
+/* 深色模式优化 */
+@media (prefers-color-scheme: dark) {
+  #find-replace-panel {
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3), 0 2px 8px rgba(0,0,0,0.2) !important;
+  }
+
+  #find-replace-panel input[type="text"] {
+    background: rgba(255,255,255,0.05) !important;
+  }
+
+  #find-replace-panel button {
+    background: rgba(255,255,255,0.08) !important;
+  }
+
+  #find-replace-panel button:hover {
+    background: rgba(255,255,255,0.14) !important;
+  }
 }
