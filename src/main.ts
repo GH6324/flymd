@@ -5584,9 +5584,89 @@ function bindEvents() {
     function getSel() { return { s: editor.selectionStart >>> 0, e: editor.selectionEnd >>> 0 } }
     function setSel(s: number, e: number) { editor.selectionStart = s; editor.selectionEnd = e; try { editor.focus() } catch {} }
 
+    // 阅读模式查找：使用浏览器原生查找 API
+    let _previewFindIndex = -1
+    let _previewFindMatches: Range[] = []
+
+    function findInPreview(term: string, caseSensitive: boolean, forward: boolean) {
+      try {
+        // 清除之前的高亮
+        const sel = window.getSelection()
+        if (sel) sel.removeAllRanges()
+
+        // 如果搜索词变了，重新收集匹配项
+        if (_lastFind !== term) {
+          _previewFindMatches = []
+          _previewFindIndex = -1
+          _lastFind = term
+
+          // 收集所有匹配项
+          const walker = document.createTreeWalker(
+            preview,
+            NodeFilter.SHOW_TEXT,
+            null
+          )
+
+          let node: Node | null
+          while ((node = walker.nextNode())) {
+            const text = node.textContent || ''
+            const searchText = caseSensitive ? text : text.toLowerCase()
+            const searchTerm = caseSensitive ? term : term.toLowerCase()
+
+            let pos = 0
+            while ((pos = searchText.indexOf(searchTerm, pos)) !== -1) {
+              const range = document.createRange()
+              range.setStart(node, pos)
+              range.setEnd(node, pos + term.length)
+              _previewFindMatches.push(range)
+              pos += term.length
+            }
+          }
+        }
+
+        if (_previewFindMatches.length === 0) return false
+
+        // 移动到下一个/上一个匹配项
+        if (forward) {
+          _previewFindIndex = (_previewFindIndex + 1) % _previewFindMatches.length
+        } else {
+          if (_previewFindIndex <= 0) {
+            _previewFindIndex = _previewFindMatches.length - 1
+          } else {
+            _previewFindIndex--
+          }
+        }
+
+        // 高亮当前匹配项
+        const range = _previewFindMatches[_previewFindIndex]
+        if (sel) {
+          sel.removeAllRanges()
+          sel.addRange(range)
+        }
+
+        // 滚动到可见区域
+        const rect = range.getBoundingClientRect()
+        if (rect.top < 0 || rect.bottom > window.innerHeight) {
+          range.startContainer.parentElement?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        }
+
+        return true
+      } catch (e) {
+        console.error('Preview find error:', e)
+        return false
+      }
+    }
+
     function findNext(fromCaret = true) {
       const term = String(_findInput?.value || '')
       if (!term) return
+
+      // 阅读模式：在预览区查找
+      if (mode === 'preview' && !wysiwyg) {
+        findInPreview(term, !!_findCase?.checked, true)
+        return
+      }
+
       if (wysiwyg) { try { wysiwygV2FindNext(term, !!_findCase?.checked) } catch {} ; return }
       const val = String(editor.value || '')
       const hay = norm(val)
@@ -5601,6 +5681,13 @@ function bindEvents() {
       // 上一个：严格在光标前搜索；未命中则循环到最后一个
       const term = String(_findInput?.value || '')
       if (!term) { if (wysiwyg) { try { (document.querySelector('#md-wysiwyg-root .ProseMirror') as HTMLElement)?.focus() } catch {} } else { try { editor.focus() } catch {} } ; return }
+
+      // 阅读模式：在预览区查找
+      if (mode === 'preview' && !wysiwyg) {
+        findInPreview(term, !!_findCase?.checked, false)
+        return
+      }
+
       if (wysiwyg) { try { wysiwygV2FindPrev(term, !!_findCase?.checked) } catch {} ; return }
       const val = String(editor.value || '')
       const hay = norm(val)
@@ -5620,6 +5707,11 @@ function bindEvents() {
       const term = String(_findInput?.value || '')
       const rep = String(_replaceInput?.value || '')
       if (!term) return
+      // 阅读模式不支持替换
+      if (mode === 'preview' && !wysiwyg) {
+        alert('阅读模式下不支持替换，请切换到编辑模式')
+        return
+      }
       if (wysiwyg) { try { wysiwygV2ReplaceOneSel(term, rep, !!_findCase?.checked) } catch {} ; return }
       const { s, e } = getSel()
       const cur = editor.value.slice(s, e)
@@ -5640,6 +5732,11 @@ function bindEvents() {
       const term = String(_findInput?.value || '')
       if (!term) return
       const rep = String(_replaceInput?.value || '')
+      // 阅读模式不支持替换
+      if (mode === 'preview' && !wysiwyg) {
+        alert('阅读模式下不支持替换，请切换到编辑模式')
+        return
+      }
       if (wysiwyg) { try { wysiwygV2ReplaceAllInDoc(term, rep, !!_findCase?.checked) } catch {} ; return }
       const ta = editor as HTMLTextAreaElement
       const val = String(ta.value || '')
