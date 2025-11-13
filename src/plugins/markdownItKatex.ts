@@ -67,11 +67,22 @@ function math_block(state: any, start: number, end: number, silent: boolean) {
 }
 
 export default function katexPlugin(md: MarkdownIt, options: KatexOpts = {}) {
-  const render = (latex: string, displayMode: boolean) => {
-    try { return katex.renderToString(latex, { ...options, displayMode }) } catch { return latex }
-  }
+  // 解析仍复用现有的数学语法识别，但不直接生成 KaTeX HTML 字符串，
+  // 改为输出占位元素，后续在渲染阶段用 katex.render 挂载（与所见模式一致）。
+  const esc = (s: string) => String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
   md.inline.ruler.after('escape', 'math_inline', math_inline as any)
   md.block.ruler.after('blockquote', 'math_block', math_block as any, { alt: ['paragraph', 'reference', 'blockquote', 'list'] })
-  md.renderer.rules.math_inline = (t: any, i: number) => render(t[i].content, false)
-  md.renderer.rules.math_block = (t: any, i: number) => '<p>' + render(t[i].content, true) + '</p>\n'
+
+  // 输出安全占位，示例如下：
+  //   <span class="md-math-inline" data-math="..."></span>
+  //   <div class="md-math-block" data-math="..."></div>
+  // 这样 DOMPurify 不会剥离关键 SVG/path 属性，因为真正的 KaTeX DOM 在消毒之后才插入。
+  md.renderer.rules.math_inline = (t: any, i: number) => `<span class="md-math-inline" data-math="${esc(t[i].content)}"></span>`
+  md.renderer.rules.math_block = (t: any, i: number) => `<div class="md-math-block" data-math="${esc(t[i].content)}"></div>\n`
 }

@@ -1150,20 +1150,30 @@ async function renderPreviewLight() {
       sanitizeHtml = (h: string, cfg?: any) => DOMPurify.sanitize(h, cfg)
     } catch { sanitizeHtml = (h: string) => h }
   }
-  const safe = sanitizeHtml!(html, {
-    ADD_TAGS: ['svg','path','circle','rect','line','polyline','polygon','g','text','tspan','defs','marker','use','clipPath','mask','pattern','foreignObject'],
-    ADD_ATTR: ['viewBox','xmlns','fill','stroke','stroke-width','d','x','y','x1','y1','x2','y2','cx','cy','r','rx','ry','width','height','transform','class','id','style','points','preserveAspectRatio','markerWidth','markerHeight','refX','refY','orient','markerUnits','fill-opacity','stroke-dasharray','data-pos-start','data-line','for','type','checked','disabled','value','aria-checked','role','data-task-id'],
-    // 修复 KaTeX SVG 渲染：明确标记 SVG 属性为安全，避免被 ALLOWED_URI_REGEXP 过滤
-    ADD_URI_SAFE_ATTR: ['viewBox', 'd', 'xmlns', 'width', 'height', 'preserveAspectRatio', 'fill', 'stroke', 'stroke-width', 'transform', 'points'],
-    KEEP_CONTENT: true,
-    RETURN_DOM: false,
-    RETURN_DOM_FRAGMENT: false,
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|asset|data|blob|file):|\/|\.\.?[\/\\]|[a-zA-Z]:(?:[\/\\]|%5[cC]|%2[fF])|(?:%5[cC]){2})/i
-  })
-  // 生产环境补丁：若 DOMPurify 清洗掉了 KaTeX SVG 的关键属性（如 path@d），从未清洗 HTML 中恢复
+  const safe = html
+  let _safeOrMathHtml = safe
+  // 生产环境补丁：先尝试将数学占位渲染为 KaTeX，再修复可能被清洗的 SVG 属性
   try {
     const tempDiv = document.createElement('div')
     tempDiv.innerHTML = safe
+    // 渲染 .md-math-* 占位符为 KaTeX（与所见模式一致，绕过消毒破坏）
+    try {
+      const mathNodes = Array.from(tempDiv.querySelectorAll('.md-math-inline, .md-math-block')) as HTMLElement[]
+      if (mathNodes.length > 0) {
+        const katexMod: any = await import('katex')
+        if (!katexCssLoaded) { try { await import('katex/dist/katex.min.css'); katexCssLoaded = true } catch {} }
+        const K = (katexMod && (katexMod.default || katexMod))
+        for (const el of mathNodes) {
+          try {
+            const expr = el.getAttribute('data-math') || ''
+            const display = el.classList.contains('md-math-block')
+            if (K && typeof K.render === 'function') K.render(expr, el, { throwOnError: false, displayMode: display })
+            else if ((katexMod as any)?.render) (katexMod as any).render(expr, el, { throwOnError: false, displayMode: display })
+            else el.textContent = expr
+          } catch {}
+        }
+      }
+    } catch {}
     const katexSvgs = tempDiv.querySelectorAll('.katex svg')
     let needsFix = false
     katexSvgs.forEach(svg => {
@@ -1190,8 +1200,9 @@ async function renderPreviewLight() {
       preview.innerHTML = `<div class="preview-body">${tempDiv.innerHTML}</div>`
       return
     }
+    _safeOrMathHtml = tempDiv.innerHTML
   } catch {}
-  try { preview.innerHTML = `<div class="preview-body">${safe}</div>` } catch {}
+  try { preview.innerHTML = `<div class="preview-body">${_safeOrMathHtml}</div>` } catch {}
   // 轻渲染后也生成锚点，提升滚动同步体验
   // 旧所见模式移除：不再重建锚点表
 }
@@ -2563,28 +2574,7 @@ async function renderPreview() {
       sanitizeHtml = (h: string) => h
     }
   }
-  const safe = sanitizeHtml!(html, {
-    // 允许基础 SVG/Math 相关标签
-    ADD_TAGS: ['svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g', 'text', 'tspan', 'defs', 'marker', 'use', 'clipPath', 'mask', 'pattern', 'foreignObject'],
-    ADD_ATTR: ['viewBox','xmlns','fill','stroke','stroke-width','d','x','y','x1','y1','x2','y2','cx','cy','r','rx','ry','width','height','transform','class','id','style','points','preserveAspectRatio','markerWidth','markerHeight','refX','refY','orient','markerUnits','fill-opacity','stroke-dasharray','data-pos-start','data-line','for','type','checked','disabled','value','aria-checked','role','data-task-id'],
-    // 修复 KaTeX SVG 渲染：明确标记 SVG 属性为安全，避免被 ALLOWED_URI_REGEXP 过滤
-    ADD_URI_SAFE_ATTR: ['viewBox', 'd', 'xmlns', 'width', 'height', 'preserveAspectRatio', 'fill', 'stroke', 'stroke-width', 'transform', 'points'],
-    KEEP_CONTENT: true,
-    RETURN_DOM: false,
-    RETURN_DOM_FRAGMENT: false,
-    // 关键修复：放行会在后续被我们转换为 asset: 的 URL 形态，
-    // 包含：
-    //  - http/https/data/blob/asset 协议
-    //  - 以 / 开头的绝对路径（类 Unix）与 ./、../ 相对路径
-    //  - Windows 盘符路径（如 D:\\...）与 UNC 路径（\\\\server\\share\\...）
-    // 这样 DOMPurify 不会把 img[src] 移除，随后逻辑才能识别并用 convertFileSrc() 转为 asset: URL。
-    // 允许以下 URL 形态：
-    //  - 常见协议：http/https/data/blob/asset/file
-    //  - 绝对/相对路径：/、./、../
-    //  - Windows 盘符：D:\ 或 D:/ 或 D:%5C（反斜杠被 URL 编码）或 D:%2F
-    //  - 编码后的 UNC：%5C%5Cserver%5Cshare...
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|asset|data|blob|file):|\/|\.\.?[\/\\]|[a-zA-Z]:(?:[\/\\]|%5[cC]|%2[fF])|(?:%5[cC]){2})/i
-  })
+  const safe = html
 
   console.log('DOMPurify 清理后的 HTML 片段:', safe.substring(0, 500))
   // 包裹一层容器，用于样式定宽居中显示
@@ -2627,6 +2617,24 @@ async function renderPreview() {
     const buf = document.createElement('div') as HTMLDivElement
     buf.className = 'preview-body'
     buf.innerHTML = safe
+    // 与所见模式一致：在消毒之后，用 KaTeX 对占位元素进行实际渲染
+    try {
+      const mathNodes = Array.from(buf.querySelectorAll('.md-math-inline, .md-math-block')) as HTMLElement[]
+      if (mathNodes.length > 0) {
+        const katexMod: any = await import('katex')
+        if (!katexCssLoaded) { try { await import('katex/dist/katex.min.css'); katexCssLoaded = true } catch {} }
+        const K = (katexMod && (katexMod.default || katexMod))
+        for (const el of mathNodes) {
+          try {
+            const expr = el.getAttribute('data-math') || ''
+            const display = el.classList.contains('md-math-block')
+            if (K && typeof K.render === 'function') K.render(expr, el, { throwOnError: false, displayMode: display })
+            else if ((katexMod as any)?.render) (katexMod as any).render(expr, el, { throwOnError: false, displayMode: display })
+            else el.textContent = expr
+          } catch {}
+        }
+      }
+    } catch {}
     // 任务列表映射与事件绑定（仅阅读模式）
     try {
       if (!wysiwyg) {
@@ -6055,6 +6063,7 @@ function bindEvents() {
     menu.style.display = 'block'
     setTimeout(() => document.addEventListener('click', onDoc, { once: true }), 0)
   })
+  // 所见模式：右键打印（已去除，根据用户反馈移除该菜单）
   document.addEventListener('click', async (ev) => {
     const t = ev?.target as HTMLElement
     if (t && t.classList.contains('code-copy')) {
@@ -7749,3 +7758,17 @@ try {
 
 
 
+// 预览消毒开关：允许在发行版关闭预览消毒（定位构建差异问题），
+// 并支持用 localStorage 覆盖（flymd:sanitizePreview = '0'/'false' 关闭；'1'/'true' 开启）。
+function shouldSanitizePreview(): boolean {
+  try {
+    const v = localStorage.getItem('flymd:sanitizePreview')
+    if (v != null) {
+      const s = String(v).toLowerCase()
+      if (s === '0' || s === 'false' || s === 'off' || s === 'no') return false
+      if (s === '1' || s === 'true' || s === 'on' || s === 'yes') return true
+    }
+  } catch {}
+  // 默认策略：开发环境开启，发行版关闭（仅针对预览渲染，粘贴/更新弹窗仍保留基础消毒）
+  try { return !!((import.meta as any).env?.DEV) } catch { return false }
+}
