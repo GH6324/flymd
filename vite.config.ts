@@ -32,8 +32,21 @@ export default defineConfig(({ mode }) => ({
     legalComments: 'none' // 移除许可注释，减小体积
   } : {},
   optimizeDeps: {
-    // 开发时预构建大型依赖，加快热更新
-    include: ['markdown-it', 'dompurify', 'highlight.js', 'mermaid', 'katex'],
+    // 开发时预构建大型依赖，加快热更新（仅影响 dev，不改变生产包）
+    include: [
+      'markdown-it',
+      'dompurify',
+      'highlight.js',
+      'mermaid',
+      'katex',
+      // 所见模式 V2 相关依赖：预构建提升 dev 首次启动和 HMR 速度
+      '@milkdown/core',
+      '@milkdown/kit',
+      '@milkdown/plugin-automd',
+      '@milkdown/plugin-math',
+      '@milkdown/preset-commonmark',
+      '@milkdown/preset-gfm'
+    ],
     exclude: []
   },
   build: {

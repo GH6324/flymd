@@ -33,11 +33,11 @@ trash = "3"
 futures-util = "0.3"
 
 [profile.release]
+# 说明：release 配置优先减小体积和启动时间，后续不要随意改动以免引入性能回退
 panic = "abort"
 codegen-units = 1
 opt-level = "z"
 lto = true
 strip = true
-
 
 
