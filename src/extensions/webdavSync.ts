@@ -10,18 +10,18 @@ import { openPath } from '@tauri-apps/plugin-opener'
 import { ask } from '@tauri-apps/plugin-dialog'
 import { t } from '../i18n'
 
-// 更新状态栏显示
+// 更新同步状态显示
 function updateStatus(msg: string) {
   try {
-    const el = document.getElementById('status')
+    const el = document.getElementById('sync-status')
     if (el) el.textContent = msg
   } catch {}
 }
 
-// 清空状态栏
+// 清空同步状态
 function clearStatus(delayMs: number = 1800) {
   try {
-    const el = document.getElementById('status')
+    const el = document.getElementById('sync-status')
     if (el) {
       setTimeout(() => {
         try { if (el) el.textContent = '' } catch {}

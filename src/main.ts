@@ -981,6 +981,7 @@ app.innerHTML = `
     <textarea id="editor" class="editor" spellcheck="false" placeholder="${t('editor.placeholder')}"></textarea>
     <div id="preview" class="preview hidden"></div>
     <div class="statusbar" id="status">${fmtStatus(1,1)}</div>
+    <div class="sync-status" id="sync-status"></div>
     <div class="status-zoom" id="status-zoom"><span id="zoom-label">100%</span> <button id="zoom-reset" title="重置缩放">重置</button></div>
   </div>
 `
