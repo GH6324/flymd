@@ -159,7 +159,7 @@ function bindDockResize(context, el) {
     if (!rz) return
     let sx = 0, sw = 0, doing = false
     rz.addEventListener('mousedown', (e) => { doing = true; sx = e.clientX; sw = parseInt(el.style.width)||300; e.preventDefault() })
-    WIN().addEventListener('mousemove', (e) => { if (!doing) return; const w = Math.max(240, sw + e.clientX - sx); el.style.width = w + 'px'; setDockPush(true) })
+    WIN().addEventListener('mousemove', (e) => { if (!doing) return; const w = Math.max(300, sw + e.clientX - sx); el.style.width = w + 'px'; setDockPush(true) })
     WIN().addEventListener('mouseup', async () => { if (!doing) return; doing = false; try { const cfg = await loadCfg(context); cfg.win = cfg.win || {}; cfg.win.w = parseInt(el.style.width)||300; await saveCfg(context, cfg) } catch {} })
   } catch {}
 }
@@ -423,7 +423,7 @@ async function mountWindow(context){
   if ((cfg && cfg.dock) !== false) {
     el.classList.add('dock-left')
     try { const bar = DOC().querySelector('.menubar'); const topH = ((bar && bar.clientHeight) || 0); el.style.top = topH + 'px'; el.style.height = 'calc(100vh - ' + topH + 'px)'; } catch { el.style.top = '0px'; el.style.height = '100vh' }
-    const sideW = Number((cfg && cfg.win && cfg.win.w) || 300)
+    const sideW = Math.max(300, Number((cfg && cfg.win && cfg.win.w) || 300))
     el.style.left = '0px'; el.style.width = sideW + 'px'
   } else {
     try { el.classList.remove('dock-left') } catch {}
@@ -551,7 +551,7 @@ async function toggleDockMode(context, el){
       // 切回侧栏
       el.classList.add('dock-left')
       try { const bar = DOC().querySelector('.menubar'); const topH = ((bar && bar.clientHeight) || 0); el.style.top = topH + 'px'; el.style.height = 'calc(100vh - ' + topH + 'px)'; } catch {}
-      const w = Number((cfg && cfg.win && cfg.win.w) || 300)
+      const w = Math.max(300, Number((cfg && cfg.win && cfg.win.w) || 300))
       el.style.left = '0px'; el.style.width = w + 'px'
       setDockPush(true)
     } else {
