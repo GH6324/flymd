@@ -205,7 +205,7 @@ async function dirHasSupportedDocRecursive(dir: string, allow: Set<string>, dept
 }
 
 function makeTg(): HTMLElement { const s = document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('viewBox','0 0 24 24'); s.classList.add('lib-tg'); const p=document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d','M9 6l6 6-6 6'); s.appendChild(p); return s as any }
-function makeFolderIcon(): HTMLElement { const s=document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('viewBox','0 0 24 24'); s.classList.add('lib-ico','lib-ico-folder'); const p=document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d','M3 7a 2 2 0 0 1 2-2h4l2 2h8a 2 2 0 0 1 2 2v7a 2 2 0 0 1-2 2H5a 2 2 0 0 1-2-2V7z'); s.appendChild(p); return s as any }
+function makeFolderIcon(): HTMLElement { const span=document.createElement('span'); span.className='lib-ico lib-ico-folder'; span.textContent='📁'; span.style.fontSize='16px'; return span as any }
 
 async function buildDir(root: string, dir: string, parent: HTMLElement) {
   parent.innerHTML = ''
