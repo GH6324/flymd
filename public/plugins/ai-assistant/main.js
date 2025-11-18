@@ -806,7 +806,7 @@ export async function openSettings(context){
     '<div id="ai-set-dialog">',
     ' <div id="ai-set-head"><div id="ai-set-title">AI 设置</div><button id="ai-set-close" title="关闭">×</button></div>',
     ' <div id="ai-set-body">',
-    '  <div class="set-row"><label>Base URL</label><select id="set-base-select"><option value="https://api.openai.com/v1">OpenAI</option><option value="https://api.siliconflow.cn/v1">硅基流动</option><option value="custom">自定义</option></select><input id="set-base" type="text" placeholder="https://api.openai.com/v1"/></div>',
+    '  <div class="set-row"><label>Base URL</label><select id="set-base-select"><option value="https://api.openai.com/v1">OpenAI</option><option value="https://api.siliconflow.cn/v1">硅基流动</option><option value="https://apic1.ohmycdn.com/api/v1/ai/openai/cc-omg/v1">OMG资源包</option><option value="custom">自定义</option></select><input id="set-base" type="text" placeholder="https://api.openai.com/v1"/></div>',
     '  <div class="set-row"><label>API Key</label><input id="set-key" type="password" placeholder="sk-..."/></div>',
     '  <div class="set-row"><label>模型</label><input id="set-model" type="text" placeholder="gpt-4o-mini"/></div>',
     '  <div class="set-row"><label>侧栏宽度(px)</label><input id="set-sidew" type="number" min="240" step="10" placeholder="300"/></div>',
@@ -838,6 +838,7 @@ export async function openSettings(context){
   if (elBaseSel) {
     const cur = String(cfg.baseUrl || '').trim()
     if (cur === 'https://api.siliconflow.cn/v1') elBaseSel.value = 'https://api.siliconflow.cn/v1'
+    else if (cur === 'https://apic1.ohmycdn.com/api/v1/ai/openai/cc-omg/v1') elBaseSel.value = 'https://apic1.ohmycdn.com/api/v1/ai/openai/cc-omg/v1'
     else if (!cur || cur === 'https://api.openai.com/v1') elBaseSel.value = 'https://api.openai.com/v1'
     else elBaseSel.value = 'custom'
     elBaseSel.addEventListener('change', () => {
