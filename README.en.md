@@ -49,6 +49,29 @@ A cross-platform WYSIWYG Markdown editor and PDF reader with image hosting, WebD
   - Safe preview: `markdown-it` rendering + `highlight.js` code highlighting + `DOMPurify` HTML sanitization, external links auto-add `target="_blank"` + `rel="noopener"`
   - Outline navigation: Extract Markdown `H1–H6` to generate clickable TOC, highlight current heading, preview and scroll sync
   - PDF Bookmarks (Outline): Built-in PDF reading and bookmark outline, cached per file and auto-invalidated on changes
+- iframe Embedding Support
+  - Flexible embedding: Embed iframe controls in Markdown to include videos, maps, online documents, and other external web content
+  - Simple syntax: Use HTML `<iframe>` tags directly with customizable width, height, and other attributes
+  - Usage examples:
+    ```html
+    <!-- Embed YouTube video -->
+    <iframe width="560" height="315"
+      src="https://www.youtube.com/embed/VIDEO_ID"
+      frameborder="0" allowfullscreen>
+    </iframe>
+
+    <!-- Embed online document -->
+    <iframe width="100%" height="500"
+      src="https://example.com/document"
+      frameborder="0">
+    </iframe>
+
+    <!-- Embed map -->
+    <iframe width="600" height="450"
+      src="https://www.openstreetmap.org/export/embed.html"
+      frameborder="0">
+    </iframe>
+    ```
 - Images & Hosting
   - One-step process: Paste/drag images auto-handled; prefer upload to S3/R2 and insert public URL; fallback to local save when unconfigured/failed
   - Local images just work: No extra configuration needed for preview

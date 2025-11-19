@@ -52,6 +52,32 @@
   - 安全预览：`markdown-it` 渲染 + `highlight.js` 代码高亮 + `DOMPurify` 清洗 HTML，外链自动追加 `target="_blank"` + `rel="noopener"`
   - 大纲导航：提取 Markdown `H1–H6` 生成可点击目录，高亮当前标题，预览与滚动同步
   - PDF 书签（Outline）：内置 PDF 阅读与书签大纲，按文件缓存并在修改时自动失效
+- iframe 嵌入支持
+  - 灵活嵌入：支持在 Markdown 中嵌入 iframe 控件，可以嵌入音乐、视频、地图、在线文档等外部网页内容
+  - 简单语法：直接使用 HTML `<iframe>` 标签，支持自定义宽度、高度等属性
+  - 示例用法：
+    ```html
+    <!-- 嵌入 YouTube 视频 -->
+    <iframe width="560" height="315"
+      src="https://www.youtube.com/embed/VIDEO_ID"
+      frameborder="0" allowfullscreen>
+    </iframe>
+
+    <!-- 嵌入在线文档 -->
+    <iframe width="100%" height="500"
+      src="https://example.com/document"
+      frameborder="0">
+    </iframe>
+
+    <!-- 嵌入地图 -->
+    <iframe width="600" height="450"
+      src="https://www.openstreetmap.org/export/embed.html"
+      frameborder="0">
+    </iframe>
+
+    <!-- 嵌入网易云音乐 -->
+    <iframe frameborder="no" border="0" marginwidth="0" marginheight="0" width=330 height=86 src="https://music.163.com/outchain/player?type=2&id=1424916458&auto=1&height=66"></iframe>
+    ```
 - 图片与图床
   - 一步到位：粘贴/拖拽图片自动处理；优先上传至 S3/R2 并插入公网 URL；未配置/失败时回退本地保存
   - 本地图片就地可见：无需额外配置即可预览
