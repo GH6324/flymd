@@ -6846,12 +6846,17 @@ function bindEvents() {
 
       // 1) 处理 HTML → Markdown（像 Typora 那样保留格式）
       try {
-        const hasHtmlType = (dt.types && Array.from(dt.types).some(t => String(t).toLowerCase() === 'text/html'))
+        const types = dt.types ? Array.from(dt.types) : []
+        const hasHtmlType = types.some(t => String(t).toLowerCase() === 'text/html')
         const html = hasHtmlType ? dt.getData('text/html') : ''
+        const plainText = dt.getData('text/plain') || dt.getData('text') || ''
         if (html && html.trim()) {
           // 粗略判断是否为“富文本”而非纯文本包装，避免过度拦截
           const looksRich = /<\s*(p|div|h[1-6]|ul|ol|li|pre|table|img|a|blockquote|strong|em|b|i|code)[\s>]/i.test(html)
           if (looksRich) {
+            // 这里必须同步阻止默认粘贴，避免出现“纯文本 + Markdown”双重插入
+            e.preventDefault()
+
             // 按需加载 DOMPurify 做一次基本清洗，避免恶意剪贴板 HTML 注入
             let safe = html
             // 提取 base href 以便相对链接转绝对（若存在）
@@ -6870,18 +6875,21 @@ function bindEvents() {
             } catch {}
 
             // 转成 Markdown 文本（动态导入）
+            let mdText = ''
             try {
               const { htmlToMarkdown } = await import('./html2md')
-              const mdText = htmlToMarkdown(safe, { baseUrl })
-              if (mdText && mdText.trim()) {
-                e.preventDefault()
-                insertAtCursor(mdText)
-                if (mode === 'preview') await renderPreview();
-                return
-              }
+              mdText = htmlToMarkdown(safe, { baseUrl }) || ''
             } catch (err) {
               console.warn('HTML to Markdown conversion failed:', err)
             }
+
+            // 转译失败时退回纯文本，保证不会“吃掉”粘贴内容
+            const finalText = (mdText && mdText.trim()) ? mdText : plainText
+            if (finalText) {
+              insertAtCursor(finalText)
+              if (mode === 'preview') await renderPreview()
+            }
+            return
           }
         }
       } catch {}
