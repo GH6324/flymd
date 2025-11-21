@@ -756,6 +756,77 @@ export function activate(context) {
 - 如果依赖其他插件，可以在 `manifest.json` 中说明依赖关系
 - 建议为基础设施插件提供完整的文档说明
 
+### context.getPreviewElement
+
+获取当前预览区域的 DOM 元素，用于导出、截图等高级功能。
+
+```javascript
+// 获取预览 DOM 元素
+const previewEl = context.getPreviewElement();
+
+if (previewEl) {
+  console.log('预览内容 HTML:', previewEl.innerHTML);
+  console.log('预览内容长度:', previewEl.innerText.length);
+
+  // 可以遍历预览中的元素（如 Mermaid 图表、KaTeX 公式等）
+  const svgList = previewEl.querySelectorAll('svg');
+  console.log('SVG 元素数量:', svgList.length);
+} else {
+  context.ui.notice('请先切换到阅读模式', 'err');
+}
+```
+
+**返回值：**
+- 成功时返回 `HTMLElement`（`.preview-body` 元素）
+- 失败或预览未渲染时返回 `null`
+
+**注意：**
+- 返回的是只读引用，建议克隆后再修改：`previewEl.cloneNode(true)`
+- 预览内容包含已渲染的 Mermaid 图表、KaTeX 公式、代码高亮等
+- 适用于导出 PPT、截图、内容分析等场景
+
+### context.saveFileWithDialog
+
+弹出系统保存对话框，让用户选择保存路径，并将二进制数据写入文件。
+
+```javascript
+// 保存二进制文件示例
+const pptxBytes = new Uint8Array([...]); // 你的 PPTX 数据
+
+try {
+  const savedPath = await context.saveFileWithDialog({
+    filters: [
+      { name: 'PowerPoint', extensions: ['pptx'] },
+      { name: '所有文件', extensions: ['*'] }
+    ],
+    defaultName: '演示文稿.pptx',
+    data: pptxBytes
+  });
+
+  if (savedPath) {
+    context.ui.notice('文件已保存到: ' + savedPath, 'ok');
+  } else {
+    context.ui.notice('用户取消保存', 'ok');
+  }
+} catch (error) {
+  context.ui.notice('保存失败: ' + error.message, 'err');
+}
+```
+
+**参数说明：**
+- `filters`（可选）：文件类型过滤器数组，每项包含 `name`（显示名称）和 `extensions`（扩展名数组）
+- `defaultName`（可选）：默认文件名
+- `data`（必需）：要保存的二进制数据（`Uint8Array`）
+
+**返回值：**
+- 保存成功时返回文件路径（`string`）
+- 用户取消时返回 `null`
+
+**注意：**
+- 仅在桌面版（Tauri 应用）可用，浏览器环境会抛出错误
+- 会弹出系统原生的保存对话框
+- 可用于导出 PPT、图片、压缩包等任意二进制文件
+
 ### 插件联动实战示例
 
 #### 场景：基础工具库 + 数据处理插件

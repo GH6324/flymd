@@ -8910,6 +8910,38 @@ async function activatePlugin(p: InstalledPlugin): Promise<void> {
         return null
       }
     },
+    // 获取预览 DOM 元素（用于导出等功能）
+    getPreviewElement: () => {
+      try {
+        return preview.querySelector('.preview-body') as HTMLElement | null
+      } catch (e) {
+        console.error(`[Plugin ${p.id}] getPreviewElement 失败:`, e)
+        return null
+      }
+    },
+    // 弹出保存对话框并保存二进制文件
+    saveFileWithDialog: async (opt: { filters?: Array<{ name: string, extensions: string[] }>, data: Uint8Array, defaultName?: string }) => {
+      try {
+        if (typeof save !== 'function' || typeof writeFile !== 'function') {
+          throw new Error('文件保存功能需要在 Tauri 应用中使用')
+        }
+        if (!opt || !opt.data) {
+          throw new Error('缺少 data 参数')
+        }
+        const target = await save({
+          filters: opt.filters || [{ name: '所有文件', extensions: ['*'] }],
+          defaultPath: opt.defaultName
+        })
+        if (!target) {
+          return null // 用户取消
+        }
+        await writeFile(target as any, opt.data as any)
+        return target as string
+      } catch (e) {
+        console.error(`[Plugin ${p.id}] saveFileWithDialog 失败:`, e)
+        throw e
+      }
+    },
   }
   try { (window as any).__pluginCtx__ = (window as any).__pluginCtx__ || {}; (window as any).__pluginCtx__[p.id] = ctx } catch {}
   if (typeof mod?.activate === 'function') {
