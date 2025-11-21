@@ -2,6 +2,15 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.3.7
+- Added: AI assistant now integrates with xxtui todo plugin, enabling "generate and create reminder" functionality via plugin API
+- Added: AI assistant extension now includes current time and time context from article content for better time-related Q&A accuracy
+- Added: AI assistant extension now has a right-click menu entry
+- Added: Extension system now supports inter-plugin communication API, allowing plugins to call each other
+- Added: xxtui todo push plugin now supports multi-key management with improved right-click menu experience
+- Improved: Fixed submenu expansion issues in extensions and optimized menu display logic
+- Improved: Updated plugin development documentation in both Chinese and English
+
 ## Update v0.3.6
 - Added: Built-in `xxtui todo push` extension to send todos from your document to xxtui in one click, with follow-up improvements to the todo menu UX and batched push behavior.
 - Added: Extension runtime now exposes a right-click menu API, along with a demo extension that showcases multiple menu items, nested submenus, and custom icons.
