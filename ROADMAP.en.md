@@ -2,6 +2,14 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.3.8
+- Added: The AI assistant now offers a "Free model" mode powered by a built-in SiliconFlow small model so newcomers can chat without configuring any API key.
+- Added: A new "Translate" action translates the current selection (or the entire document) into fluent Chinese and inserts the result as quotes/sections.
+- Added: Extension APIs expose `context.getPreviewElement` and `context.saveFileWithDialog`, enabling plugins to read the rendered preview DOM and open native save dialogs; the plugin guide includes matching examples.
+- Improved: The AI settings dialog switches to a toggle-based mode selector with warnings that clarify the trade-offs of the free model.
+- Improved: WebDAV sync scans remote folders with higher concurrency and shows upload/download/delete summaries inside the completion bubble for easier auditing.
+- Improved: The extensions list repositions the "standalone view" toggle on each card and the top toolbar hover animation is simplified for a steadier UI.
+
 ## Update v0.3.7
 - Added: AI assistant now integrates with xxtui todo plugin, enabling "generate and create reminder" functionality via plugin API
 - Added: AI assistant extension now includes current time and time context from article content for better time-related Q&A accuracy
@@ -292,4 +300,3 @@ This version focuses on stability and detail experience optimization, main chang
 - Added: LaTeX (based on KaTeX) rendering support
 - Added: Mermaid flowchart/sequence diagram etc. rendering support
 - Added shortcuts: Ctrl+B bold, Ctrl+I italic, Ctrl+K insert link
-
