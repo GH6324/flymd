@@ -1252,7 +1252,7 @@ export async function openSettings(context){
     ' <div id="ai-set-head"><div id="ai-set-title">AI 设置</div><button id="ai-set-close" title="关闭">×</button></div>',
     ' <div id="ai-set-body">',
     '  <div class="set-row mode-row"><label>模式</label><span class="mode-label" id="mode-label-custom">自定义</span><label class="toggle-switch"><input type="checkbox" id="set-provider-toggle"/><span class="toggle-slider"></span></label><span class="mode-label" id="mode-label-free">免费模型</span></div>',
-    '  <div class="free-warning" id="free-warning">免费小参数模型，体验较差，响应速度慢，有隐私泄露风险，仅供试用。</div>',
+    '  <div class="free-warning" id="free-warning">免费小参数模型由作者提供，使用硅基流动平台。响应速度较慢，仅供低强度使用，推荐注册硅基流动获得更好的体验。</div>',
     '  <div class="set-row custom-only"><label>Base URL</label><select id="set-base-select"><option value="https://api.openai.com/v1">OpenAI</option><option value="https://api.siliconflow.cn/v1">硅基流动</option><option value="https://apic1.ohmycdn.com/api/v1/ai/openai/cc-omg/v1">OMG资源包</option><option value="custom">自定义</option></select><input id="set-base" type="text" placeholder="https://api.openai.com/v1"/></div>',
     '  <div class="set-row custom-only"><label>API Key</label><input id="set-key" type="password" placeholder="sk-..."/></div>',
     '  <div class="set-row custom-only"><label>模型</label><input id="set-model" type="text" placeholder="gpt-4o-mini"/></div>',
