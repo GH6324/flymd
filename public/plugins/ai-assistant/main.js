@@ -63,6 +63,21 @@ function WIN(){ return (window.__AI_WIN__ || window) }
 function el(id) { return DOC().getElementById(id) }
 function lastUserMsg() { try { const arr = __AI_SESSION__.messages; for (let i = arr.length - 1; i >= 0; i--) { if (arr[i].role === 'user') return String(arr[i].content || '') } } catch {} return '' }
 function shorten(s, n){ const t = String(s||'').trim(); return t.length>n? (t.slice(0,n)+'…') : t }
+function isFreeProvider(cfg){ return !!cfg && cfg.provider === 'free' }
+function buildApiUrl(cfg){
+  const base = String((cfg && cfg.baseUrl) || 'https://api.openai.com/v1').trim()
+  // 免费代理模式：baseUrl 直接是完整代理地址
+  if (isFreeProvider(cfg)) return base
+  return base.replace(/\/$/, '') + '/chat/completions'
+}
+function buildApiHeaders(cfg){
+    const headers = { 'Content-Type':'application/json' }
+    // 免费代理模式：由后端持有真实 Key，这里不再下发
+    if (!isFreeProvider(cfg) && cfg && cfg.apiKey) headers.Authorization = 'Bearer ' + cfg.apiKey
+    // 为免费代理模式增加一个简单令牌，提高滥用成本（仅飞速MarkDown客户端约定使用）
+    if (isFreeProvider(cfg)) headers['X-Flymd-Token'] = 'flymd-client-2025-11-some-long-random'
+    return headers
+  }
 
 // 追加一段样式，使用独立命名空间，避免污染宿主
 function ensureCss() {
@@ -366,7 +381,7 @@ function isDefaultSessionName(name){
   return false
 }
 
-async function maybeNameCurrentSession(context, cfg, assistantText){
+  async function maybeNameCurrentSession(context, cfg, assistantText){
   try {
     if (!__AI_DB__) await loadSessionsDB(context)
     const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
@@ -378,8 +393,8 @@ async function maybeNameCurrentSession(context, cfg, assistantText){
     const sample = shorten(lastQ || assistantText || '', 80)
     const sys = '你是命名助手。任务：基于上下文，为对话生成一个简短的中文名称。要求：5-12个中文字符以内，不要标点、不要引号、不要编号。只输出名称本身。'
     const prompt = `文件/标题：${base}\n线索：${sample}`
-    const url = (cfg.baseUrl||'https://api.openai.com/v1').replace(/\/$/, '') + '/chat/completions'
-    const headers = { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + cfg.apiKey }
+      const url = buildApiUrl(cfg)
+      const headers = buildApiHeaders(cfg)
     const body = JSON.stringify({ model: cfg.model, stream: false, messages: [ { role:'system', content: sys }, { role:'user', content: prompt } ] })
     let name = ''
     try {
@@ -704,17 +719,18 @@ async function quick(context, kind){
   await sendFromInput(context)
 }
 
-async function generateTodosAndPush(context) {
+  async function generateTodosAndPush(context) {
   const GENERATING_MARKER = '[正在生成待办并创建提醒]\n\n'
   try {
-    const cfg = await loadCfg(context)
-    if (!cfg.apiKey) {
-      context.ui.notice('请先在"设置"中配置 API Key', 'err', 3000)
-      return
-    }
-    if (!cfg.model) {
-      context.ui.notice('请先选择模型', 'err', 2000)
-      return
+      const cfg = await loadCfg(context)
+      const isFree = isFreeProvider(cfg)
+      if (!cfg.apiKey && !isFree) {
+        context.ui.notice('请先在"设置"中配置 API Key', 'err', 3000)
+        return
+      }
+      if (!cfg.model && !isFree) {
+        context.ui.notice('请先选择模型', 'err', 2000)
+        return
     }
 
     // 检查 xxtui-todo-push 插件是否可用
@@ -772,8 +788,8 @@ ${content.length > 4000 ? content.slice(0, 4000) + '...' : content}
 - [ ] 检查车辆状况 @${currentDate} 21:00
 - [ ] 出发前往目的地 @明天 08:00`
 
-    const url = (cfg.baseUrl||'https://api.openai.com/v1').replace(/\/$/, '') + '/chat/completions'
-    const headers = { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + cfg.apiKey }
+      const url = buildApiUrl(cfg)
+      const headers = buildApiHeaders(cfg)
     const body = JSON.stringify({
       model: cfg.model,
       messages: [
@@ -846,17 +862,18 @@ ${content.length > 4000 ? content.slice(0, 4000) + '...' : content}
   }
 }
 
-async function generateTodos(context){
+  async function generateTodos(context){
   const GENERATING_MARKER = '[正在生成待办]\n\n'
   try {
-    const cfg = await loadCfg(context)
-    if (!cfg.apiKey) {
-      context.ui.notice('请先在"设置"中配置 API Key', 'err', 3000)
-      return
-    }
-    if (!cfg.model) {
-      context.ui.notice('请先选择模型', 'err', 2000)
-      return
+      const cfg = await loadCfg(context)
+      const isFree = isFreeProvider(cfg)
+      if (!cfg.apiKey && !isFree) {
+        context.ui.notice('请先在"设置"中配置 API Key', 'err', 3000)
+        return
+      }
+      if (!cfg.model && !isFree) {
+        context.ui.notice('请先选择模型', 'err', 2000)
+        return
     }
 
     // 获取文档内容
@@ -907,8 +924,8 @@ ${content.length > 4000 ? content.slice(0, 4000) + '...' : content}
 - [ ] 检查车辆状况 @${currentDate} 21:00
 - [ ] 出发前往目的地 @明天 08:00`
 
-    const url = (cfg.baseUrl||'https://api.openai.com/v1').replace(/\/$/, '') + '/chat/completions'
-    const headers = { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + cfg.apiKey }
+      const url = buildApiUrl(cfg)
+      const headers = buildApiHeaders(cfg)
     const body = JSON.stringify({
       model: cfg.model,
       messages: [
@@ -978,11 +995,12 @@ async function sendFromInput(context){
   await doSend(context)
 }
 
-async function doSend(context){
-  if (__AI_SENDING__) return
-  const cfg = await loadCfg(context)
-  if (!cfg.apiKey) { context.ui.notice('请先在“设置”中配置 OpenAI API Key', 'err', 3000); return }
-  if (!cfg.model) { context.ui.notice('请先选择模型', 'err', 2000); return }
+  async function doSend(context){
+    if (__AI_SENDING__) return
+    const cfg = await loadCfg(context)
+    const isFree = isFreeProvider(cfg)
+    if (!cfg.apiKey && !isFree) { context.ui.notice('请先在“设置”中配置 OpenAI API Key', 'err', 3000); return }
+    if (!cfg.model && !isFree) { context.ui.notice('请先选择模型', 'err', 2000); return }
   __AI_SENDING__ = true
   try {
     await ensureSessionForDoc(context)
@@ -1002,57 +1020,66 @@ async function doSend(context){
     const finalMsgs = [ { role:'system', content: system }, { role:'user', content: '文档上下文：\n\n' + docCtx } ]
     userMsgs.forEach(m => finalMsgs.push(m))
 
-    const url = (cfg.baseUrl||'https://api.openai.com/v1').replace(/\/$/, '') + '/chat/completions'
-    const bodyObj = { model: cfg.model, messages: finalMsgs, stream: true }
-    const body = JSON.stringify(bodyObj)
-    const headers = { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + cfg.apiKey }
+      const url = buildApiUrl(cfg)
+      const bodyObj = { model: cfg.model, messages: finalMsgs, stream: !isFree }
+      const headers = buildApiHeaders(cfg)
 
     const chatEl = el('ai-chat')
     const draft = document.createElement('div'); draft.className = 'msg a'; draft.textContent = ''
     chatEl.appendChild(draft); chatEl.scrollTop = chatEl.scrollHeight
 
-    // 首选用原生 fetch 进行流式解析（SSE）
-    let finalText = ''
-    try {
-      const r2 = await fetch(url, { method:'POST', headers, body })
-      if (!r2.ok || !r2.body) { throw new Error('HTTP ' + r2.status) }
-      const reader = r2.body.getReader()
-      const decoder = new TextDecoder('utf-8')
-      let buf = ''
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const parts = buf.split('\n\n')
-        buf = parts.pop() || ''
-        for (const p of parts) {
-          const line = p.trim()
-          if (!line) continue
-          const rows = line.split('\n').filter(Boolean)
-          for (const row of rows) {
-            const m = row.match(/^data:\s*(.*)$/)
-            if (!m) continue
-            const payload = m[1]
-            if (payload === '[DONE]') continue
-            try {
-              const j = JSON.parse(payload)
-              const delta = j?.choices?.[0]?.delta?.content || ''
-              if (delta) { finalText += delta; draft.textContent = finalText; chatEl.scrollTop = chatEl.scrollHeight }
-            } catch {}
+      let finalText = ''
+      if (isFree) {
+        // 免费代理模式：直接走非流式一次性请求，由后端持有真实 Key
+        const r = await fetch(url, { method:'POST', headers, body: JSON.stringify({ ...bodyObj, stream: false }) })
+        const text = await r.text()
+        const data = text ? JSON.parse(text) : null
+        finalText = data?.choices?.[0]?.message?.content || ''
+        draft.textContent = finalText
+      } else {
+        // 首选用原生 fetch 进行流式解析（SSE）
+        const body = JSON.stringify(bodyObj)
+        try {
+          const r2 = await fetch(url, { method:'POST', headers, body })
+          if (!r2.ok || !r2.body) { throw new Error('HTTP ' + r2.status) }
+          const reader = r2.body.getReader()
+          const decoder = new TextDecoder('utf-8')
+          let buf = ''
+          while (true) {
+            const { value, done } = await reader.read()
+            if (done) break
+            buf += decoder.decode(value, { stream: true })
+            const parts = buf.split('\n\n')
+            buf = parts.pop() || ''
+            for (const p of parts) {
+              const line = p.trim()
+              if (!line) continue
+              const rows = line.split('\n').filter(Boolean)
+              for (const row of rows) {
+                const m = row.match(/^data:\s*(.*)$/)
+                if (!m) continue
+                const payload = m[1]
+                if (payload === '[DONE]') continue
+                try {
+                  const j = JSON.parse(payload)
+                  const delta = j?.choices?.[0]?.delta?.content || ''
+                  if (delta) { finalText += delta; draft.textContent = finalText; chatEl.scrollTop = chatEl.scrollHeight }
+                } catch {}
+              }
+            }
           }
+        } catch (e) {
+          // 流式失败兜底：改非流式一次性请求
+          try {
+            const r3 = await fetch(url, { method:'POST', headers, body: JSON.stringify({ ...bodyObj, stream: false }) })
+            const text = await r3.text()
+            const data = text ? JSON.parse(text) : null
+            const ctt = data?.choices?.[0]?.message?.content || ''
+            finalText = ctt
+            draft.textContent = finalText
+          } catch (e2) { throw e2 }
         }
       }
-    } catch (e) {
-      // 流式失败兜底：改非流式一次性请求
-      try {
-        const r3 = await fetch(url, { method:'POST', headers, body: JSON.stringify({ ...bodyObj, stream: false }) })
-        const text = await r3.text()
-        const data = text ? JSON.parse(text) : null
-        const ctt = data?.choices?.[0]?.message?.content || ''
-        finalText = ctt
-        draft.textContent = finalText
-      } catch (e2) { throw e2 }
-    }
 
     __AI_LAST_REPLY__ = finalText || ''
     pushMsg('assistant', __AI_LAST_REPLY__ || '[空响应]')
@@ -1109,6 +1136,7 @@ export async function openSettings(context){
     '<div id="ai-set-dialog">',
     ' <div id="ai-set-head"><div id="ai-set-title">AI 设置</div><button id="ai-set-close" title="关闭">×</button></div>',
     ' <div id="ai-set-body">',
+    '  <div class="set-row"><label>模式</label><select id="set-provider"><option value="openai">自定义 API Key</option><option value="free">免费AI模型（小参数量，仅供试用）</option></select></div>',
     '  <div class="set-row"><label>Base URL</label><select id="set-base-select"><option value="https://api.openai.com/v1">OpenAI</option><option value="https://api.siliconflow.cn/v1">硅基流动</option><option value="https://apic1.ohmycdn.com/api/v1/ai/openai/cc-omg/v1">OMG资源包</option><option value="custom">自定义</option></select><input id="set-base" type="text" placeholder="https://api.openai.com/v1"/></div>',
     '  <div class="set-row"><label>API Key</label><input id="set-key" type="password" placeholder="sk-..."/></div>',
     '  <div class="set-row"><label>模型</label><input id="set-model" type="text" placeholder="gpt-4o-mini"/></div>',
@@ -1127,13 +1155,18 @@ export async function openSettings(context){
     try { overlay.style.position = 'fixed'; overlay.style.inset = '0'; overlay.style.zIndex = '2147483000' } catch {}
   }
   // 赋初值
+  const elProvider = overlay.querySelector('#set-provider')
   const elBase = overlay.querySelector('#set-base')
   const elBaseSel = overlay.querySelector('#set-base-select')
   const elKey = overlay.querySelector('#set-key')
   const elModel = overlay.querySelector('#set-model')
   const elMax = overlay.querySelector('#set-max')
   const elSideW = overlay.querySelector('#set-sidew')
-  elBase.value = cfg.baseUrl || 'https://api.openai.com/v1'
+  const FREE_PROXY_URL = 'https://flymd.llingfei.com/ai/ai_proxy.php'
+  if (elProvider) elProvider.value = cfg.provider === 'free' ? 'free' : 'openai'
+  // 免费模式下，前端不显示真实 URL，只显示产品名
+  if (cfg.provider === 'free') elBase.value = '飞速MarkDown AI'
+  else elBase.value = cfg.baseUrl || 'https://api.openai.com/v1'
   elKey.value = cfg.apiKey || ''
   elModel.value = cfg.model || 'gpt-4o-mini'
   elMax.value = String((cfg.limits?.maxCtxChars) || 6000)
@@ -1144,10 +1177,47 @@ export async function openSettings(context){
     else if (cur === 'https://apic1.ohmycdn.com/api/v1/ai/openai/cc-omg/v1') elBaseSel.value = 'https://apic1.ohmycdn.com/api/v1/ai/openai/cc-omg/v1'
     else if (!cur || cur === 'https://api.openai.com/v1') elBaseSel.value = 'https://api.openai.com/v1'
     else elBaseSel.value = 'custom'
-    elBaseSel.addEventListener('change', () => {
-      const val = elBaseSel.value
-      if (val && val !== 'custom') elBase.value = val
-    })
+      elBaseSel.addEventListener('change', () => {
+        const val = elBaseSel.value
+        if (val && val !== 'custom') elBase.value = val
+      })
+  }
+  const applyProviderUI = () => {
+    const mode = elProvider && elProvider.value === 'free' ? 'free' : 'openai'
+    const isFree = mode === 'free'
+    if (isFree) {
+      if (elBaseSel) elBaseSel.disabled = true
+      if (elBase) {
+        elBase.disabled = true
+        // 免费模式只展示产品名，不暴露后端 URL
+        elBase.value = '飞速MarkDown AI'
+      }
+      if (elKey) {
+        elKey.disabled = true
+        elKey.value = ''
+        elKey.placeholder = '无需填写'
+      }
+      if (elModel) {
+        elModel.disabled = true
+      }
+    } else {
+      if (elBaseSel) elBaseSel.disabled = false
+      if (elBase) {
+        elBase.disabled = false
+        if (!elBase.value) elBase.value = 'https://api.openai.com/v1'
+      }
+      if (elKey) {
+        elKey.disabled = false
+        elKey.placeholder = 'sk-...'
+      }
+      if (elModel) {
+        elModel.disabled = false
+      }
+    }
+  }
+  if (elProvider) {
+    applyProviderUI()
+    elProvider.addEventListener('change', applyProviderUI)
   }
   // 交互
   const close = () => { try { overlay.remove() } catch {} }
@@ -1156,12 +1226,15 @@ export async function openSettings(context){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
   WIN().addEventListener('keydown', function onEsc(e){ if (e.key === 'Escape') { close(); WIN().removeEventListener('keydown', onEsc) } })
   overlay.querySelector('#ai-set-ok')?.addEventListener('click', async () => {
-    const baseUrl = String(elBase.value || '').trim() || 'https://api.openai.com/v1'
-    const apiKey = String(elKey.value || '').trim()
+    const provider = elProvider && elProvider.value === 'free' ? 'free' : 'openai'
+    const baseUrl = provider === 'free'
+      ? FREE_PROXY_URL
+      : (String(elBase.value || '').trim() || 'https://api.openai.com/v1')
+    const apiKey = provider === 'free' ? '' : String(elKey.value || '').trim()
     const model = String(elModel.value || '').trim() || 'gpt-4o-mini'
     const n = Math.max(1000, parseInt(String(elMax.value || '6000'),10) || 6000)
     const sidew = Math.max(MIN_WIDTH, parseInt(String(elSideW.value || MIN_WIDTH),10) || MIN_WIDTH)
-    const next = { ...cfg, baseUrl, apiKey, model, limits: { maxCtxChars: n }, win: { ...(cfg.win||{}), w: sidew, x: cfg.win?.x||60, y: cfg.win?.y||60, h: cfg.win?.h||440 } }
+    const next = { ...cfg, provider, baseUrl, apiKey, model, limits: { maxCtxChars: n }, win: { ...(cfg.win||{}), w: sidew, x: cfg.win?.x||60, y: cfg.win?.y||60, h: cfg.win?.h||440 } }
     await saveCfg(context, next)
     const m = el('ai-model'); if (m) m.value = model
     context.ui.notice('设置已保存', 'ok', 1600)
