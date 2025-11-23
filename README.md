@@ -16,7 +16,8 @@ FlyMD 是一款仅 **7MB** 的高性能 Markdown 编辑器，支持**所见所�
 
 跨平台支持 Windows / Linux / macOS，轻量级却不简单，为高效写作而生。
 
-![界面预览](https://github.com/user-attachments/assets/38f9f007-8a09-4231-9c53-2d3bc6f245be)
+![focus](https://github.com/user-attachments/assets/77b207ab-ee59-4362-ae11-27c95d0732b8)
+
 
 ## ✨ 核心特性
 
@@ -83,13 +84,6 @@ FlyMD 是一款仅 **7MB** 的高性能 Markdown 编辑器，支持**所见所�
 
 > 💡 在扩展市场分别安装"AI 助手"和"待办推送"扩展，即可体验这一强大功能。
 
-## 📸 界面预览
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/661c3263-d877-4fcf-a77f-69096b42b9d5" width="32%" alt="编辑模式"/>
-  <img src="https://github.com/user-attachments/assets/1182c443-f93c-4167-bc05-f4cc4b391ab5" width="32%" alt="所见模式"/>
-  <img src="https://github.com/user-attachments/assets/d51945f9-c227-43eb-8105-0bb07d66db52" width="32%" alt="阅读模式"/>
-</p>
 
 ## 🚀 快速开始
 
