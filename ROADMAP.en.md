@@ -3,11 +3,14 @@
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
 ## Update v0.4.0
+- Added: Dark mode toggle in theme settings — manually switch to dark theme with auto-saved state
+- Added: Dark mode fully optimizes text display across all windows including library sidebar, dialogs, editor, and WYSIWYG mode
 - Added: AI Assistant now defaults to free model mode with deep SiliconFlow integration — built-in free AI service works out of the box, no API key configuration needed
 - Added: Free model mode displays "Powered by SiliconFlow" entry in context menu, one-click jump to register for premium model experience
 - Added: Context menu now includes WebDAV sync, sync log viewer, and image hosting toggle shortcuts for more convenient operations
 - Added: Custom context menu shows "Hold Shift + Right Click to open native menu" hint to prevent confusion when native menu is overridden
 - Added: WYSIWYG mode now fully supports AI extension capabilities — AI Assistant can instantly read/write content in WYSIWYG mode without switching back to source mode
+- Improved: Theme settings toggle layout optimized to three columns — Focus Mode, WYSIWYG Mode, Dark Mode at a glance
 - Improved: AI dialog window now includes boundary checks to ensure at least 100px remains visible when dragging, preventing window loss
 - Improved: Optimized extension settings window display logic, fixed issue where settings dialog wouldn't appear after AI window was closed
 - Improved: WebDAV sync logs now use local timestamps for better readability; logs auto-truncate when exceeding 5MB to prevent unbounded growth
