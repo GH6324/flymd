@@ -925,21 +925,39 @@ body > .block-menu { display: none !important; }
 /* 文档库侧栏（阶段A：最小侵入） */
 .library {
   position: absolute;
-  inset: 0 auto 0 0;
+  top: 0;
+  bottom: 0;
   width: 280px;
-  border-right: 1px solid var(--border);
   background: var(--panel-bg);
   color: var(--fg);
   overflow-y: auto;
   overflow-x: hidden;
   z-index: 15;
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
+}
+.library.side-left {
+  left: 0;
+  right: auto;
+  border-right: 1px solid var(--border);
+  border-left: none;
   box-shadow: 2px 0 8px rgba(0,0,0,0.05);
 }
+.library.side-right {
+  right: 0;
+  left: auto;
+  border-left: 1px solid var(--border);
+  border-right: none;
+  box-shadow: -2px 0 8px rgba(0,0,0,0.05);
+}
 .library.hidden {
-  transform: translateX(-100%);
   opacity: 0;
   pointer-events: none;
+}
+.library.side-left.hidden {
+  transform: translateX(-100%);
+}
+.library.side-right.hidden {
+  transform: translateX(100%);
 }
 .library .lib-header { position: sticky; top: 0; background: var(--panel-bg); border-bottom: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; z-index: 1; }
 .library .lib-title-row { display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
@@ -951,6 +969,8 @@ body > .block-menu { display: none !important; }
 .library .lib-toggle-btn:hover { opacity: 0.8; background: rgba(127, 127, 127, 0.1); }
 body.focus-mode .library .lib-toggle-btn { display: flex; }
 .lib-float-toggle { -webkit-app-region: no-drag; cursor: pointer; border: none; background: none; color: var(--fg); font-size: 18px; width: 30px; height: 30px; display: none; align-items: center; justify-content: center; transition: opacity 0.2s, background 0.2s; border-radius: 4px; padding: 0; line-height: 1; font-weight: 300; opacity: 0.5; font-family: monospace; position: fixed; top: 12px; left: 12px; z-index: 100; }
+.lib-float-toggle.side-left { left: 12px; right: auto; }
+.lib-float-toggle.side-right { left: auto; right: 12px; }
 .lib-float-toggle:hover { opacity: 0.8; background: rgba(127, 127, 127, 0.1); }
 body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-actions { display: flex; align-items: center; gap: 6px; }
@@ -1117,7 +1137,8 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-node:hover .lib-ico-app.lib-ico-pdf { filter: grayscale(1) sepia(1) hue-rotate(-10deg) saturate(10) brightness(1) contrast(1.1); }
 
 /* 文档库/AI 助手占用空间通过 CSS 变量告知容器 */
-.container.with-library { --gap-left-library: 300px; }
+.container.with-library-left { --gap-left-library: 300px; }
+.container.with-library-right { --gap-right-library: 300px; }
 .container.with-ai-left { --ai-left-gap: var(--ai-left, 300px); }
 .container.with-ai-right { --ai-right-gap: var(--ai-right, 300px); }
 
@@ -3402,7 +3423,8 @@ body::-webkit-scrollbar:horizontal,
   }
 
   /* 确保库侧栏不影响布局 */
-  .container.with-library .preview {
+  .container.with-library-left .preview,
+  .container.with-library-right .preview {
     padding-left: 0 !important;
   }
 
@@ -4606,6 +4628,13 @@ body.focus-mode .library .lib-action-btn.active {
   app-region: no-drag;
   padding-right: 8px;
 }
+.custom-titlebar.controls-left {
+  flex-direction: row-reverse;
+}
+.custom-titlebar.controls-left .custom-titlebar-controls {
+  padding-right: 0;
+  padding-left: 8px;
+}
 
 /* 控制按钮基础样式 - 极简文字样式 */
 .custom-titlebar-btn {
@@ -4649,6 +4678,10 @@ body.focus-mode .library .lib-action-btn.active {
 /* 退出专注模式按钮样式 */
 .custom-titlebar-btn.custom-titlebar-exit-focus {
   margin-right: 4px;
+}
+.custom-titlebar.controls-left .custom-titlebar-btn.custom-titlebar-exit-focus {
+  margin-right: 0;
+  margin-left: 4px;
 }
 
 /* 分隔线样式 */

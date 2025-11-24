@@ -66,6 +66,9 @@ const dict = {
     'lib.refresh.short': '刷新',
     'lib.pin.auto': '自动',
     'lib.pin.fixed': '固定',
+    'lib.side.left': '左侧',
+    'lib.side.right': '右侧',
+    'lib.side.toggle': '切换库位置',
 
     'about.title': '关于',
     'about.tagline': '一款跨平台、轻量稳定好用的 Markdown 编辑 PDF 阅读工具。',
@@ -246,6 +249,9 @@ const dict = {
     'lib.refresh.short': 'Ref',
     'lib.pin.auto': 'Auto',
     'lib.pin.fixed': 'Dock',
+    'lib.side.left': 'Left',
+    'lib.side.right': 'Right',
+    'lib.side.toggle': 'Switch library side',
 
     'about.title': 'About',
     'about.tagline': 'A cross‑platform, lightweight and polished Markdown editor & PDF reader.',
