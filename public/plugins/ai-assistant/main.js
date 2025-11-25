@@ -293,12 +293,11 @@ function ensureCss() {
     '#ai-assist-win.dock-left{left:0; top:0; height:100vh; width:400px; border-radius:0; border-left:none; border-top:none; border-bottom:none; box-shadow:none; border-right:1px solid #e5e7eb}',
     '#ai-assist-win.dock-right{right:0; top:0; height:100vh; width:400px; border-radius:0; border-right:none; border-top:none; border-bottom:none; box-shadow:none; border-left:1px solid #e5e7eb}',
     // 头部与标题
-    '#ai-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;cursor:move;',
-    'background:linear-gradient(180deg,#f8fafc,#f1f5f9);border-bottom:1px solid #e5e7eb}',
-    '#ai-title{font-weight:600;color:#111827}',
+    '#ai-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;cursor:move;background:#fff}',
+    '#ai-title{font-weight:600;color:#111827;font-size:14px}',
     // 主体、工具栏
-    '#ai-body{display:flex;flex-direction:column;height:calc(100% - 48px)}',
-    '#ai-toolbar{display:flex;flex-direction:column;gap:10px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc}',
+    '#ai-body{display:flex;flex-direction:column;height:calc(100% - 44px)}',
+    '#ai-toolbar{display:flex;flex-direction:column;gap:8px;padding:8px 12px;border-bottom:1px solid #e5e7eb;background:#fff}',
     '.ai-toolbar-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}',
     '.ai-toolbar-meta{justify-content:space-between}',
     '.ai-toolbar-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px}',
@@ -315,12 +314,7 @@ function ensureCss() {
     '.msg-actions{display:flex;gap:12px;margin-top:8px;flex-wrap:wrap}',
     '.msg-action-btn{padding:0;border:none;background:none;color:#64748b;font-size:12px;cursor:pointer;text-decoration:none;transition:color .2s}',
     '.msg-action-btn:hover{color:#0f172a;text-decoration:underline}',
-    '#ai-input{position:relative;padding:10px;border-top:1px solid #e5e7eb;background:#fafafa}',
-    '#ai-input textarea{width:100%;min-height:88px;background:#fff;border:1px solid #e5e7eb;color:#0f172a;border-radius:10px;padding:10px 60px 10px 12px;resize:vertical;font-family:inherit;font-size:14px;box-sizing:border-box}',
-    '#ai-input textarea:focus{outline:none;border-color:#3b82f6}',
-    '#ai-send{position:absolute;right:20px;bottom:24px;padding:0;border:none;background:none;color:#3b82f6;font-size:14px;cursor:pointer;font-weight:500;text-decoration:none;transition:color .2s}',
-    '#ai-send:hover{color:#1d4ed8;text-decoration:underline}',
-    '#ai-send:active{transform:none}',
+    '#ai-input{position:relative;padding:6px 8px;border-top:1px solid #e5e7eb;background:#fafafa}',
     '#ai-vresizer{position:absolute;right:0;top:0;width:8px;height:100%;cursor:ew-resize;background:transparent;z-index:10}',
     '#ai-vresizer:hover{background:rgba(59,130,246,0.15)}',
     '#ai-resizer{position:absolute;right:0;bottom:0;width:12px;height:12px;cursor:nwse-resize;background:transparent}',
@@ -356,15 +350,28 @@ function ensureCss() {
     '#ai-set-actions{display:flex;gap:10px;justify-content:flex-end;padding:10px 12px;border-top:1px solid #e5e7eb;background:#fafafa}',
     '#ai-set-actions button{padding:8px 12px;border-radius:10px;border:1px solid #e5e7eb;background:#ffffff;color:#0f172a}',
     '#ai-set-actions button.primary{background:#2563eb;border-color:#2563eb;color:#fff}',
+    // 设置面板暗黑模式
+    '#ai-assist-win.dark #ai-set-dialog{background:#0f172a;border-color:#1f2937}',
+    '#ai-assist-win.dark #ai-set-head{background:#111827;border-color:#1f2937}',
+    '#ai-assist-win.dark #ai-set-title{color:#e5e7eb}',
+    '#ai-assist-win.dark #ai-set-head button{background:#1f2937;border-color:#374151;color:#e5e7eb}',
+    '#ai-assist-win.dark #ai-set-body{color:#e5e7eb}',
+    '#ai-assist-win.dark .set-row label{color:#9ca3af}',
+    '#ai-assist-win.dark .set-row input{background:#0b1220;border-color:#1f2937;color:#e5e7eb}',
+    '#ai-assist-win.dark .set-row select{background:#0b1220;border-color:#1f2937;color:#e5e7eb}',
+    '#ai-assist-win.dark .free-warning{background:#78350f;border-color:#d97706;color:#fef3c7}',
+    '#ai-assist-win.dark #ai-set-actions{background:#111827;border-color:#1f2937}',
+    '#ai-assist-win.dark #ai-set-actions button{background:#1f2937;border-color:#374151;color:#e5e7eb}',
+    '#ai-assist-win.dark #ai-set-actions button.primary{background:#2563eb;border-color:#2563eb;color:#fff}',
+    '#ai-assist-win.dark #ai-set-actions button:hover{background:#374151}',
+    '#ai-assist-win.dark #ai-set-actions button.primary:hover{background:#1d4ed8}',
     // 暗黑模式样式
-    '#ai-head button{padding:6px 10px;border-radius:8px;border:1px solid #e5e7eb;background:#ffffff;color:#0f172a}',
-    '#ai-head button:hover{background:#f8fafc}',
     '#ai-assist-win.dark{background:#0b1220;color:#e5e7eb;border-color:#1f2937}',
     '#ai-assist-win.dark.dock-left{border-right-color:#1f2937}',
     '#ai-assist-win.dark.dock-right{border-left-color:#1f2937}',
-    '#ai-assist-win.dark #ai-head{background:linear-gradient(180deg,#0f172a,#111827);border-bottom:1px solid #1f2937}',
+    '#ai-assist-win.dark #ai-head{background:#0b1220}',
     '#ai-assist-win.dark #ai-title{color:#e5e7eb}',
-    '#ai-assist-win.dark #ai-toolbar{background:#0f172a;border-bottom:1px solid #1f2937}',
+    '#ai-assist-win.dark #ai-toolbar{background:#0b1220;border-bottom:1px solid #1f2937}',
     '#ai-assist-win.dark #ai-chat{background:#0b1220}',
     '#ai-assist-win.dark .msg.u{background:linear-gradient(135deg,#1f3352,#0f172a);border:1px solid #1d4ed8}',
     '#ai-assist-win.dark .msg.a{background:#111827;border:1px solid #1f2937}',
@@ -372,20 +379,10 @@ function ensureCss() {
     '#ai-assist-win.dark .msg-action-btn{color:#9ca3af}',
     '#ai-assist-win.dark .msg-action-btn:hover{color:#e5e7eb}',
     '#ai-assist-win.dark #ai-input{background:#0f172a;border-top:1px solid #1f2937}',
-    '#ai-assist-win.dark #ai-input textarea{background:#0b1220;border:1px solid #1f2937;color:#e5e7eb}',
-    '#ai-assist-win.dark #ai-input textarea:focus{border-color:#3b82f6}',
-    '#ai-assist-win.dark #ai-send{color:#60a5fa}',
-    '#ai-assist-win.dark #ai-send:hover{color:#93c5fd}',
-    '#ai-assist-win.dark .ai-session-label{color:#e5e7eb}',
-    '#ai-assist-win.dark #ai-toolbar .btn{background:#111827;color:#e5e7eb;border:1px solid #1f2937}',
-    '#ai-assist-win.dark #ai-toolbar .btn.session-btn{background:none;color:#9ca3af;border:none}',
-    '#ai-assist-win.dark #ai-toolbar .btn.session-btn:hover{background:none;color:#e5e7eb}',
-    '#ai-assist-win.dark #ai-toolbar .btn.action{background:none;color:#9ca3af;border:none}',
-    '#ai-assist-win.dark #ai-toolbar .btn.action:hover{background:none;color:#e5e7eb}',
     '#ai-assist-win.dark #ai-toolbar select,#ai-assist-win.dark #ai-toolbar input{background:#0b1220;border:1px solid #1f2937;color:#e5e7eb}',
+    '#ai-free-model{background:#fff;border:1px solid #e5e7eb;color:#0f172a}',
+    '#ai-assist-win.dark #ai-free-model{background:#0b1220;border-color:#1f2937;color:#e5e7eb}',
     '#ai-assist-win.dark #ai-selects label{color:#9ca3af}',
-    '#ai-assist-win.dark #ai-head button{background:#111827;color:#e5e7eb;border:1px solid #1f2937}',
-    '#ai-assist-win.dark #ai-head button:hover{background:#0f172a}',
     '#ai-assist-win.dark #ai-vresizer:hover{background:rgba(96,165,250,0.2)}',
     '#ai-assist-win.dark .ai-mode-switch{background:#0b1220;border:1px solid #1f2937}',
     '#ai-assist-win.dark .ai-mode-switch .mode-label{color:#9ca3af}',
@@ -411,6 +408,77 @@ function ensureCss() {
     '.mode-label.active{color:#2563eb;font-weight:500}',
     '#ai-assist-win.dark .mode-label{color:#9ca3af}',
     '#ai-assist-win.dark .mode-label.active{color:#60a5fa}',
+    // 新增：头部操作按钮组（图标样式）
+    '.ai-head-actions{display:flex;align-items:center;gap:2px}',
+    '.ai-icon-btn{width:24px;height:24px;padding:0;border:none;background:transparent;color:#9ca3af;font-size:14px;cursor:pointer;border-radius:4px;transition:all .15s;display:flex;align-items:center;justify-content:center}',
+    '.ai-icon-btn:hover{color:#374151;background:rgba(0,0,0,.06)}',
+    '.ai-icon-btn.close-btn{font-size:16px}',
+    '#ai-assist-win.dark .ai-icon-btn{color:#6b7280}',
+    '#ai-assist-win.dark .ai-icon-btn:hover{color:#e5e7eb;background:rgba(255,255,255,.1)}',
+    // 新增：更多菜单
+    '.ai-more-menu-wrap{position:relative}',
+    '.ai-dropdown-menu{position:absolute;top:100%;right:0;min-width:120px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.12);display:none;z-index:100;overflow:hidden}',
+    '.ai-dropdown-menu.show{display:block}',
+    '.ai-menu-item{padding:8px 12px;font-size:13px;color:#374151;cursor:pointer;transition:background .15s}',
+    '.ai-menu-item:hover{background:#f3f4f6}',
+    '#ai-assist-win.dark .ai-dropdown-menu{background:#1f2937;border-color:#374151}',
+    '#ai-assist-win.dark .ai-menu-item{color:#e5e7eb}',
+    '#ai-assist-win.dark .ai-menu-item:hover{background:#374151}',
+    // 新增：会话历史下拉面板
+    '#ai-history-panel{position:absolute;top:48px;left:0;right:0;background:#fff;border-bottom:1px solid #e5e7eb;padding:8px 12px;display:none;z-index:50}',
+    '#ai-history-panel.show{display:block}',
+    '#ai-history-panel select{width:100%;background:#fff;border:1px solid #e5e7eb;color:#0f172a;border-radius:6px;padding:6px 8px;font-size:13px}',
+    '#ai-assist-win.dark #ai-history-panel{background:#0f172a;border-color:#1f2937}',
+    '#ai-assist-win.dark #ai-history-panel select{background:#0b1220;border-color:#1f2937;color:#e5e7eb}',
+    // 历史会话列表样式
+    '.ai-session-list{max-height:200px;overflow-y:auto;margin:0;padding:0;list-style:none}',
+    '.ai-session-item{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;cursor:pointer;border-radius:4px;transition:background .15s}',
+    '.ai-session-item:hover{background:#f3f4f6}',
+    '.ai-session-item.active{background:#e0f2fe;color:#0369a1}',
+    '.ai-session-item-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}',
+    '.ai-session-item-del{width:18px;height:18px;padding:0;border:none;background:transparent;color:#9ca3af;font-size:14px;cursor:pointer;border-radius:3px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:6px;opacity:0;transition:all .15s}',
+    '.ai-session-item:hover .ai-session-item-del{opacity:1}',
+    '.ai-session-item-del:hover{color:#ef4444;background:rgba(239,68,68,.1)}',
+    '#ai-assist-win.dark .ai-session-item:hover{background:#1f2937}',
+    '#ai-assist-win.dark .ai-session-item.active{background:#1e3a5f;color:#60a5fa}',
+    '#ai-assist-win.dark .ai-session-item-del{color:#6b7280}',
+    '#ai-assist-win.dark .ai-session-item-del:hover{color:#f87171;background:rgba(248,113,113,.15)}',
+    // 新增：迷你开关样式（无边框简洁版）
+    '.ai-mode-switch-mini{display:flex;align-items:center;gap:4px;flex-shrink:0}',
+    '.ai-mode-switch-mini .mode-label{font-size:12px;color:#9ca3af;white-space:nowrap;transition:all .2s}',
+    '.ai-mode-switch-mini .mode-label.active{color:#3b82f6;font-weight:500}',
+    '.toggle-switch-mini{position:relative;display:inline-block;width:32px;min-width:32px;max-width:32px;height:16px;margin:0 4px;vertical-align:middle;flex-shrink:0}',
+    '.toggle-switch-mini input{opacity:0;width:0;height:0;position:absolute}',
+    '.toggle-slider-mini{position:absolute;cursor:pointer;top:0;left:0;width:32px;height:16px;background:#d1d5db;transition:.3s;border-radius:16px}',
+    '.toggle-slider-mini:before{position:absolute;content:"";height:12px;width:12px;left:2px;top:2px;background:#fff;transition:.3s;border-radius:50%;box-shadow:0 1px 2px rgba(0,0,0,.2)}',
+    'input:checked + .toggle-slider-mini{background:#2563eb}',
+    'input:checked + .toggle-slider-mini:before{left:18px}',
+    '#ai-assist-win.dark .ai-mode-switch-mini .mode-label{color:#6b7280}',
+    '#ai-assist-win.dark .ai-mode-switch-mini .mode-label.active{color:#60a5fa}',
+    '#ai-assist-win.dark .toggle-slider-mini{background:#4b5563}',
+    '#ai-assist-win.dark input:checked + .toggle-slider-mini{background:#3b82f6}',
+    // 新增：输入框区域样式
+    '.ai-input-wrap{position:relative;width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden}',
+    '.ai-input-wrap textarea{width:100%;min-height:72px;background:transparent;border:none;color:#0f172a;padding:10px 40px 28px 10px;resize:none;font-family:inherit;font-size:13px;box-sizing:border-box;outline:none}',
+    '.ai-input-wrap:focus-within{border-color:#3b82f6}',
+    '.ai-quick-action-wrap{position:absolute;left:10px;bottom:8px;display:flex;align-items:center;gap:4px}',
+    '.ai-quick-action-wrap select{background:transparent;border:none;color:#6b7280;font-size:13px;cursor:pointer;padding:4px 2px;outline:none}',
+    '.ai-quick-action-wrap select option{padding:8px 12px;font-size:13px}',
+    '#ai-assist-win.dark .ai-input-wrap{background:#0b1220;border-color:#1f2937}',
+    '#ai-assist-win.dark .ai-input-wrap textarea{color:#e5e7eb}',
+    '#ai-assist-win.dark .ai-input-wrap:focus-within{border-color:#3b82f6}',
+    '#ai-assist-win.dark .ai-quick-action-wrap select{color:#9ca3af;background:transparent}',
+    '#ai-assist-win.dark .ai-quick-action-wrap select option{background:#1f2937;color:#e5e7eb}',
+    '#ai-assist-win.dark .ai-quick-action-wrap::after{color:#6b7280}',
+    // 快捷操作下拉框夜间模式
+    '#ai-quick-action{background:transparent;border:none;color:#6b7280;font-size:13px;cursor:pointer;padding:4px 2px;outline:none}',
+    '#ai-quick-action option{background:#fff;color:#0f172a;padding:8px 12px}',
+    '#ai-assist-win.dark #ai-quick-action{color:#9ca3af}',
+    '#ai-assist-win.dark #ai-quick-action option{background:#1f2937;color:#e5e7eb}',
+    '#ai-send{position:absolute;right:10px;bottom:8px;padding:0;border:none;background:transparent;color:#9ca3af;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:color .15s}',
+    '#ai-send:hover{color:#3b82f6}',
+    '#ai-assist-win.dark #ai-send{color:#6b7280}',
+    '#ai-assist-win.dark #ai-send:hover{color:#60a5fa}',
   ].join('\n')
   DOC().head.appendChild(css)
 }
@@ -794,13 +862,14 @@ async function refreshHeader(context){
   if (selP) selP.value = cfg.model || ''
   await updateWindowTitle(context)
   await refreshSessionSelect(context)
+  // 更新更多菜单中的主题文本
   try {
-    const b = el('ai-dock-toggle')
-    if (b) {
-      // 显示下一个状态：'left' → '右侧', 'right' → '浮动', false → '左侧'
-      if (cfg.dock === 'left') b.textContent = '右侧'
-      else if (cfg.dock === 'right') b.textContent = '浮动'
-      else b.textContent = '左侧'
+    // 更新夜间模式菜单文本
+    const menuTheme = el('ai-menu-theme')
+    const mainWin = el('ai-assist-win')
+    if (menuTheme && mainWin) {
+      const isDark = mainWin.classList.contains('dark')
+      menuTheme.textContent = isDark ? '日间模式' : '夜间模式'
     }
   } catch {}
   // 免费模式下隐藏模型输入框，显示 Powered by 图片
@@ -848,27 +917,37 @@ async function refreshHeader(context){
 
 async function refreshSessionSelect(context) {
   try {
-    const select = document.getElementById('ai-sel-session')
-    if (!select) return
+    const listEl = document.getElementById('ai-session-list')
+    if (!listEl) return
     await ensureSessionForDoc(context)
     if (!__AI_DB__) await loadSessionsDB(context)
     const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
-    select.innerHTML = ''
+    listEl.innerHTML = ''
     for (const it of bucket.items) {
-      const opt = document.createElement('option')
-      opt.value = it.id
-      opt.textContent = it.name
-      if (it.id === bucket.activeId) opt.selected = true
-      select.appendChild(opt)
+      const li = document.createElement('li')
+      li.className = 'ai-session-item' + (it.id === bucket.activeId ? ' active' : '')
+      li.dataset.id = it.id
+
+      const nameSpan = document.createElement('span')
+      nameSpan.className = 'ai-session-item-name'
+      nameSpan.textContent = it.name
+      nameSpan.title = it.name
+
+      const delBtn = document.createElement('button')
+      delBtn.className = 'ai-session-item-del'
+      delBtn.textContent = '×'
+      delBtn.title = '删除此会话'
+      delBtn.dataset.id = it.id
+
+      li.appendChild(nameSpan)
+      li.appendChild(delBtn)
+      listEl.appendChild(li)
     }
   } catch {}
 }
 
-async function switchSessionBySelect(context) {
+async function switchSessionById(context, id) {
   try {
-    const select = document.getElementById('ai-sel-session')
-    if (!select) return
-    const id = String(select.value || '')
     if (!id) return
     if (!__AI_DB__) await loadSessionsDB(context)
     const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
@@ -877,7 +956,39 @@ async function switchSessionBySelect(context) {
     bucket.activeId = id
     __AI_SESSION__ = { id: it.id, name: it.name, messages: it.messages.slice(), docHash: __AI_SESSION__.docHash, docTitle: __AI_SESSION__.docTitle }
     await saveSessionsDB(context)
+    await refreshSessionSelect(context)
     const chat = document.getElementById('ai-chat'); if (chat) renderMsgs(chat)
+  } catch {}
+}
+
+async function deleteSessionById(context, id) {
+  try {
+    if (!id) return
+    await ensureSessionForDoc(context)
+    if (!__AI_DB__) await loadSessionsDB(context)
+    const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
+    const idx = bucket.items.findIndex(x => x.id === id)
+    if (idx < 0) return
+    const wasActive = bucket.activeId === id
+    bucket.items.splice(idx, 1)
+    // 如果删除的是当前会话，切换到其他会话
+    if (wasActive) {
+      if (bucket.items.length === 0) {
+        const s = { id: gid(), name: '默认会话', created: Date.now(), updated: Date.now(), messages: [] }
+        bucket.items.push(s)
+        bucket.activeId = s.id
+      } else {
+        bucket.activeId = bucket.items[0].id
+      }
+      const it = bucket.items.find(x => x.id === bucket.activeId)
+      __AI_SESSION__ = { id: it.id, name: it.name, messages: it.messages.slice(), docHash: __AI_SESSION__.docHash, docTitle: __AI_SESSION__.docTitle }
+    }
+    await saveSessionsDB(context)
+    await refreshSessionSelect(context)
+    if (wasActive) {
+      const chat = document.getElementById('ai-chat'); if (chat) renderMsgs(chat)
+    }
+    context.ui.notice('会话已删除', 'ok', 1400)
   } catch {}
 }
 
@@ -953,42 +1064,66 @@ async function mountWindow(context){
     el.style.height = elHeight + 'px'
   }
   el.innerHTML = [
-    '<div id="ai-head"><div id="ai-title">AI 写作助手</div><div> <button id="ai-btn-theme" title="切换深/浅色">🌙</button><button id="ai-btn-set" title="设置">设置</button><button id="ai-dock-toggle" title="在侧栏/浮窗之间切换">浮动</button> <button id="ai-btn-close" title="关闭">×</button></div></div>',
+    // 头部：标题 + 会话历史 + 新建会话 + 更多菜单 + 关闭
+    '<div id="ai-head">',
+    '  <div id="ai-title">AI 写作助手</div>',
+    '  <div class="ai-head-actions">',
+    '    <button id="ai-btn-history" class="ai-icon-btn" title="会话历史">⏱</button>',
+    '    <button id="ai-s-new" class="ai-icon-btn" title="新建会话">+</button>',
+    '    <div class="ai-more-menu-wrap">',
+    '      <button id="ai-btn-more" class="ai-icon-btn" title="更多">⋮</button>',
+    '      <div id="ai-more-menu" class="ai-dropdown-menu">',
+    '        <div class="ai-menu-item" id="ai-menu-settings">插件设置</div>',
+    '        <div class="ai-menu-item" id="ai-menu-theme">夜间模式</div>',
+    '        <div class="ai-menu-item" id="ai-menu-dock-left">切换左侧</div>',
+    '        <div class="ai-menu-item" id="ai-menu-dock-right">切换右侧</div>',
+    '        <div class="ai-menu-item" id="ai-menu-dock-float">切换浮窗</div>',
+    '        <div class="ai-menu-item" id="ai-menu-del-session">删除会话</div>',
+    '      </div>',
+    '    </div>',
+    '    <button id="ai-btn-close" class="ai-icon-btn close-btn" title="关闭">×</button>',
+    '  </div>',
+    '</div>',
+    // 会话历史下拉面板
+    '<div id="ai-history-panel" class="ai-dropdown-panel">',
+    '  <ul id="ai-session-list" class="ai-session-list"></ul>',
+    '</div>',
     '<div id="ai-body">',
+    // 工具栏：简化版
     ' <div id="ai-toolbar">',
     '  <div class="ai-toolbar-row ai-toolbar-meta">',
-    '   <div class="ai-mode-switch">',
+    '   <div class="ai-mode-switch-mini">',
     '    <span class="mode-label" id="mode-label-custom-toolbar">自定义</span>',
-    '    <label class="toggle-switch"><input type="checkbox" id="ai-provider-toggle"/><span class="toggle-slider"></span></label>',
+    '    <label class="toggle-switch-mini"><input type="checkbox" id="ai-provider-toggle"/><span class="toggle-slider-mini"></span></label>',
     '    <span class="mode-label" id="mode-label-free-toolbar">免费</span>',
     '   </div>',
-    '   <label id="ai-free-model-label" style="display:none;font-size:13px;color:#6b7280;white-space:nowrap;margin-left:8px;">模型</label>',
-    '   <select id="ai-free-model" title="选择免费模型" style="display:none;width:90px;background:#fff;border:1px solid #e5e7eb;color:#0f172a;border-radius:8px;padding:6px 8px;"><option value="qwen">Qwen</option><option value="glm">GLM</option></select>',
+    '   <label id="ai-free-model-label" style="display:none;font-size:12px;color:#6b7280;white-space:nowrap;margin-left:6px;">模型</label>',
+    '   <select id="ai-free-model" title="选择免费模型" style="display:none;width:80px;border-radius:6px;padding:4px 6px;font-size:12px;"><option value="qwen">Qwen</option><option value="glm">GLM</option></select>',
     '   <div id="ai-selects">',
-    '    <label id="ai-model-label">模型</label>',
-    '    <input id="ai-model" placeholder="如 gpt-4o-mini" style="width:140px"/>',
+    '    <label id="ai-model-label" style="font-size:12px;">模型</label>',
+    '    <input id="ai-model" placeholder="如 gpt-4o-mini" style="width:120px;font-size:12px;padding:4px 6px;"/>',
     '   </div>',
-    '   <div class="ai-toolbar-controls">',
-    '    <div class="ai-session-picker"><label class="ai-session-label" for="ai-sel-session">会话</label><select id="ai-sel-session" style="max-width:180px"></select></div>',
-    '    <button class="btn session-btn" id="ai-s-new" title="新建会话">新建</button>',
-    '    <button class="btn session-btn" id="ai-s-del" title="删除当前会话">删除</button>',
-    '    <a id="ai-model-powered" href="https://cloud.siliconflow.cn/i/X96CT74a" target="_blank" rel="noopener noreferrer" style="display:none;border:none;outline:none;margin-left:8px;"><img id="ai-model-powered-img" src="" alt="Powered by" style="height:26px;width:auto;border:none;outline:none;vertical-align:middle;"/></a>',
-    '   </div>',
-    '  </div>',
-    '  <div class="ai-toolbar-row ai-toolbar-actions">',
-    '    <button class="btn action" id="q-continue">续写</button>',
-    '    <button class="btn action" id="q-polish">润色</button>',
-    '    <button class="btn action" id="q-proof">纠错</button>',
-    '    <button class="btn action" id="q-outline">提纲</button>',
-    '    <button class="btn action" id="q-todos" title="分析文章生成待办事项">待办</button>',
-    '    <button class="btn action" id="q-todos-remind" title="分析文章生成待办并创建提醒">提醒</button>',
-    '    <button class="btn action" id="ai-clear" title="清空本篇会话">清空</button>',
+    '   <a id="ai-model-powered" href="https://cloud.siliconflow.cn/i/X96CT74a" target="_blank" rel="noopener noreferrer" style="display:none;border:none;outline:none;margin-left:auto;"><img id="ai-model-powered-img" src="" alt="Powered by" style="height:22px;width:auto;border:none;outline:none;vertical-align:middle;"/></a>',
     '  </div>',
     ' </div>',
     ' <div id="ai-chat"></div>',
+    // 输入框区域：左下角快捷操作下拉
     ' <div id="ai-input">',
-    '  <textarea id="ai-text" placeholder="输入与 AI 对话…"></textarea>',
-    '  <button id="ai-send" title="发送消息">发送</button>',
+    '  <div class="ai-input-wrap">',
+    '   <textarea id="ai-text" placeholder="输入与 AI 对话..."></textarea>',
+    '   <div class="ai-quick-action-wrap">',
+    '    <select id="ai-quick-action" title="快捷操作">',
+    '     <option value="">智能问答</option>',
+    '     <option value="续写">续写</option>',
+    '     <option value="润色">润色</option>',
+    '     <option value="纠错">纠错</option>',
+    '     <option value="提纲">提纲</option>',
+    '     <option value="待办">待办</option>',
+    '     <option value="提醒">提醒</option>',
+    '    </select>',
+    '   </div>',
+    '   <button id="ai-send" title="发送消息">↵</button>',
+    '  </div>',
     ' </div>',
     '</div><div id="ai-vresizer" title="拖动调整宽度"></div><div id="ai-resizer" title="拖动调整尺寸"></div>'
   ].join('')
@@ -997,9 +1132,72 @@ async function mountWindow(context){
   // 绑定拖拽/调整
   try { bindDockResize(context, el) } catch {}
   try { bindFloatDragResize(context, el) } catch {}
+  // 关闭按钮
   el.querySelector('#ai-btn-close').addEventListener('click',()=>{ el.style.display='none'; setDockPush(false) })
-  el.querySelector('#ai-btn-set').addEventListener('click',()=>{ openSettings(context) })
-  el.querySelector('#ai-btn-theme').addEventListener('click',()=>{ toggleTheme(context, el) })
+
+  // 会话历史按钮 - 切换下拉面板
+  try {
+    const btnHistory = el.querySelector('#ai-btn-history')
+    const historyPanel = el.querySelector('#ai-history-panel')
+    btnHistory?.addEventListener('click', (e) => {
+      e.stopPropagation()
+      historyPanel?.classList.toggle('show')
+      // 关闭更多菜单
+      el.querySelector('#ai-more-menu')?.classList.remove('show')
+    })
+  } catch {}
+
+  // 新建会话按钮
+  el.querySelector('#ai-s-new')?.addEventListener('click',()=>{ createNewSession(context) })
+
+  // 更多菜单按钮
+  try {
+    const btnMore = el.querySelector('#ai-btn-more')
+    const moreMenu = el.querySelector('#ai-more-menu')
+    btnMore?.addEventListener('click', (e) => {
+      e.stopPropagation()
+      moreMenu?.classList.toggle('show')
+      // 关闭会话历史面板
+      el.querySelector('#ai-history-panel')?.classList.remove('show')
+    })
+  } catch {}
+
+  // 更多菜单项
+  el.querySelector('#ai-menu-settings')?.addEventListener('click', () => {
+    el.querySelector('#ai-more-menu')?.classList.remove('show')
+    openSettings(context)
+  })
+  el.querySelector('#ai-menu-theme')?.addEventListener('click', () => {
+    el.querySelector('#ai-more-menu')?.classList.remove('show')
+    toggleTheme(context, el)
+  })
+  el.querySelector('#ai-menu-dock-left')?.addEventListener('click', async () => {
+    el.querySelector('#ai-more-menu')?.classList.remove('show')
+    await setDockMode(context, el, 'left')
+  })
+  el.querySelector('#ai-menu-dock-right')?.addEventListener('click', async () => {
+    el.querySelector('#ai-more-menu')?.classList.remove('show')
+    await setDockMode(context, el, 'right')
+  })
+  el.querySelector('#ai-menu-dock-float')?.addEventListener('click', async () => {
+    el.querySelector('#ai-more-menu')?.classList.remove('show')
+    await setDockMode(context, el, false)
+  })
+  el.querySelector('#ai-menu-del-session')?.addEventListener('click', () => {
+    el.querySelector('#ai-more-menu')?.classList.remove('show')
+    deleteCurrentSession(context)
+  })
+
+  // 点击其他区域关闭下拉菜单
+  el.addEventListener('click', (e) => {
+    if (!e.target.closest('.ai-more-menu-wrap')) {
+      el.querySelector('#ai-more-menu')?.classList.remove('show')
+    }
+    if (!e.target.closest('#ai-btn-history') && !e.target.closest('#ai-history-panel')) {
+      el.querySelector('#ai-history-panel')?.classList.remove('show')
+    }
+  })
+
   // 模型输入变更即保存
   try {
     const modelInput = el.querySelector('#ai-model')
@@ -1018,6 +1216,7 @@ async function mountWindow(context){
       await refreshHeader(context)
     })
   } catch {}
+
   // 工具栏模式切换
   try {
     const providerToggle = el.querySelector('#ai-provider-toggle')
@@ -1029,21 +1228,48 @@ async function mountWindow(context){
       context.ui.notice(providerToggle.checked ? '已切换到免费模式' : '已切换到自定义模式', 'ok', 1600)
     })
   } catch {}
-  el.querySelector('#ai-send').addEventListener('click',()=>{ sendFromInput(context) })
-  try { const ta = el.querySelector('#ai-text'); ta?.addEventListener('keydown', (e)=>{ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); try { sendFromInput(context) } catch {} } }) } catch {}
-  el.querySelector('#ai-clear').addEventListener('click',()=>{ clearConversation(context) })
-  el.querySelector('#ai-s-new').addEventListener('click',()=>{ createNewSession(context) })
-  el.querySelector('#ai-s-del').addEventListener('click',()=>{ deleteCurrentSession(context) })
-  const selSession = el.querySelector('#ai-sel-session')
-  selSession?.addEventListener('change',()=>{ switchSessionBySelect(context) })
-  const btnDock = el.querySelector('#ai-dock-toggle')
-  btnDock?.addEventListener('click', ()=>{ toggleDockMode(context, el) })
-  el.querySelector('#q-continue').addEventListener('click',()=>{ quick(context,'续写') })
-  el.querySelector('#q-polish').addEventListener('click',()=>{ quick(context,'润色') })
-  el.querySelector('#q-proof').addEventListener('click',()=>{ quick(context,'纠错') })
-  el.querySelector('#q-outline').addEventListener('click',()=>{ quick(context,'提纲') })
-  el.querySelector('#q-todos').addEventListener('click',()=>{ generateTodos(context) })
-  el.querySelector('#q-todos-remind').addEventListener('click',()=>{ generateTodosAndPush(context) })
+
+  // 发送按钮和回车发送
+  el.querySelector('#ai-send').addEventListener('click',()=>{ sendFromInputWithAction(context) })
+  try { const ta = el.querySelector('#ai-text'); ta?.addEventListener('keydown', (e)=>{ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); try { sendFromInputWithAction(context) } catch {} } }) } catch {}
+
+  // 快捷操作选择即发送
+  try {
+    const actionSelect = el.querySelector('#ai-quick-action')
+    actionSelect?.addEventListener('change', async () => {
+      const action = String(actionSelect.value || '').trim()
+      if (action) {
+        actionSelect.value = '' // 重置为智能问答
+        if (action === '待办') {
+          await generateTodos(context)
+        } else if (action === '提醒') {
+          await generateTodosAndPush(context)
+        } else if (['续写', '润色', '纠错', '提纲'].includes(action)) {
+          await quick(context, action)
+        }
+      }
+    })
+  } catch {}
+
+  // 会话列表事件委托
+  const sessionList = el.querySelector('#ai-session-list')
+  sessionList?.addEventListener('click', async (e) => {
+    const delBtn = e.target.closest('.ai-session-item-del')
+    if (delBtn) {
+      e.stopPropagation()
+      const id = delBtn.dataset.id
+      if (id) await deleteSessionById(context, id)
+      return
+    }
+    const item = e.target.closest('.ai-session-item')
+    if (item) {
+      const id = item.dataset.id
+      if (id) {
+        await switchSessionById(context, id)
+        el.querySelector('#ai-history-panel')?.classList.remove('show')
+      }
+    }
+  })
   el.__mounted = true
   // 头部双击：大小切换（小↔大）
   try {
@@ -1143,6 +1369,41 @@ async function toggleDockMode(context, el){
       setDockPush('left', w)
     } else if (nextDock === 'right') {
       // 右侧停靠
+      el.classList.add('dock-right')
+      try { const bar = DOC().querySelector('.menubar'); const topH = ((bar && bar.clientHeight) || 0); el.style.top = topH + 'px'; el.style.height = 'calc(100vh - ' + topH + 'px)'; } catch { el.style.top = '0px'; el.style.height = '100vh' }
+      const w = Math.max(MIN_WIDTH, Number((cfg && cfg.win && cfg.win.w) || MIN_WIDTH))
+      el.style.right = '0px'; el.style.width = w + 'px'; el.style.left = 'auto'
+      setDockPush('right', w)
+    } else {
+      // 浮动窗口
+      el.style.top = ((cfg && cfg.win && cfg.win.y) || 60) + 'px'
+      el.style.left = ((cfg && cfg.win && cfg.win.x) || 60) + 'px'
+      el.style.width = ((cfg && cfg.win && cfg.win.w) || 520) + 'px'
+      el.style.height = ((cfg && cfg.win && cfg.win.h) || 440) + 'px'
+      el.style.right = 'auto'
+      setDockPush(false)
+    }
+    await refreshHeader(context)
+  } catch {}
+}
+
+// 直接设置停靠模式
+async function setDockMode(context, el, dockMode){
+  try {
+    const cfg = await loadCfg(context)
+    cfg.dock = dockMode
+    await saveCfg(context, cfg)
+
+    // 移除所有停靠类
+    el.classList.remove('dock-left', 'dock-right')
+
+    if (dockMode === 'left') {
+      el.classList.add('dock-left')
+      try { const bar = DOC().querySelector('.menubar'); const topH = ((bar && bar.clientHeight) || 0); el.style.top = topH + 'px'; el.style.height = 'calc(100vh - ' + topH + 'px)'; } catch { el.style.top = '0px'; el.style.height = '100vh' }
+      const w = Math.max(MIN_WIDTH, Number((cfg && cfg.win && cfg.win.w) || MIN_WIDTH))
+      el.style.left = '0px'; el.style.width = w + 'px'; el.style.right = 'auto'
+      setDockPush('left', w)
+    } else if (dockMode === 'right') {
       el.classList.add('dock-right')
       try { const bar = DOC().querySelector('.menubar'); const topH = ((bar && bar.clientHeight) || 0); el.style.top = topH + 'px'; el.style.height = 'calc(100vh - ' + topH + 'px)'; } catch { el.style.top = '0px'; el.style.height = '100vh' }
       const w = Math.max(MIN_WIDTH, Number((cfg && cfg.win && cfg.win.w) || MIN_WIDTH))
@@ -1492,6 +1753,34 @@ async function sendFromInput(context){
   await syncCurrentSessionToDB(context)
   renderMsgs(el('ai-chat'))
   await doSend(context)
+}
+
+// 带快捷操作的发送函数
+async function sendFromInputWithAction(context){
+  const actionSelect = el('ai-quick-action')
+  const action = actionSelect ? String(actionSelect.value || '').trim() : ''
+
+  // 特殊操作：待办和提醒
+  if (action === '待办') {
+    actionSelect.value = '' // 重置选择
+    await generateTodos(context)
+    return
+  }
+  if (action === '提醒') {
+    actionSelect.value = '' // 重置选择
+    await generateTodosAndPush(context)
+    return
+  }
+
+  // 其他快捷操作（续写、润色、纠错、提纲）或普通问答
+  if (action && ['续写', '润色', '纠错', '提纲'].includes(action)) {
+    actionSelect.value = '' // 重置选择
+    await quick(context, action)
+    return
+  }
+
+  // 普通问答模式
+  await sendFromInput(context)
 }
 
   async function doSend(context){
@@ -1964,7 +2253,9 @@ async function applyWinTheme(context, rootEl){
     else if (mode === 'light') isDark = false
     else if (mode === 'auto') isDark = !!(WIN().matchMedia && WIN().matchMedia('(prefers-color-scheme: dark)').matches)
     if (isDark) rootEl.classList.add('dark'); else rootEl.classList.remove('dark')
-    const btn = rootEl.querySelector('#ai-btn-theme'); if (btn) btn.textContent = isDark ? '☀️' : '🌙'
+    // 更新更多菜单中的主题文本
+    const menuTheme = rootEl.querySelector('#ai-menu-theme')
+    if (menuTheme) menuTheme.textContent = isDark ? '日间模式' : '夜间模式'
     // 更新工具栏中免费模式的图片
     if (isFreeProvider(cfg)) {
       const modelPoweredImg = el('ai-model-powered-img')

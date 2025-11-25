@@ -7,11 +7,16 @@
 - Added: Dark mode fully optimizes text display across all windows including library sidebar, dialogs, editor, and WYSIWYG mode
 - Added: AI Assistant now defaults to free model mode with deep SiliconFlow integration — built-in free AI service works out of the box, no API key configuration needed
 - Added: Free model mode displays "Powered by SiliconFlow" entry in context menu, one-click jump to register for premium model experience
+- Added: AI assistant extension now auto-installs silently in the background after first app launch, so new users don't need to open the marketplace manually
+- Added: AI assistant exposes `callAI / translate / quickAction / generateTodos` APIs so other plugins can reuse the AI capabilities directly
 - Added: Context menu now includes WebDAV sync, sync log viewer, and image hosting toggle shortcuts for more convenient operations
 - Added: Custom context menu shows "Hold Shift + Right Click to open native menu" hint to prevent confusion when native menu is overridden
 - Added: xxtui todo push plugin 0.1.5-beta introduces a unified missing-API-key dialog and embeds QR/link instructions in settings so users can quickly obtain keys
 - Added: WYSIWYG mode now fully supports AI extension capabilities — AI Assistant can instantly read/write content in WYSIWYG mode without switching back to source mode
+- Added: AI toolbar now includes a Custom/Free mode toggle and free mode lets you switch between Qwen and GLM models on the fly
+- Added: Translation can be configured to always use the free model even when custom mode is active, preserving paid quotas
 - Improved: Theme settings toggle layout optimized to three columns — Focus Mode, WYSIWYG Mode, Dark Mode at a glance
+- Improved: AI settings Base URL dropdown is reordered to place SiliconFlow first and uses it as the default custom endpoint
 - Improved: AI dialog window now includes boundary checks to ensure at least 100px remains visible when dragging, preventing window loss
 - Improved: Optimized extension settings window display logic, fixed issue where settings dialog wouldn't appear after AI window was closed
 - Improved: WebDAV sync logs now use local timestamps for better readability; logs auto-truncate when exceeding 5MB to prevent unbounded growth
