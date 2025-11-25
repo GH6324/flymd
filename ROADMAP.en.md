@@ -2,6 +2,14 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.4.5
+- Added: WebDAV sync now exposes a HTTP host whitelist so plaintext sync only runs against explicitly trusted hosts/ports, blocking accidental connections to unknown nodes.
+- Improved: The sync dialog gains inline whitelist rows with + / - controls and empty-state hints, always keeping at least one editable input for smoother configuration.
+- Improved: WYSIWYG edits now trigger the outline refresh pipeline and code-copy buttons always emit Markdown fences with language info for cleaner paste results.
+- Fixed: Reworked the WYSIWYG `Ctrl+B / Ctrl+I` shortcuts to wrap selections directly in the Markdown source so the commands keep working even after focus hiccups.
+- Improved: Save operations broadcast to the tab system, which instantly refreshes tab paths and clears the dirty asterisk after Save / Save As flows.
+- Improved: Tauri request security is refactored to isolate the default HTTP scope into a dedicated `http:allow-fetch` role, limiting network access to declared URLs.
+
 ## Update v0.4.3
 - Improved: macOS build upgraded to Universal Binary—single installer supports both Intel and Apple Silicon with native performance for each architecture
 - Improved: Resolved build failure caused by GitHub Actions deprecating macos-13 runner
