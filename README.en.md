@@ -135,6 +135,24 @@ Download the installer for your platform from [Releases](https://github.com/flyh
 - **Linux**: Supports mainstream desktop environments
 - **macOS**: Supports Intel and Apple Silicon
 
+#### macOS Installation Notes
+
+Due to the app not being notarized by Apple, you may see a "damaged" warning on first launch. Use one of these methods:
+
+**Method 1: Terminal Command (Recommended)**
+```bash
+# After downloading, run in Terminal (replace with actual app path)
+sudo xattr -r -d com.apple.quarantine /Applications/flymd.app
+```
+
+**Method 2: System Settings Method**
+1. Open Finder and locate the downloaded app
+2. **Hold Control and click** the app icon, then select "Open"
+3. Click "Open" in the dialog that appears
+4. The app will then work normally
+
+> ⚠️ **Security Note**: FlyMD is open-source software with fully transparent code and no malicious content. The "damaged" warning is only because we haven't paid for Apple's developer program to code-sign the app, not a security issue.
+
 ### Basic Operations
 | Operation | Shortcut |
 |-----------|----------|
@@ -233,6 +251,7 @@ Issues and Pull Requests are welcome!
 
 ## ❓ FAQ
 
+- **macOS says the app is "damaged" and won't open?** Since the app isn't notarized by Apple, run: `sudo xattr -r -d com.apple.quarantine /Applications/flymd.app`, or hold Control and click the app then select "Open". See [installation guide](#macOS-Installation-Notes) for details.
 - [Solution for Arch Linux blank screen](arch.md)
 - Right-click menu taken over by a plugin? Press `Shift + Right Click` to open the native context menu.
 - Need larger content or different margins? Use `Shift + Mouse Wheel` to adjust the content width (margins), and `Ctrl + Mouse Wheel` to enlarge text and images.
