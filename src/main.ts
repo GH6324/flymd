@@ -5509,6 +5509,16 @@ async function openFile2(preset?: unknown) {
     if (Array.isArray(selected)) { if (selected.length < 1) return; selected = selected[0] }
 
     const selectedPath = normalizePath(selected)
+    // 同一文件且当前存在未保存内容时，避免误覆盖编辑态
+    const currentPathNormalized = currentFilePath ? normalizePath(currentFilePath) : ''
+    const reopeningSameFile = !!currentPathNormalized && currentPathNormalized === selectedPath
+    if (reopeningSameFile && dirty) {
+      const shouldReload = await confirmNative('当前文档存在未保存的更改，重新加载将放弃这些内容，是否继续？', '重新加载文档')
+      if (!shouldReload) {
+        logDebug('openFile2.skipSameFileReload', { selectedPath })
+        return
+      }
+    }
     logDebug('openFile2.selected', { typeof: typeof selected, selected })
     logDebug('openFile2.normalizedPath', { typeof: typeof selectedPath, selectedPath })
 
