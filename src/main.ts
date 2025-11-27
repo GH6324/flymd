@@ -6319,7 +6319,7 @@ function createCustomTitleBar() {
 
   // 最小化按钮
   const minBtn = document.createElement('button')
-  minBtn.className = 'custom-titlebar-btn'
+  minBtn.className = 'custom-titlebar-btn custom-titlebar-minimize'
   minBtn.innerHTML = '－'
   minBtn.title = '最小化'
   minBtn.addEventListener('click', async () => {

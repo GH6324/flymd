@@ -4998,6 +4998,13 @@ body.focus-mode .library .lib-action-btn.active {
   margin-left: 4px;
 }
 
+/* 便签模式下隐藏退出专注模式按钮和最小化按钮 */
+body.sticky-note-mode .custom-titlebar-btn.custom-titlebar-exit-focus,
+body.sticky-note-mode .custom-titlebar-separator,
+body.sticky-note-mode .custom-titlebar-btn.custom-titlebar-minimize {
+  display: none !important;
+}
+
 /* 分隔线样式 */
 .custom-titlebar-separator {
   display: inline-block;
