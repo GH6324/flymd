@@ -62,7 +62,8 @@ import { getUiZoom, setUiZoom, applyUiZoom, zoomIn, zoomOut, zoomReset, getPrevi
 type Mode = 'edit' | 'preview'
 type LibSortMode = 'name_asc' | 'name_desc' | 'mtime_asc' | 'mtime_desc'
 type StickyNoteColor = 'white' | 'gray' | 'black' | 'yellow' | 'pink' | 'blue' | 'green' | 'orange' | 'purple' | 'red'
-type StickyNotePrefs = { opacity: number; color: StickyNoteColor }
+type StickyNoteReminderMap = Record<string, Record<string, boolean>>
+type StickyNotePrefs = { opacity: number; color: StickyNoteColor; reminders?: StickyNoteReminderMap }
 
 // 最近文件最多条数
 const RECENT_MAX = 5
@@ -376,6 +377,7 @@ let stickyNoteOnTop = false    // 窗口置顶
 let stickyTodoAutoPreview = false // 便签快速待办编辑后是否需要自动返回阅读模式
 let stickyNoteOpacity = STICKY_NOTE_DEFAULT_OPACITY   // 窗口透明度
 let stickyNoteColor: StickyNoteColor = STICKY_NOTE_DEFAULT_COLOR  // 便签背景色
+let stickyNoteReminders: StickyNoteReminderMap = {}   // 便签待办提醒状态（按文件+文本标记）
 // 边缘唤醒热区元素（非固定且隐藏时显示，鼠标靠近自动展开库）
 let _libEdgeEl: HTMLDivElement | null = null
 let _libFloatToggleEl: HTMLButtonElement | null = null
@@ -6812,7 +6814,24 @@ async function loadStickyNotePrefs(): Promise<StickyNotePrefs> {
       const color = STICKY_NOTE_VALID_COLORS.includes(rawColor as StickyNoteColor)
         ? (rawColor as StickyNoteColor)
         : STICKY_NOTE_DEFAULT_COLOR
-      return { opacity, color }
+      let reminders: StickyNoteReminderMap | undefined
+      try {
+        if (obj && typeof obj.reminders === 'object' && obj.reminders !== null) {
+          const map: StickyNoteReminderMap = {}
+          for (const [file, v] of Object.entries(obj.reminders as any)) {
+            if (!v || typeof v !== 'object') continue
+            const inner: Record<string, boolean> = {}
+            for (const [k, flag] of Object.entries(v as any)) {
+              if (flag === true) inner[k] = true
+            }
+            if (Object.keys(inner).length > 0) map[file] = inner
+          }
+          reminders = map
+        }
+      } catch {}
+      if (reminders) stickyNoteReminders = reminders
+      else stickyNoteReminders = {}
+      return { opacity, color, reminders }
     }
   } catch {}
 
@@ -6829,14 +6848,16 @@ async function loadStickyNotePrefs(): Promise<StickyNotePrefs> {
       if (savedColor && STICKY_NOTE_VALID_COLORS.includes(savedColor as StickyNoteColor)) {
         color = savedColor as StickyNoteColor
       }
-      const prefs: StickyNotePrefs = { opacity, color }
+      stickyNoteReminders = {}
+      const prefs: StickyNotePrefs = { opacity, color, reminders: stickyNoteReminders }
       try { await saveStickyNotePrefs(prefs, true) } catch {}
       return prefs
     }
   } catch {}
 
   // 3) 默认值
-  return { opacity: STICKY_NOTE_DEFAULT_OPACITY, color: STICKY_NOTE_DEFAULT_COLOR }
+  stickyNoteReminders = {}
+  return { opacity: STICKY_NOTE_DEFAULT_OPACITY, color: STICKY_NOTE_DEFAULT_COLOR, reminders: stickyNoteReminders }
 }
 
 // 保存便签模式配置到本地文件，并可选写回 Store（兼容旧版本）
@@ -6845,7 +6866,14 @@ async function saveStickyNotePrefs(prefs: StickyNotePrefs, skipStore = false): P
   const color = STICKY_NOTE_VALID_COLORS.includes(prefs.color)
     ? prefs.color
     : STICKY_NOTE_DEFAULT_COLOR
+  const reminders = prefs.reminders ?? stickyNoteReminders
+  if (reminders && typeof reminders === 'object') {
+    stickyNoteReminders = reminders
+  }
   const safe: StickyNotePrefs = { opacity, color }
+  if (stickyNoteReminders && Object.keys(stickyNoteReminders).length > 0) {
+    safe.reminders = stickyNoteReminders
+  }
   try {
     const path = await getStickyNotePrefsPath()
     await writeTextFileAnySafe(path, JSON.stringify(safe))
@@ -7102,6 +7130,7 @@ function addStickyTodoButtons() {
     // 获取预览区所有待办项
     const taskItems = preview.querySelectorAll('li.task-list-item') as NodeListOf<HTMLLIElement>
     if (!taskItems || taskItems.length === 0) return
+    const fileKey = currentFilePath || ''
 
     taskItems.forEach((item, index) => {
       // 避免重复添加按钮
@@ -7165,8 +7194,16 @@ function addStickyTodoButtons() {
       // 创建提醒按钮
       const reminderBtn = document.createElement('button')
       reminderBtn.className = 'sticky-todo-btn sticky-todo-reminder-btn'
-      reminderBtn.title = '创建提醒 (@时间)'
-      reminderBtn.innerHTML = '⏰'
+      // 若已有持久化提醒标记，则使用“已创建”状态
+      const hasReminder = !!(fileKey && stickyNoteReminders[fileKey] && stickyNoteReminders[fileKey][fullText])
+      if (hasReminder) {
+        reminderBtn.title = '已创建提醒'
+        reminderBtn.innerHTML = '🔔'
+        reminderBtn.classList.add('sticky-todo-reminder-created')
+      } else {
+        reminderBtn.title = '创建提醒 (@时间)'
+        reminderBtn.innerHTML = '⏰'
+      }
       reminderBtn.addEventListener('click', async (e) => {
         e.stopPropagation()
         await handleStickyTodoReminder(fullText, index, reminderBtn)
@@ -7248,6 +7285,12 @@ async function handleStickyTodoReminder(todoText: string, index: number, btn?: H
           btn.innerHTML = '🔔'
           btn.title = '已创建提醒'
           btn.classList.add('sticky-todo-reminder-created')
+        }
+        const fileKey = currentFilePath || ''
+        if (fileKey) {
+          if (!stickyNoteReminders[fileKey]) stickyNoteReminders[fileKey] = {}
+          stickyNoteReminders[fileKey][todoText] = true
+          await saveStickyNotePrefs({ opacity: stickyNoteOpacity, color: stickyNoteColor, reminders: stickyNoteReminders })
         }
       } catch {}
     } else if (!todoText.includes('@')) {
