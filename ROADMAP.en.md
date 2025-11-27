@@ -2,6 +2,14 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.4.8
+- Added: WebDAV sync now supports end-to-end encryption, encrypting file contents locally before upload so even compromised servers cannot easily read the plaintext.
+- Added: Restored the OMG preset endpoint and signup link in the AI Assistant settings for quick access to the OMG resource bundle.
+- Added: More theme background options and Markdown layout presets, together with a refreshed layout for the theme settings panel.
+- Fixed: WYSIWYG bold/italic shortcuts sometimes leaving the caret in the wrong position.
+- Fixed: WYSIWYG code-block copy button becoming misaligned when used inside long code blocks.
+- Fixed: Tauri HTTP scope validation so legitimate HTTP/HTTPS requests are no longer blocked by overly strict rules.
+
 ## Update v0.4.7
 - Added: Full configuration export/import so you can back up or migrate all FlyMD settings, extensions, and cache data in one shot.
 - Added: Portable Mode to store config alongside the app root, making it easy to carry FlyMD on a USB drive.
