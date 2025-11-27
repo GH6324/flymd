@@ -5360,3 +5360,10 @@ body.dark-mode .sticky-note-btn.active {
 body.dark-mode .sticky-note-btn.active:hover {
   background: rgba(96, 165, 250, 0.3);
 }
+
+/* 便签模式锁定拖动 */
+.sticky-drag-locked {
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
+  cursor: default !important;
+}

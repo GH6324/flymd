@@ -7265,17 +7265,28 @@ function toggleStickyWindowLock(btn: HTMLButtonElement) {
   btn.classList.toggle('active', stickyNoteLocked)
   btn.title = stickyNoteLocked ? '解除锁定' : '锁定窗口位置'
 
-  // 通过移除/添加 data-tauri-drag-region 属性控制拖动
-  const dragRegion = document.querySelector('.custom-titlebar-drag')
-  if (dragRegion) {
+  // 禁用所有拖动区域（同时处理属性和 CSS）
+  const dragRegions = document.querySelectorAll('.custom-titlebar-drag, .titlebar, [data-tauri-drag-region]')
+  dragRegions.forEach((el) => {
+    const htmlEl = el as HTMLElement
     if (stickyNoteLocked) {
-      dragRegion.removeAttribute('data-tauri-drag-region')
-      ;(dragRegion as HTMLElement).style.cursor = 'default'
+      // 锁定：禁用拖动
+      el.removeAttribute('data-tauri-drag-region')
+      htmlEl.style.setProperty('-webkit-app-region', 'no-drag', 'important')
+      htmlEl.style.setProperty('app-region', 'no-drag', 'important')
+      htmlEl.style.cursor = 'default'
+      htmlEl.classList.add('sticky-drag-locked')
     } else {
-      dragRegion.setAttribute('data-tauri-drag-region', '')
-      ;(dragRegion as HTMLElement).style.cursor = 'move'
+      // 解锁：恢复拖动
+      if (el.classList.contains('custom-titlebar-drag')) {
+        el.setAttribute('data-tauri-drag-region', '')
+      }
+      htmlEl.style.removeProperty('-webkit-app-region')
+      htmlEl.style.removeProperty('app-region')
+      htmlEl.style.cursor = 'move'
+      htmlEl.classList.remove('sticky-drag-locked')
     }
-  }
+  })
 }
 
 // 切换窗口置顶
@@ -7361,6 +7372,24 @@ async function enterStickyNoteMode(filePath: string) {
 
   // 6. 添加便签模式标识类
   document.body.classList.add('sticky-note-mode')
+
+  // 7. 调整窗口大小和位置（移动到右上角，缩小为便签尺寸）
+  try {
+    const win = getCurrentWindow()
+    // 便签尺寸：宽 400，高 300
+    const stickyWidth = 400
+    const stickyHeight = 300
+    // 获取主显示器尺寸
+    const { availWidth, availHeight } = window.screen
+    // 计算右上角位置（留 20px 边距）
+    const posX = availWidth - stickyWidth - 20
+    const posY = 20
+    // 设置窗口大小和位置
+    await win.setSize(new (await import('@tauri-apps/api/dpi')).LogicalSize(stickyWidth, stickyHeight))
+    await win.setPosition(new (await import('@tauri-apps/api/dpi')).LogicalPosition(posX, posY))
+  } catch (e) {
+    console.error('[便签模式] 调整窗口大小和位置失败:', e)
+  }
 }
 
 // ========== 便签模式结束 ==========
