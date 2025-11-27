@@ -120,6 +120,28 @@ function resolvePluginAsset(rel){
 }
 function isFreeProvider(cfg){ return !!cfg && cfg.provider === 'free' }
 
+// 长耗时操作的通知：支持新旧宿主，避免进度提示长时间悬挂
+function showLongRunningNotice(context, message){
+  try {
+    if (context && context.ui && typeof context.ui.showNotification === 'function') {
+      return context.ui.showNotification(message, { type: 'info', duration: 0 })
+    }
+    if (context && context.ui && typeof context.ui.notice === 'function') {
+      context.ui.notice(message, 'ok', 2000)
+    }
+  } catch {}
+  return null
+}
+
+function hideLongRunningNotice(context, id){
+  if (!id) return
+  try {
+    if (context && context.ui && typeof context.ui.hideNotification === 'function') {
+      context.ui.hideNotification(id)
+    }
+  } catch {}
+}
+
 // Markdown 渲染器（动态加载 markdown-it + highlight.js）
 async function ensureMarkdownRenderer() {
   if (__AI_MD__) return __AI_MD__
@@ -1787,6 +1809,7 @@ async function quick(context, kind){
 
 // 翻译功能：检测选中文本或整篇文档进行翻译
 async function translateText(context) {
+  let translatingNoticeId = null
   try {
     const cfg = await loadCfg(context)
     // 如果开启了"翻译始终使用免费模型"，则强制使用免费模式
@@ -1820,7 +1843,7 @@ async function translateText(context) {
       return
     }
 
-    context.ui.notice('正在翻译...', 'ok', 999999)
+    translatingNoticeId = showLongRunningNotice(context, '正在翻译...')
 
     // 构造翻译请求
     const system = '你是专业的翻译助手。'
@@ -1881,11 +1904,14 @@ async function translateText(context) {
   } catch (error) {
     console.error('翻译失败：', error)
     context.ui.notice('翻译失败：' + (error?.message || '未知错误'), 'err', 4000)
+  } finally {
+    hideLongRunningNotice(context, translatingNoticeId)
   }
 }
 
   async function generateTodosAndPush(context) {
   const GENERATING_MARKER = '[正在生成待办并创建提醒]\n\n'
+  let generatingNoticeId = null
   try {
       const cfg = await loadCfg(context)
       const isFree = isFreeProvider(cfg)
@@ -1914,7 +1940,7 @@ async function translateText(context) {
 
     // 在文档顶部显示生成提示
     context.setEditorValue(GENERATING_MARKER + content)
-    context.ui.notice('正在分析文章生成待办事项并创建提醒...', 'ok', 999999)
+    generatingNoticeId = showLongRunningNotice(context, '正在分析文章生成待办事项并创建提醒...')
 
     const { system, prompt } = buildTodoPrompt(content)
 
@@ -1989,11 +2015,14 @@ async function translateText(context) {
       }
     } catch {}
     context.ui.notice('生成待办事项失败：' + (error?.message || '未知错误'), 'err', 4000)
+  } finally {
+    hideLongRunningNotice(context, generatingNoticeId)
   }
 }
 
 async function generateTodos(context){
   const GENERATING_MARKER = '[正在生成待办]\n\n'
+  let generatingNoticeId = null
   try {
       const cfg = await loadCfg(context)
       const isFree = isFreeProvider(cfg)
@@ -2015,7 +2044,7 @@ async function generateTodos(context){
 
     // 在文档顶部显示生成提示
     context.setEditorValue(GENERATING_MARKER + content)
-    context.ui.notice('正在分析文章生成待办事项...', 'ok', 999999)
+    generatingNoticeId = showLongRunningNotice(context, '正在分析文章生成待办事项...')
 
     const { system, prompt } = buildTodoPrompt(content)
 
@@ -2075,6 +2104,8 @@ async function generateTodos(context){
       }
     } catch {}
     context.ui.notice('生成待办事项失败：' + (error?.message || '未知错误'), 'err', 4000)
+  } finally {
+    hideLongRunningNotice(context, generatingNoticeId)
   }
 }
 
