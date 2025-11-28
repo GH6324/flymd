@@ -51,7 +51,7 @@
     },
     {
       "homepage": "https://github.com/flyhunterl/flymd",
-      "name": "协同编辑（开源服务器）",
+      "name": "协同编辑",
       "description": "连接协同服务器的简单多人协同插件",
       "author": "flyMD",
       "id": "local-collab-os",
