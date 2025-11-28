@@ -3,7 +3,7 @@
   "name": "协同编辑（开源服务器）",
   "version": "0.1.0",
   "author": "flyMD",
-  "description": "连接开源协同服务器的简单多人协同插件（服务器地址 + 房间号 + 密码）",
+  "description": "连接协同服务器的简单多人协同插件",
   "main": "main.js"
 }
 

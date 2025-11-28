@@ -51,6 +51,17 @@
     },
     {
       "homepage": "https://github.com/flyhunterl/flymd",
+      "name": "协同编辑（开源服务器）",
+      "description": "连接协同服务器的简单多人协同插件",
+      "author": "flyMD",
+      "id": "local-collab-os",
+      "install": {
+        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/local-collab-os/manifest.json",
+        "type": "manifest"
+      }
+    },
+    {
+      "homepage": "https://github.com/flyhunterl/flymd",
       "name": "xxtui 待办推送（beta）",
       "description": "扫描当前文档中的未完成待办并推送到 xxtui（beta）",
       "author": "飞速MarkDown & XXTUI",
