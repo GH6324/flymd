@@ -289,6 +289,34 @@ export class TabManager {
   }
 
   /**
+   * 外部已切换文档时的同步入口
+   *
+   * 场景：某些调用直接使用 openFile2 打开了一个“已经存在于标签栏中的文件”，
+   * 此时编辑器状态已经由外部更新，不能再通过 switchToTab -> saveCurrentTabState
+   * 的顺序去保存“当前标签”，否则会把新文档内容写回错误的标签。
+   *
+   * 这里的策略是：先把 activeTabId 切换到目标标签，再调用 saveCurrentTabState，
+   * 用当前编辑器状态更新目标标签自身的内容与滚动等信息，但不触碰之前的标签内容。
+   */
+  adoptExternalSwitchToPath(filePath: string, isPdf: boolean): void {
+    const normalized = filePath.replace(/\\/g, '/')
+    const target = this.tabs.find(t => t.filePath && t.filePath.replace(/\\/g, '/') === normalized)
+    if (!target) return
+
+    const fromTabId = this.activeTabId
+    this.activeTabId = target.id
+    target.lastActiveAt = Date.now()
+    if (isPdf) {
+      target.isPdf = true
+    }
+
+    // 此时编辑器中已是目标文件的内容，直接将其保存到目标标签
+    this.saveCurrentTabState()
+
+    this.emit({ type: 'tab-switched', fromTabId, toTabId: target.id })
+  }
+
+  /**
    * 切换到指定标签
    */
   async switchToTab(tabId: string): Promise<boolean> {

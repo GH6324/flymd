@@ -687,9 +687,14 @@ function startPathSyncWatcher(): void {
     const existingTab = currentPath ? tabManager.findTabByPath(currentPath) : null
 
     if (existingTab) {
-      // 已有该文件的标签，切换过去
-      if (existingTab.id !== currentTab?.id) {
-        tabManager.switchToTab(existingTab.id)
+      // 已有该文件的标签：说明外部（如直接调用 openFile2）切换到了一个已存在的文档
+      // 此时编辑器内容已经是目标文件，不能再用 switchToTab → saveCurrentTabState 的顺序，
+      // 否则会把新内容写回“旧标签”。改为通过专门的 adoptExternalSwitch 入口，只更新目标标签。
+      if (existingTab.id !== currentTab?.id && currentPath) {
+        tabManager.adoptExternalSwitchToPath(currentPath, isPdf)
+      } else if (currentTab && currentTab.id === existingTab.id) {
+        // 同一个标签路径变化（极少见），只需同步 PDF 标记
+        currentTab.isPdf = isPdf
       }
     } else if (currentPath && currentTab) {
       // 新文件，检查是否按住 Ctrl

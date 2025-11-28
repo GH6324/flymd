@@ -550,9 +550,10 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
 
         const isCtrlLike = !!(ev.ctrlKey || ev.metaKey)
         const win = (window as any)
+        const hasFlyOpen = !!(win && typeof win.flymdOpenFile === 'function')
 
-        // Ctrl+左键：通过全局 flymdOpenFile（带标签系统）打开
-        if (isCtrlLike && win && typeof win.flymdOpenFile === 'function') {
+        // Ctrl+左键：通过全局 flymdOpenFile（带标签系统）打开，并在需要时模拟 Ctrl+E 进入编辑模式
+        if (isCtrlLike && hasFlyOpen) {
           ev.preventDefault()
           try { ev.stopPropagation() } catch {}
           const getPath = () => {
@@ -585,11 +586,34 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
           return
         }
 
-        // 普通单击：沿用旧行为
-        try { await state.opts?.onOpenFile(e.path) } catch {}
+        // 普通单击：若多标签系统已挂钩，则通过 flymdOpenFile 打开；否则沿用旧行为
+        if (hasFlyOpen) {
+          try {
+            await win.flymdOpenFile(e.path)
+          } catch {
+            try { await state.opts?.onOpenFile(e.path) } catch {}
+          }
+        } else {
+          try { await state.opts?.onOpenFile(e.path) } catch {}
+        }
       })
-      // 双击加载，兼容旧习惯
-      row.addEventListener('dblclick', async () => { await state.opts?.onOpenFile(e.path) })
+      // 双击加载，兼容旧习惯；同样优先走 flymdOpenFile（若存在）
+      row.addEventListener('dblclick', async (ev) => {
+        try {
+          if (ev.button !== 0) return
+        } catch {}
+        const win = (window as any)
+        const hasFlyOpen = !!(win && typeof win.flymdOpenFile === 'function')
+        if (hasFlyOpen) {
+          try {
+            await win.flymdOpenFile(e.path)
+          } catch {
+            try { await state.opts?.onOpenFile(e.path) } catch {}
+          }
+        } else {
+          try { await state.opts?.onOpenFile(e.path) } catch {}
+        }
+      })
 
       row.setAttribute('draggable','true')
 
