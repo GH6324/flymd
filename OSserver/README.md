@@ -23,6 +23,8 @@
 上传OSserver文件到服务器，执行：
 
 ```bash
+npm init -y        #
+npm install ws     
 node server.js
 ```
 
