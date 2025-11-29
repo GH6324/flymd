@@ -93,8 +93,8 @@ FlyMD 是一款仅 **7MB** 的高性能 Markdown 编辑器，支持**所见所�
 **透明度自定义**
 **支持可视化交互**
 
-<img width="400" height="300" alt="20251128_143927_883" src="https://github.com/user-attachments/assets/0cfa8789-93e0-4925-9da8-a1c0711ca55c" />
 
+![PixPin_2025-11-29_11-55-42](https://github.com/user-attachments/assets/c4c04fa6-00da-42f5-b12e-9a31de16b59e)
 
 ### 💻 平台与格式
 
