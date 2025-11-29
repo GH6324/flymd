@@ -11812,41 +11812,6 @@ async function refreshInstalledExtensionsUI(): Promise<void> {
   } catch {}
 }
 
-// 同步市场区块中某个插件的安装状态（按钮文案/可用性）
-async function syncMarketInstallState(pluginId?: string): Promise<void> {
-  try {
-    if (!_extListHost) return
-    const host = _extListHost
-    const unifiedList = host.querySelector('.ext-list') as HTMLDivElement | null
-    if (!unifiedList) return
-
-    let installedMap: Record<string, InstalledPlugin> = {}
-    try {
-      installedMap = await getInstalledPlugins()
-    } catch {
-      installedMap = {}
-    }
-
-    const rows = unifiedList.querySelectorAll<HTMLDivElement>('[data-type="market"]')
-    rows.forEach((row) => {
-      try {
-        const id = row.getAttribute('data-plugin-id') || ''
-        if (pluginId && id !== pluginId) return
-        const btn = row.querySelector('button.btn.primary') as HTMLButtonElement | null
-        if (!btn) return
-        const exists = !!installedMap[id]
-        if (exists) {
-          btn.textContent = t('ext.install.ok')
-          btn.disabled = true
-        } else {
-          btn.textContent = t('ext.install.btn')
-          btn.disabled = false
-        }
-      } catch {}
-    })
-  } catch {}
-}
-
 // 渲染“已安装扩展”区块（统一复用，支持局部刷新）
 function renderInstalledExtensions(
   unifiedList: HTMLDivElement,
@@ -12010,8 +11975,7 @@ function renderInstalledExtensions(
         if (p.id === CORE_AI_EXTENSION_ID) {
           await markCoreExtensionBlocked(p.id)
         }
-        await refreshInstalledExtensionsUI()
-        try { await syncMarketInstallState(p.id) } catch {}
+        await refreshExtensionsUI()
         pluginNotice(t('ext.removed'), 'ok', 1200)
       } catch (err) { showError(t('ext.remove.fail'), err) }
     })
@@ -12198,10 +12162,27 @@ async function refreshExtensionsUI(): Promise<void> {
         return
       }
 
+      // 每次根据最新安装列表过滤，已安装的扩展不再出现在市场区块
+      let installedMapNow: Record<string, InstalledPlugin> = {}
+      try {
+        installedMapNow = await getInstalledPlugins()
+      } catch {
+        installedMapNow = {}
+      }
+      const installedIds = new Set(Object.keys(installedMapNow))
+
       const keywordRaw = (_extMarketSearchText || '').trim().toLowerCase()
-      let items = source
+      let items = source.filter((it) => {
+        try {
+          if (!it || !it.id) return false
+          if (installedIds.has(it.id)) return false
+          return true
+        } catch {
+          return true
+        }
+      })
       if (keywordRaw) {
-        items = source.filter((it) => {
+        items = items.filter((it) => {
           try {
             const parts: string[] = []
             if (it.name) parts.push(String(it.name))
@@ -12273,23 +12254,14 @@ async function refreshExtensionsUI(): Promise<void> {
 
         const actions = document.createElement('div'); actions.className = 'ext-actions'
         const btnInstall = document.createElement('button'); btnInstall.className = 'btn primary'; btnInstall.textContent = t('ext.install.btn')
-        try {
-          const installedMap2 = await getInstalledPlugins()
-          const exists = installedMap2[it.id]
-          if (exists) { btnInstall.textContent = t('ext.install.ok'); (btnInstall as HTMLButtonElement).disabled = true }
-        } catch {}
         btnInstall.addEventListener('click', async () => {
           try {
             btnInstall.textContent = t('ext.install.btn') + '...'; (btnInstall as HTMLButtonElement).disabled = true
             const rec = await installPluginFromGit(it.install.ref)
             await activatePlugin(rec)
             try {
-              btnInstall.textContent = t('ext.install.ok')
-              (btnInstall as HTMLButtonElement).disabled = true
-            } catch {}
-            try {
               await refreshInstalledExtensionsUI()
-              await syncMarketInstallState(rec.id)
+              await applyMarketFilter()
             } catch {}
             pluginNotice('安装成功', 'ok', 1500)
           } catch (e) {
@@ -12413,10 +12385,7 @@ function ensureExtensionsOverlayMounted() {
       }
       await activatePlugin(rec)
       _extInstallInput!.value = ''
-      try {
-        await refreshInstalledExtensionsUI()
-        await syncMarketInstallState(rec.id)
-      } catch {}
+      try { await refreshExtensionsUI() } catch {}
       pluginNotice(t('ext.install.ok'), 'ok', 1500)
     } catch (e) {
       void appendLog('ERROR', t('ext.install.fail'), e)
