@@ -502,9 +502,31 @@ function hookOpenFile(): void {
       if (activeTab) {
         tabManager.updateCurrentTabPath(afterPath)
         tabManager.updateTabContent(activeTab.id, content)
-        // 检测是否是 PDF
-        if (afterPath.toLowerCase().endsWith('.pdf')) {
+
+        const isPdf = afterPath.toLowerCase().endsWith('.pdf')
+        if (isPdf) {
+          // 标记为 PDF 标签
           activeTab.isPdf = true
+
+          // 最笨的办法：打开 PDF 后自动模拟“切换一次标签再切回来”
+          // 加一个小延时，确保当前标签状态/预览渲染完成再切换
+          try {
+            const tabs = tabManager.getTabs()
+            if (tabs.length > 1) {
+              const idx = tabs.findIndex(t => t.id === activeTab.id)
+              if (idx !== -1) {
+                const otherIdx = (idx + 1) % tabs.length
+                const otherId = tabs[otherIdx].id
+                if (otherId !== activeTab.id) {
+                  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+                  await delay(200)
+                  await tabManager.switchToTab(otherId)
+                  await delay(200)
+                  await tabManager.switchToTab(activeTab.id)
+                }
+              }
+            }
+          } catch {}
         }
       }
     }
