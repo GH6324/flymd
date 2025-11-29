@@ -218,7 +218,7 @@ export function activate(context) {
   context.addContextMenuItem({
     label: '插入表格…',
     icon: '📊',
-    condition: (ctx) => ctx.mode === 'edit',
+    condition: (ctx) => ctx.mode === 'edit' || ctx.mode === 'wysiwyg',
     onClick: () => {
       openTablePicker(context);
     }
