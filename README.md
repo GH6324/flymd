@@ -303,7 +303,14 @@ FlyMD 支持通过扩展插件增强功能：
 | [highlight.js](https://highlightjs.org/) | 代码高亮 |
 | [KaTeX](https://katex.org/) | 数学公式渲染 |
 | [Mermaid](https://mermaid.js.org/) | 图表绘制 |
-| [Siliconflow](https://cloud.siliconflow.cn/i/X96CT74a) | 模型支持 |
+
+### 🤝 生态合作伙伴
+
+| 合作伙伴 | 简介 | 支持类型 |
+|---------|------|---------|
+| [硅基流动](https://cloud.siliconflow.cn/i/X96CT74a) | 致力成为全球领先的AI能力提供商 | 模型服务支持 |
+| [XXTUI](https://www.xxtui.com/) | 简单高效的个人推送API | 推送服务支持 |
+| [x666.me](https://x666.me/register?aff=yUSz) | 用心提供优质 AI 接口支持的公益站 | 模型服务支持 |
 
 ---
 

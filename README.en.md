@@ -305,7 +305,14 @@ Full License: [LICENSE](LICENSE) | Third-Party Components: [THIRD-PARTY-NOTICES.
 | [highlight.js](https://highlightjs.org/) | Code highlighting |
 | [KaTeX](https://katex.org/) | Math formula rendering |
 | [Mermaid](https://mermaid.js.org/) | Diagram drawing |
-| [Siliconflow](https://cloud.siliconflow.cn/i/X96CT74a) | Model support |
+
+### 🤝 Ecosystem Partners
+
+| Partner | Description | Support Type |
+|---------|-------------|--------------|
+| [SiliconFlow](https://cloud.siliconflow.cn/i/X96CT74a) | Leading AI capability provider | Model Service Support |
+| [XXTUI](https://www.xxtui.com/) | Simple and efficient personal push API | Push Service Support |
+| [x666.me](https://x666.me/register?aff=yUSz) | Quality AI API support with care | Model Service Support |
 
 ---
 
