@@ -6338,20 +6338,17 @@ function syncLibraryFloatToggle() {
       const libraryEl = document.getElementById('library') as HTMLDivElement | null
       const outlineEl = document.getElementById('lib-outline') as HTMLDivElement | null
       if (!container || !outlineEl) return
-      // 默认：嵌入库侧栏（与现有行为一致）
+      // 默认：嵌入库侧栏（与旧行为一致）
       if (outlineLayout === 'embedded') {
         if (libraryEl && outlineEl.parentElement !== libraryEl) {
           libraryEl.appendChild(outlineEl)
         }
         outlineEl.classList.remove('outline-floating', 'side-left', 'side-right')
         container.classList.remove('with-outline-left', 'with-outline-right')
-        // 清理大纲额外占位，恢复仅由库/插件控制
-        container.style.removeProperty('--gap-left-outline')
-        container.style.removeProperty('--gap-right-outline')
         notifyWorkspaceLayoutChanged()
         return
       }
-      // 剥离：挂到容器下，作为独立列
+      // 剥离：挂到容器下作为独立列
       if (outlineEl.parentElement !== container) {
         container.appendChild(outlineEl)
       }
@@ -6361,10 +6358,6 @@ function syncLibraryFloatToggle() {
       outlineEl.classList.toggle('side-right', !isLeft)
       container.classList.toggle('with-outline-left', isLeft)
       container.classList.toggle('with-outline-right', !isLeft)
-      // 固定大纲列宽度，使用 CSS 变量告知编辑区/预览
-      const widthPx = 260
-      container.style.setProperty('--gap-left-outline', isLeft ? `${widthPx}px` : '0px')
-      container.style.setProperty('--gap-right-outline', !isLeft ? `${widthPx}px` : '0px')
       notifyWorkspaceLayoutChanged()
     } catch {}
   }

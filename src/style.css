@@ -1110,7 +1110,8 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   left: 280px; /* 与 .library 宽度保持一致，消除中间空隙 */
 }
 .lib-outline.outline-floating.side-right {
-  right: var(--gap-right-library, 0px);
+  /* 右侧：始终贴在右侧 dock/插件面板的左边缘；若无插件则贴容器右侧 */
+  right: calc(var(--gap-right-library, 0px) + var(--dock-right-gap, 0px));
 }
 
 .lib-outline .ol-item {
