@@ -2701,8 +2701,8 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 /* 库侧栏：简洁模式（隐藏图标、无悬浮效果、紧凑行高） */
 .library .lib-node { min-height: 22px; gap: 0; padding: 3px 8px; }
 .library .lib-node .lib-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; padding-left: 0; }
-.library .lib-node .lib-tg { width: 14px; height: 14px; color: var(--muted); transition: transform .12s ease; opacity: 0.4; }
-.library .lib-node.expanded .lib-tg { transform: rotate(90deg); color: var(--fg); opacity: 0.7; }
+.library .lib-node .lib-tg { width: 14px; height: 14px; color: var(--muted); opacity: 0.3; }
+.library .lib-node.expanded .lib-tg { transform: rotate(90deg); color: var(--muted); opacity: 0.5; }
 /* 隐藏所有图标 */
 .library .lib-ico,
 .library .lib-ico-folder,
@@ -3640,7 +3640,7 @@ html, body { overflow: hidden; }
 
 
 /* 库侧栏选中态 */
-.library .lib-node.selected { background: rgba(127,127,127,0.16); }
+.library .lib-node.selected { background: rgba(127,127,127,0.08); }
 
 
 /* FileTree Modals */
@@ -5308,7 +5308,7 @@ body.focus-mode.custom-titlebar-active .focus-trigger-zone {
   border-radius: 4px 4px 0 0;
   cursor: pointer;
   font-size: 13px;
-  color: var(--muted);
+  color: rgba(127, 127, 127, 0.7);
   gap: 6px;
   flex-shrink: 0;
   max-width: 180px;
