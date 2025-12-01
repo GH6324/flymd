@@ -151,6 +151,8 @@ function syncDockedWindowWithWorkspace() {
   try {
     const winEl = el('ai-assist-win')
     if (!winEl) return
+    // 窗口隐藏时不应重新设置推挤
+    if (winEl.style.display === 'none' || winEl.classList.contains('ai-win-hidden')) return
     const dockLeft = winEl.classList.contains('dock-left')
     const dockRight = winEl.classList.contains('dock-right')
     const dockBottom = winEl.classList.contains('dock-bottom')
@@ -1333,6 +1335,8 @@ function setDockPush(side, width){
     } else {
       cont.style.setProperty('--ai-left', '0px')
       cont.style.setProperty('--ai-right', '0px')
+      cont.style.setProperty('--dock-left-gap', '0px')
+      cont.style.setProperty('--dock-right-gap', '0px')
     }
   } catch {}
 }
