@@ -226,6 +226,45 @@ body[data-scrollbar-visible="true"] .library {
   background: rgba(127, 127, 127, 0.08);
 }
 
+/* 窗口控制按钮（紧凑标题栏模式） */
+.window-controls {
+  display: none;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+body.compact-titlebar .window-controls {
+  display: flex;
+}
+
+.window-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  width: 32px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+  opacity: 0.7;
+  padding: 0;
+  margin-left: 2px;
+  transition: background 0.2s ease, opacity 0.2s ease, color 0.2s ease;
+}
+
+.window-btn:hover {
+  background: rgba(127, 127, 127, 0.12);
+  opacity: 1;
+}
+
+.window-btn.window-close:hover {
+  background: rgba(232, 17, 35, 0.9);
+  color: #fff;
+}
+
 /* 更新红点提示：为有更新的菜单项显示小圆点 */
 .menu-item.has-update::after {
   content: '';
@@ -1877,7 +1916,7 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 }
 
 .theme-toggle-label.theme-toggle-third {
-  width: calc(33.33% - 5px);
+  width: calc(25% - 6px);
   gap: 8px;
 }
 

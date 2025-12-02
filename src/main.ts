@@ -376,6 +376,8 @@ let _libLeaveTimer: number | null = null
 let focusMode = false
 let _focusTitlebarShowTimer: number | null = null
 let _focusTitlebarHideTimer: number | null = null
+// 紧凑标题栏：隐藏原生窗口标题栏，在应用内使用自绘控制按钮
+let compactTitlebar = false
 // 便签模式：专注+阅读+无侧栏，顶部显示锁定/置顶按钮
 let stickyNoteMode = false
 let stickyNoteLocked = false   // 窗口位置锁定（禁止拖动）
@@ -1888,6 +1890,11 @@ app.innerHTML = `
       <div class="menu-item" id="btn-extensions" title="${t('menu.extensions')}">${t('menu.extensions')}</div>
     </div>
     <div class="filename" id="filename">${t('filename.untitled')}</div>
+    <div class="window-controls" id="window-controls">
+      <button class="window-btn window-minimize" id="window-minimize" title="最小化">－</button>
+      <button class="window-btn window-maximize" id="window-maximize" title="最大化">□</button>
+      <button class="window-btn window-close" id="window-close" title="关闭">×</button>
+    </div>
   </div>
   <div class="focus-trigger-zone" id="focus-trigger-zone"></div>
   <div class="container">
@@ -1915,6 +1922,42 @@ try { initFocusModeEvents() } catch {}
 const editor = document.getElementById('editor') as HTMLTextAreaElement
 const preview = document.getElementById('preview') as HTMLDivElement
 const filenameLabel = document.getElementById('filename') as HTMLDivElement
+// 窗口控制按钮（紧凑标题栏模式使用）
+try {
+  const minBtn = document.getElementById('window-minimize') as HTMLButtonElement | null
+  const maxBtn = document.getElementById('window-maximize') as HTMLButtonElement | null
+  const closeBtn = document.getElementById('window-close') as HTMLButtonElement | null
+  if (minBtn) {
+    minBtn.addEventListener('click', async () => {
+      try { await getCurrentWindow().minimize() } catch {}
+    })
+  }
+  if (maxBtn) {
+    maxBtn.addEventListener('click', async () => {
+      try {
+        const win = getCurrentWindow()
+        const isMax = await win.isMaximized()
+        if (isMax) {
+          await win.unmaximize()
+          maxBtn.textContent = '□'
+          maxBtn.title = '最大化'
+        } else {
+          await win.maximize()
+          maxBtn.textContent = '＋'
+          maxBtn.title = '还原'
+        }
+      } catch {}
+    })
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener('click', async () => {
+      try {
+        const win = getCurrentWindow()
+        await win.close()
+      } catch {}
+    })
+  }
+} catch {}
 // 任务列表：扫描与回写（阅读模式）
 let _taskMapLast: Array<{ line: number; ch: number }> = []
 let _taskEventsBound = false
@@ -6870,27 +6913,30 @@ function removeCustomTitleBar() {
   document.body.classList.remove('custom-titlebar-active')
 }
 
+// 根据当前状态统一更新窗口是否显示原生标题栏
+async function applyWindowDecorations(): Promise<void> {
+  try {
+    const win = getCurrentWindow()
+    const hideNative = focusMode || compactTitlebar
+    await win.setDecorations(!hideNative)
+  } catch (err) {
+    console.warn('切换窗口装饰失败:', err)
+  }
+}
+
 async function toggleFocusMode(enabled?: boolean) {
   focusMode = enabled !== undefined ? enabled : !focusMode
   document.body.classList.toggle('focus-mode', focusMode)
 
-  // 动态切换窗口装饰（标题栏）
+  // 专注模式：启用自定义标题栏；普通模式：移除，仅保留紧凑标题栏按钮
   try {
-    const win = getCurrentWindow()
     if (focusMode) {
-      // 专注模式：隐藏原生标题栏
-      await win.setDecorations(false)
-      // 创建自定义控制按钮
       createCustomTitleBar()
     } else {
-      // 普通模式：显示原生标题栏
-      await win.setDecorations(true)
-      // 移除自定义控制按钮
       removeCustomTitleBar()
     }
-  } catch (err) {
-    console.warn('切换窗口装饰失败:', err)
-  }
+    await applyWindowDecorations()
+  } catch {}
 
   // 如果退出专注模式，确保 titlebar 可见
   if (!focusMode) {
@@ -6906,6 +6952,36 @@ async function toggleFocusMode(enabled?: boolean) {
 
 async function getFocusMode(): Promise<boolean> {
   try { if (!store) return focusMode; const v = await store.get('focusMode'); return !!v } catch { return focusMode }
+}
+
+// 紧凑标题栏：使用 Store 持久化，并通过 body 类与窗口装饰体现
+async function getCompactTitlebar(): Promise<boolean> {
+  try {
+    if (!store) return compactTitlebar
+    const v = await store.get('compactTitlebar')
+    return !!v
+  } catch {
+    return compactTitlebar
+  }
+}
+
+async function setCompactTitlebar(enabled: boolean, persist = true): Promise<void> {
+  compactTitlebar = !!enabled
+  try { document.body.classList.toggle('compact-titlebar', compactTitlebar) } catch {}
+  if (persist && store) {
+    try {
+      await store.set('compactTitlebar', compactTitlebar)
+      await store.save()
+    } catch {}
+  }
+  try { await applyWindowDecorations() } catch {}
+}
+
+// 暴露给主题面板调用
+;(window as any).flymdSetCompactTitlebar = async (enabled: boolean) => {
+  try {
+    await setCompactTitlebar(enabled, true)
+  } catch {}
 }
 
 function initFocusModeEvents() {
@@ -8083,10 +8159,7 @@ async function resetFocusModeDecorations(): Promise<void> {
     focusMode = false
     document.body.classList.remove('focus-mode')
     try { removeCustomTitleBar() } catch {}
-    try {
-      const win = getCurrentWindow()
-      await win.setDecorations(true)
-    } catch {}
+    try { await applyWindowDecorations() } catch {}
   } catch {}
 }
 
@@ -10814,6 +10887,11 @@ function bindEvents() {
       const layout = await getOutlineLayout()
       outlineLayout = layout
       applyOutlineLayout()
+    } catch {}
+    // 读取紧凑标题栏设置并应用
+    try {
+      const compact = await getCompactTitlebar()
+      await setCompactTitlebar(compact, false)
     } catch {}
     await maybeAutoImportPortableBackup()
     try {

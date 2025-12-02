@@ -338,6 +338,13 @@ function createPanel(): HTMLDivElement {
             <span class="theme-toggle-slider"></span>
           </div>
         </label>
+        <label class="theme-toggle-label theme-toggle-third theme-toggle-boxed" for="compact-titlebar-toggle">
+          <span class="theme-toggle-text">紧凑标题栏</span>
+          <div class="theme-toggle-switch">
+            <input type="checkbox" id="compact-titlebar-toggle" class="theme-toggle-input" />
+            <span class="theme-toggle-slider"></span>
+          </div>
+        </label>
       </div>
     </div>
     <div class="theme-section">
@@ -832,6 +839,25 @@ export function initThemeUI(): void {
         }
       })
       observer.observe(document.body, { attributes: true, attributeFilter: ['class'] })
+    }
+
+    // 紧凑标题栏开关
+    const compactToggle = panel.querySelector('#compact-titlebar-toggle') as HTMLInputElement | null
+    if (compactToggle) {
+      // 初始化：同步 body 上的 compact-titlebar 类
+      compactToggle.checked = document.body.classList.contains('compact-titlebar')
+      compactToggle.addEventListener('change', async () => {
+        const enabled = compactToggle.checked
+        const setFunc = (window as any).flymdSetCompactTitlebar
+        if (typeof setFunc === 'function') {
+          await setFunc(enabled)
+        } else {
+          // 降级：仅切换 CSS 类并广播事件
+          document.body.classList.toggle('compact-titlebar', enabled)
+          const ev = new CustomEvent('flymd:compact-titlebar:toggle', { detail: { enabled } })
+          window.dispatchEvent(ev)
+        }
+      })
     }
 
     // 默认使用所见模式开关
