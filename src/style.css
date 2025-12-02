@@ -3764,16 +3764,34 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-pun
 /* 所见模式复制按钮：亮色模式下使用深色样式以提高对比度 */
 .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy {
   background: rgba(127, 127, 127, 0.12);
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.12);
   color: var(--fg);
-  /* 调整位置：向左5px，向下5px */
-  transform: translate(-5px, 5px);
+  /* 调整位置：向左5px，向上1px */
+  transform: translate(-5px, -1px);
+  /* 缩小按钮尺寸 */
+  padding: 3px 4px;
+  font-size: 0;
+  line-height: 1;
+  min-width: auto;
+  width: auto;
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  opacity: 0.75;
+  transition: all 0.15s ease;
+}
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy svg {
+  display: block;
+  flex-shrink: 0;
 }
 .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover {
   background: rgba(127, 127, 127, 0.20);
-  border-color: rgba(0, 0, 0, 0.25);
+  border-color: rgba(0, 0, 0, 0.22);
   color: var(--fg);
-  transform: translate(-5px, 4px);
+  transform: translate(-5px, -2px);
+  opacity: 1;
 }
 
 /* 所见模式复制按钮：深色模式下使用浅色样式 */
