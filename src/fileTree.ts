@@ -886,12 +886,10 @@ async function renderRoot(root: string) {
   })
 }
 
-async function refresh() {
+// 内部刷新函数，不重新设置监听
+async function refreshTree() {
   const root = await state.opts!.getRoot()
-  // 若未选择库目录，不再在侧栏显示提示，保持空白即可，避免误导用户
   if (!root) {
-    state.currentRoot = null
-    state.expanded = new Set<string>()
     if (state.container) state.container.innerHTML = ''
     return
   }
@@ -902,23 +900,66 @@ async function refresh() {
   await renderRoot(root)
 }
 
+async function refresh() {
+  const root = await state.opts!.getRoot()
+  // 若未选择库目录，不再在侧栏显示提示，保持空白即可，避免误导用户
+  if (!root) {
+    state.currentRoot = null
+    state.expanded = new Set<string>()
+    if (state.container) state.container.innerHTML = ''
+    // 清理旧的监听器
+    if (state.unwatch) {
+      try { state.unwatch() } catch {}
+      state.unwatch = null
+      state.watching = false
+    }
+    return
+  }
+
+  // 如果库根目录改变了，需要重新设置监听
+  if (state.currentRoot !== root) {
+    if (state.unwatch) {
+      try { state.unwatch() } catch {}
+      state.unwatch = null
+      state.watching = false
+    }
+  }
+
+  state.currentRoot = root
+  restoreExpandedState(root)
+  // 刷新前清理目录缓存，确保显示与实际文件状态一致
+  try { hasDocCache.clear(); hasDocPending.clear() } catch {}
+  await renderRoot(root)
+
+  // 设置文件监听（如果还未设置或根目录改变了）
+  if (!state.watching) {
+    try {
+      const u = await watchImmediate(root, async (event) => {
+        console.log('[文件树] 检测到文件变化:', event.type, event.paths)
+        // 使用内部刷新函数，避免重新设置监听
+        await refreshTree()
+      }, { recursive: true })
+      state.unwatch = () => { try { u(); } catch {} }
+      state.watching = true
+      console.log('[文件树] 已启动文件监听:', root)
+    } catch (err) {
+      console.error('[文件树] 启动文件监听失败:', err)
+      console.log('[文件树] 注意: 文件系统监听不可用，需要手动刷新或使用插件提供的刷新功能')
+      // 如果文件监听失败，标记为已尝试，避免重复尝试
+      state.watching = true
+    }
+  }
+}
+
 async function init(container: HTMLElement, opts: FileTreeOptions) {
   state.container = container; state.opts = opts
   loadFolderOrder()
-  // 兜底：在整个文件树区域内允许 dragover，避免出现全局“禁止”光标
+  // 兜底：在整个文件树区域内允许 dragover，避免出现全局"禁止"光标
   try {
     container.addEventListener('dragover', (ev) => { ev.preventDefault() })
   } catch {}
   await refresh()
-  if (!state.watching) {
-    try {
-      const root = await state.opts.getRoot(); if (root) {
-        const u = await watchImmediate(root, { recursive: true } as any, async () => { await refresh() })
-        state.unwatch = () => { try { (u as any).unwatch?.(); } catch {} }
-        state.watching = true
-      }
-    } catch { /* ignore */ }
-  }
+  // 文件监听已经在 refresh() 函数中自动设置
 }
 
 async function newFileInSelected() {

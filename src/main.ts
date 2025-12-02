@@ -6173,6 +6173,13 @@ try {
     // UI 刷新
     ;(window as any).flymdRefreshTitle = () => refreshTitle()
     ;(window as any).flymdRefreshPreview = () => { try { renderPreview() } catch {} }
+    ;(window as any).flymdRefreshFileTree = async () => {
+      try {
+        await fileTree.refresh()
+      } catch (e) {
+        console.error('[文件树] 手动刷新失败:', e)
+      }
+    }
     // 模式切换快捷逻辑（等价于 Ctrl+E）
     ;(window as any).flymdToggleModeShortcut = () => handleToggleModeShortcut()
     // 文件操作
