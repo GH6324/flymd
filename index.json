@@ -76,7 +76,7 @@
     {
       "homepage": "https://github.com/flyhunterl/flymd",
       "name": "xxtui 待办推送",
-      "description": "扫描当前文档中的未完成待办并推送到 xxtui（beta）",
+      "description": "扫描当前文档中的未完成待办并推送到 xxtui",
       "author": "飞速MarkDown & XXTUI",
       "id": "xxtui-todo-push",
       "featured": true,
