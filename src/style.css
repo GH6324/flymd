@@ -3840,9 +3840,49 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-pun
   opacity: 1;
 }
 
-/* 所见模式复制按钮：深色模式下使用浅色样式 */
+/* 所见模式删除按钮：与复制按钮样式一致 */
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete {
+  background: rgba(127, 127, 127, 0.12);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: var(--fg);
+  padding: 3px 4px;
+  font-size: 0;
+  line-height: 1;
+  min-width: auto;
+  width: auto;
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  opacity: 0.75;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete svg {
+  display: block;
+  flex-shrink: 0;
+}
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete:hover {
+  background: rgba(220, 38, 38, 0.15);
+  border-color: rgba(220, 38, 38, 0.4);
+  color: #dc2626;
+  opacity: 1;
+}
+/* 删除按钮二次确认状态 */
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete.armed {
+  background: rgba(220, 38, 38, 0.2);
+  border-color: rgba(220, 38, 38, 0.5);
+  color: #dc2626;
+  font-size: 11px;
+  padding: 3px 6px;
+  opacity: 1;
+}
+
+/* 所见模式复制/删除按钮：深色模式下使用浅色样式 */
 @media (prefers-color-scheme: dark) {
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy {
+  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy,
+  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: #e5e7eb;
@@ -3852,10 +3892,21 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-pun
     border-color: rgba(255, 255, 255, 0.4);
     color: #fff;
   }
+  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #f87171;
+  }
+  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete.armed {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #f87171;
+  }
 }
 
-/* 夜间模式切换时的复制按钮样式 */
-body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy {
+/* 夜间模式切换时的复制/删除按钮样式 */
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy,
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete {
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: #e5e7eb;
@@ -3864,6 +3915,16 @@ body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy
   background: rgba(255, 255, 255, 0.2);
   border-color: rgba(255, 255, 255, 0.4);
   color: #fff;
+}
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f87171;
+}
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete.armed {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #f87171;
 }
 
 /* 代码滚动条可以保留以保证可用性；如需隐藏，可启用下两行 */
@@ -3912,7 +3973,8 @@ body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy
   transform: translateY(-1px);
   box-shadow: 0 2px 6px rgba(0,0,0,0.1);
 }
-#md-wysiwyg-root .overlay-host .ov-codecopy .code-copy {
+#md-wysiwyg-root .overlay-host .ov-codecopy .code-copy,
+#md-wysiwyg-root .overlay-host .ov-codecopy .code-delete {
   position: static;
   top: auto;
   right: auto;

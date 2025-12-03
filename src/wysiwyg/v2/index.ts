@@ -734,8 +734,10 @@ function setupCodeCopyOverlay(host: HTMLElement | null) {
   let scrollHost: HTMLElement | null = null
   try {
     const root = _root as HTMLElement | null
+    // 优先使用 .scrollView，其次是 .ProseMirror
     const sv = root?.querySelector('.scrollView') as HTMLElement | null
-    scrollHost = sv || host || root
+    const pm = root?.querySelector('.ProseMirror') as HTMLElement | null
+    scrollHost = sv || pm || host || root
   } catch {
     scrollHost = host
   }
@@ -743,7 +745,10 @@ function setupCodeCopyOverlay(host: HTMLElement | null) {
   _codeCopyHost = scrollHost
   const onScroll = () => { scheduleCodeCopyRefresh() }
   _codeCopyScrollHandler = onScroll
+  // 同时绑定到 scrollHost 和其父容器，确保滚动事件被捕获
   try { scrollHost.addEventListener('scroll', onScroll, { passive: true }) } catch { try { scrollHost.addEventListener('scroll', onScroll) } catch {} }
+  // 额外绑定到 _root，捕获可能的冒泡事件
+  try { if (_root && _root !== scrollHost) _root.addEventListener('scroll', onScroll, { passive: true, capture: true }) } catch {}
   if (typeof ResizeObserver !== 'undefined') {
     try {
       _codeCopyResizeObserver = new ResizeObserver(() => { scheduleCodeCopyRefresh() })
@@ -790,13 +795,12 @@ function positionCodeCopyWrap(pre: HTMLElement, wrap: HTMLDivElement, rootRc: DO
       wrap.style.display = 'none'
       return
     }
-    // 代码块在可视区域内时，确保按钮可见
-    wrap.style.display = ''
-    const btn = wrap.querySelector('button.code-copy') as HTMLButtonElement | null
-    const btnRc = btn ? btn.getBoundingClientRect() : wrap.getBoundingClientRect()
-    const btnW = btnRc.width || btn?.offsetWidth || wrap.offsetWidth || 0
+    // 代码块在可视区域内时，确保按钮可见（flex 布局）
+    wrap.style.display = 'flex'
+    // 使用整个容器的宽度（包含 Delete + Copy 按钮）
+    const wrapW = wrap.offsetWidth || 60
     // 所见模式下滚动发生在内部 scrollView，pre 与 root 的相对位置已经包含滚动偏移
-    const left = Math.max(0, (preRc.left - rootRc.left) + Math.max(0, preRc.width - btnW - 16))
+    const left = Math.max(0, (preRc.left - rootRc.left) + Math.max(0, preRc.width - wrapW - 16))
     const top = Math.max(0, (preRc.top - rootRc.top) + 14)
     wrap.style.left = left + 'px'
     wrap.style.top = top + 'px'
@@ -823,6 +827,32 @@ function refreshCodeCopyButtonsNow() {
         wrap.style.position = 'absolute'
         wrap.style.pointerEvents = 'none'
         wrap.style.zIndex = '8'
+        wrap.style.display = 'flex'
+        wrap.style.gap = '8px'
+        // Delete 按钮（左侧，需二次确认）
+        const delBtn = document.createElement('button')
+        delBtn.type = 'button'
+        delBtn.className = 'code-delete'
+        delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>'
+        delBtn.style.pointerEvents = 'auto'
+        ;(delBtn as any).__targetPre = pre
+        ;(delBtn as any).__deleteArmed = false
+        delBtn.addEventListener('click', (ev) => {
+          ev.preventDefault()
+          ev.stopPropagation()
+          const btn = ev.currentTarget as HTMLButtonElement
+          // 第一次点击只进入"待确认"状态，第二次点击才真正删除
+          if (!(btn as any).__deleteArmed) {
+            ;(btn as any).__deleteArmed = true
+            btn.textContent = '确认'
+            btn.classList.add('armed')
+            return
+          }
+          const targetPre = (btn as any).__targetPre as HTMLElement | null
+          if (targetPre) deleteWysiwygNodeByDom(targetPre, ['code_block'])
+        })
+        wrap.appendChild(delBtn)
+        // Copy 按钮（右侧）
         const btn = document.createElement('button')
         btn.type = 'button'
         btn.className = 'code-copy'
