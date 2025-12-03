@@ -244,9 +244,31 @@ export function applyThemePrefs(prefs: ThemePrefs): void {
       c.style.setProperty('--wysiwyg-bg', prefs.wysiwygBg)
     }
 
-    // 统一在容器更新完背景变量之后，再基于“实际背景色”推导外圈 UI 颜色
-    // 这样无论当前是编辑 / 所见 / 阅读模式，只要容器背景变化，1/2/3 区域都会跟随
-    updateChromeColorsFromContainer(c, isDarkMode ? (prefs.editBgDark || DEFAULT_PREFS.editBgDark) : prefs.editBg)
+    // 根据当前模式推导外圈 UI 颜色
+    // 检测当前模式：wysiwyg-v2 类 = 所见模式；否则根据可见元素判断
+    let currentBg: string
+    if (c.classList.contains('wysiwyg-v2')) {
+      // 所见模式
+      currentBg = isDarkMode ? WYSIWYG_BG_DARK : prefs.wysiwygBg
+    } else {
+      // 检测是编辑还是阅读模式：通过 .preview 元素是否隐藏判断
+      const previewEl = c.querySelector('.preview') as HTMLElement | null
+      const isPreviewMode = previewEl && !previewEl.classList.contains('hidden')
+      if (isPreviewMode) {
+        // 阅读模式
+        currentBg = isDarkMode ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || '#12100d') : prefs.readBg
+      } else {
+        // 编辑模式
+        currentBg = isDarkMode ? (prefs.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e') : prefs.editBg
+      }
+    }
+    // 直接使用当前模式的背景色推导外圈颜色，不从 DOM 读取
+    const derived = deriveChromeColors(currentBg)
+    if (derived) {
+      const root = document.body
+      root.style.setProperty('--chrome-bg', derived.chromeBg)
+      root.style.setProperty('--chrome-panel-bg', derived.chromePanelBg)
+    }
 
     // 阅读模式"纯白背景"特殊处理：当阅读背景为纯白且非夜间模式时，移除羊皮纸纹理，让预览真正呈现纯白纸面
     try {
