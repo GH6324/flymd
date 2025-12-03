@@ -10847,6 +10847,13 @@ function bindEvents() {
     }
   })
 
+  // 便签模式：全局屏蔽右键菜单（仅便签模式生效，避免影响其他模式）
+  document.addEventListener('contextmenu', (e: MouseEvent) => {
+    if (!stickyNoteMode) return
+    e.preventDefault()
+    e.stopPropagation()
+  }, true)
+
   // 库按钮内部操作
   try {
     const chooseBtn = document.getElementById('lib-choose') as HTMLButtonElement | null
