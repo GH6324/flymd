@@ -45,6 +45,39 @@ let _codeCopyResizeObserver: ResizeObserver | null = null
 let _codeCopyWindowResizeHandler: (() => void) | null = null
 let _inlineCodeMouseTimer: number | null = null
 
+// 根据 DOM 元素删除 Milkdown 文档中的对应节点（仅用于所见模式内简易删除）
+function deleteWysiwygNodeByDom(el: HTMLElement | null, typeNames: string[]): void {
+  try {
+    if (!_editor || !el || !typeNames.length) return
+    void _editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const { state } = view
+      let pos: number
+      try {
+        pos = view.posAtDOM(el, 0)
+      } catch {
+        const parent = el.parentElement
+        if (!parent) return
+        try {
+          pos = view.posAtDOM(parent, 0)
+        } catch {
+          return
+        }
+      }
+      const $pos = state.doc.resolve(pos)
+      for (let d = $pos.depth; d > 0; d--) {
+        const node = $pos.node(d)
+        const name = node.type?.name
+        if (!name || !typeNames.includes(name)) continue
+        const from = $pos.before(d)
+        const to = $pos.after(d)
+        view.dispatch(state.tr.delete(from, to).scrollIntoView())
+        return
+      }
+    })
+  } catch {}
+}
+
 function toLocalAbsFromSrc(src: string): string | null {
   try {
     if (!src) return null
@@ -1006,6 +1039,28 @@ function updateMilkdownImageFromDom(imgEl: HTMLImageElement, newSrc: string, new
     view.dispatch(tr.scrollIntoView())
   } catch {}
 }
+
+function deleteMilkdownImageFromDom(imgEl: HTMLImageElement) {
+  try {
+    const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+    if (!view || !imgEl) return
+    let pos: number | null = null
+    try { pos = view.posAtDOM(imgEl, 0) } catch {}
+    if (pos == null || typeof pos !== 'number') return
+    const state = view.state
+    const $pos = state.doc.resolve(pos)
+    const isImage = (n: any) => !!n && n.type?.name === 'image'
+    let nodePos = pos
+    let node: any = $pos.nodeAfter
+    if (!isImage(node) && $pos.nodeBefore && isImage($pos.nodeBefore)) {
+      node = $pos.nodeBefore
+      nodePos = pos - node.nodeSize
+    }
+    if (!isImage(node)) return
+    const tr = state.tr.delete(nodePos, nodePos + node.nodeSize)
+    view.dispatch(tr.scrollIntoView())
+  } catch {}
+}
 // 图片源码编辑：在所见模式中双击图片，弹出 alt/src 编辑框
 function enterImageSourceEdit(hitEl: HTMLElement) {
   try {
@@ -1043,6 +1098,7 @@ function enterImageSourceEdit(hitEl: HTMLElement) {
     inner.style.display = 'flex'
     inner.style.flexDirection = 'column'
     inner.style.rowGap = '4px'
+    inner.style.position = 'relative'
 
     const altInput = document.createElement('input')
     altInput.type = 'text'
@@ -1062,6 +1118,10 @@ function enterImageSourceEdit(hitEl: HTMLElement) {
     btnRow.style.justifyContent = 'flex-end'
     btnRow.style.columnGap = '8px'
 
+    const btnDelete = document.createElement('button')
+    btnDelete.type = 'button'
+    btnDelete.textContent = 'Delete'
+
     const btnCancel = document.createElement('button')
     btnCancel.type = 'button'
     btnCancel.textContent = '取消'
@@ -1070,6 +1130,7 @@ function enterImageSourceEdit(hitEl: HTMLElement) {
     btnOk.type = 'button'
     btnOk.textContent = '确定'
 
+    btnRow.appendChild(btnDelete)
     btnRow.appendChild(btnCancel)
     btnRow.appendChild(btnOk)
 
@@ -1098,6 +1159,17 @@ function enterImageSourceEdit(hitEl: HTMLElement) {
     urlInput.addEventListener('keydown', onKey)
     btnCancel.addEventListener('click', () => { close() })
     btnOk.addEventListener('click', () => { apply() })
+    btnDelete.addEventListener('click', (ev) => {
+      ev.preventDefault()
+      // 第一次点击只进入“待确认”状态，第二次点击才真正删除图片
+      if (!(btnDelete as any)._armed) {
+        ;(btnDelete as any)._armed = true
+        btnDelete.textContent = '确认删除'
+        return
+      }
+      deleteMilkdownImageFromDom(img)
+      close()
+    })
 
     setTimeout(() => { try { urlInput.focus(); urlInput.select() } catch {} }, 0)
   } catch {}
@@ -1133,6 +1205,7 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
     // 垂直位置：放在公式下方留一点空隙
     wrap.style.top = Math.max(8, Math.round(rc.bottom - hostRc.top + 8)) + 'px'
     wrap.style.width = Math.max(10, finalWidth) + 'px'
+
     const inner = document.createElement('div')
     inner.style.pointerEvents = 'auto'
     inner.style.background = 'var(--wysiwyg-bg)'
@@ -1140,7 +1213,21 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
     inner.style.padding = '6px'
     inner.style.boxSizing = 'border-box'
     inner.style.display = 'flex'
+    inner.style.flexDirection = 'column'
     inner.style.alignItems = 'stretch'
+
+    const header = document.createElement('div')
+    header.style.display = 'flex'
+    header.style.justifyContent = 'flex-end'
+    header.style.marginBottom = '4px'
+
+    const delBtn = document.createElement('button')
+    delBtn.type = 'button'
+    delBtn.textContent = 'Delete'
+
+    header.appendChild(delBtn)
+    inner.appendChild(header)
+
     const ta = document.createElement('textarea')
     ta.value = (isBlock ? ('$$\n' + (code || '') + '\n$$') : ('$' + (code || '') + '$'))
     ta.style.width = '100%'
@@ -1154,17 +1241,45 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
     ta.style.fontSize = '14px'
     ta.style.lineHeight = '1.4'
     ta.style.resize = 'vertical'
+
+    inner.appendChild(ta)
+
+    const apply = () => {
+      let v = ta.value
+      v = String(v || '').trim()
+      const isBlk = (mathEl.dataset?.type === 'math_block' || mathEl.tagName === 'DIV')
+      if (isBlk) {
+        const m = v.match(/^\s*\$\$\s*[\r\n]?([\s\S]*?)\s*[\r\n]?\$\$\s*$/)
+        if (m) v = m[1]
+      } else {
+        const m = v.match(/^\s*\$([\s\S]*?)\$\s*$/)
+        if (m) v = m[1]
+      }
+      updateMilkdownMathFromDom(mathEl, v)
+      try { ov?.removeChild(wrap) } catch {}
+    }
+
     ta.addEventListener('keydown', (ev) => {
       if ((ev as KeyboardEvent).key === 'Escape') { try { ov?.removeChild(wrap) } catch {}; return }
       if ((ev as KeyboardEvent).key === 'Enter' && ((ev as KeyboardEvent).ctrlKey || (ev as KeyboardEvent).metaKey)) {
         ev.preventDefault()
-        let v = ta.value
-        v = String(v || '').trim(); const isBlock = (mathEl.dataset?.type === 'math_block' || mathEl.tagName === 'DIV'); if (isBlock) { const m = v.match(/^\s*\$\$\s*[\r\n]?([\s\S]*?)\s*[\r\n]?\$\$\s*$/); if (m) v = m[1] } else { const m = v.match(/^\s*\$([\s\S]*?)\$\s*$/); if (m) v = m[1] }; updateMilkdownMathFromDom(mathEl, v)
-        try { ov?.removeChild(wrap) } catch {}
+        apply()
       }
     })
-    ta.addEventListener('blur', () => { try { ov?.removeChild(wrap) } catch {} })
-    inner.appendChild(ta)
+
+    let deleteArmed = false
+    delBtn.addEventListener('click', (ev) => {
+      ev.preventDefault()
+      // 第一次点击只进入“待确认”状态，第二次点击才真正删除公式
+      if (!deleteArmed) {
+        deleteArmed = true
+        delBtn.textContent = '确认删除'
+        return
+      }
+      deleteWysiwygNodeByDom(mathEl, ['math_inline', 'math_block'])
+      try { ov?.removeChild(wrap) } catch {}
+    })
+
     wrap.appendChild(inner)
     ov?.appendChild(wrap)
     setTimeout(() => { try { ta.focus(); ta.select() } catch {} }, 0)

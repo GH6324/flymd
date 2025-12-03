@@ -143,6 +143,7 @@ class MermaidNodeView implements NodeView {
   private node: Node
   private view: EditorView
   private getPos: () => number | undefined
+  private toolbar: HTMLElement
 
   constructor(node: Node, view: EditorView, getPos: () => number | undefined) {
     console.log('[Mermaid Plugin] 创建 NodeView, language:', node.attrs.language)
@@ -163,6 +164,30 @@ class MermaidNodeView implements NodeView {
     this.preWrapper.style.whiteSpace = 'pre'
     this.contentDOM = document.createElement('code')
     this.preWrapper.appendChild(this.contentDOM)
+
+    // 编辑工具条：仅在源码编辑时显示删除按钮
+    this.toolbar = document.createElement('div')
+    this.toolbar.style.display = 'none'
+    this.toolbar.style.textAlign = 'right'
+    this.toolbar.style.marginBottom = '4px'
+    const delBtn = document.createElement('button')
+    delBtn.type = 'button'
+    delBtn.textContent = 'Delete'
+    let deleteArmed = false
+    delBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      // 第一次点击只进入“待确认”状态，第二次点击才真正删除
+      if (!deleteArmed) {
+        deleteArmed = true
+        delBtn.textContent = '确认删除'
+        return
+      }
+      this.deleteSelf()
+    })
+    this.toolbar.appendChild(delBtn)
+
+    this.dom.appendChild(this.toolbar)
     this.dom.appendChild(this.preWrapper)
 
     // 创建图表容器
@@ -191,6 +216,7 @@ class MermaidNodeView implements NodeView {
       this.preWrapper.style.background = dark ? '#1e1e1e' : '#fff'
       this.preWrapper.style.color = dark ? '#d4d4d4' : '#1e1e1e'
       this.chartContainer.style.display = 'none'
+      this.toolbar.style.display = 'block'
       // 聚焦到代码编辑区
       requestAnimationFrame(() => {
         try {
@@ -213,6 +239,7 @@ class MermaidNodeView implements NodeView {
       console.log('[Mermaid Plugin] 退出源码编辑模式')
       this.preWrapper.style.display = 'none'
       this.chartContainer.style.display = 'block'
+      this.toolbar.style.display = 'none'
       // 强制重新渲染
       requestAnimationFrame(() => {
         this.renderChart()
@@ -286,6 +313,7 @@ class MermaidNodeView implements NodeView {
       if (!this.dom.contains(target)) {
         this.preWrapper.style.display = 'none'
         this.chartContainer.style.display = 'block'
+        this.toolbar.style.display = 'none'
         requestAnimationFrame(() => {
           this.renderChart()
         })
@@ -295,6 +323,17 @@ class MermaidNodeView implements NodeView {
 
   ignoreMutation() {
     return true
+  }
+
+  private deleteSelf() {
+    try {
+      const pos = this.getPos?.()
+      if (typeof pos !== 'number') return
+      const { state, dispatch } = this.view
+      const from = pos
+      const to = pos + this.node.nodeSize
+      dispatch(state.tr.delete(from, to).scrollIntoView())
+    } catch {}
   }
 }
 
