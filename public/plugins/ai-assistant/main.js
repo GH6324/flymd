@@ -1006,8 +1006,10 @@ function ensureCss() {
     '#ai-assist-win.dark .ai-quick-action-wrap select{color:#9ca3af;background:transparent}',
     '#ai-assist-win.dark .ai-quick-action-wrap select option{background:#1a1b1e;color:#e5e7eb}',
     '#ai-assist-win.dark .ai-quick-action-wrap::after{color:#6b7280}',
-    '#ai-assist-win.dark .ai-vision-toggle{background:#1a1b1e;border-color:#374151;color:#9ca3af}',
-    '#ai-assist-win.dark .ai-vision-toggle.active{background:#1e3a8a;border-color:#3b82f6;color:#bfdbfe}',
+    '#ai-assist-win.dark .ai-vision-toggle{background:#2a2b2f;border-color:#4b5563;color:#9ca3af}',
+    '#ai-assist-win.dark .ai-vision-toggle:not(.disabled):hover{background:#34353a;border-color:#6b7280}',
+    '#ai-assist-win.dark .ai-vision-toggle.active{background:#1e40af;border-color:#3b82f6;color:#ffffff;box-shadow:0 0 0 2px rgba(59,130,246,0.25)}',
+    '#ai-assist-win.dark .ai-vision-toggle.active:not(.disabled):hover{background:#2563eb}',
     // 快捷操作下拉框夜间模式
     '#ai-quick-action{background:transparent;border:none;color:#6b7280;font-size:13px;cursor:pointer;padding:4px 2px;outline:none}',
     '#ai-quick-action option{background:#fff;color:#0f172a;padding:8px 12px}',
