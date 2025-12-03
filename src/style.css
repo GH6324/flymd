@@ -5536,15 +5536,48 @@ body.focus-mode .library .lib-action-btn.active {
   background: rgba(127, 127, 127, 0.1);
 }
 
-/* 关闭按钮特殊样式 */
+/* 关闭按钮特殊样式 - 电源按钮风格 */
 .custom-titlebar-btn.custom-titlebar-close {
-  font-size: 20px;
+  font-size: 0;  /* 隐藏原始文字，使用CSS绘制的电源按钮图标 */
+  transform: translateY(7px);  /* 向下微调7px，使按钮垂直居中对齐 */
+  position: relative;
+  opacity: 0.5;  /* 保持与其他按钮一致的透明度 */
+}
+
+/* 用CSS绘制电源按钮图标 - 圆圈部分（上面有开口） */
+.custom-titlebar-btn.custom-titlebar-close::before {
+  content: '';
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 1.2px solid currentColor;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  /* 创造上面的开口效果 - 通过遮罩上部分边框 */
+  border-top-color: transparent;
+  clip-path: polygon(0% 30%, 0% 100%, 100% 100%, 100% 30%, 70% 30%, 70% 0%, 30% 0%, 30% 30%);
+}
+
+/* 电源按钮的竖线部分 */
+.custom-titlebar-btn.custom-titlebar-close::after {
+  content: '';
+  position: absolute;
+  width: 1.2px;
+  height: 5px;
+  background: currentColor;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -85%);
+  border-radius: 0.5px;
 }
 
 .custom-titlebar-btn.custom-titlebar-close:hover {
   background: rgba(232, 17, 35, 0.9);
   color: white;
   opacity: 1;
+  transform: translateY(7px);  /* 保持与正常状态相同的位移 */
 }
 
 /* 退出专注模式按钮样式 */
