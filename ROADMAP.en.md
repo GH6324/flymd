@@ -2,6 +2,15 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.6.1
+- Improved: In WYSIWYG mode, unordered lists now use `-` instead of `*`, keeping list markers consistent with source-mode Markdown and making copy/paste comparisons easier.
+- Added: The xxtui todo-push extension now supports configurable write-back markers and a refactored settings panel navigation, so advanced workflows are easier to configure.
+- Improved: The code block language selector in WYSIWYG now automatically hides once the caret leaves the code block, reducing visual noise while typing.
+- Improved: Empty Mermaid blocks in WYSIWYG automatically enter edit mode, and symbol auto-completion is disabled inside code blocks to avoid fighting with normal coding habits.
+- Improved: Mermaid diagrams show clearer error hints on failures and several WYSIWYG rendering edge cases are fixed, making diagrams more stable and diagnosable.
+- Fixed: Multiple KaTeX editing issues, including the Delete key not working, formulas not activating on mouse click, double-click glitches and styling problems, so formula editing feels closer to plain text.
+- Improved: Added several small helper hints and labels in the UI so new features are easier to discover and understand.
+
 ## Update v0.6.0
 - Added: Custom typography controls in the Theme panel (line height, paragraph spacing, content max width and first-line indent), so you can tune the reading/WYSIWYG/source layouts to your own taste.
 - Added: A “Default source mode” toggle; when enabled, flyMD always opens documents in source mode instead of auto-switching to preview.
