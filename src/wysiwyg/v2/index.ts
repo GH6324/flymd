@@ -16,7 +16,7 @@ import { upload, uploadConfig } from '@milkdown/plugin-upload'
 import { uploader } from './plugins/paste'
 import { mermaidPlugin } from './plugins/mermaid'
 import { mathInlineViewPlugin, mathBlockViewPlugin } from './plugins/math'
-import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule } from '@milkdown/plugin-math'
+import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule, mathBlockInputRule } from '@milkdown/plugin-math'
 // 注：保留 automd 插件以提供编辑功能，通过 CSS 隐藏其 UI 组件
 // 引入富文本所见视图的必要样式（避免工具条/布局错乱导致不可编辑/不可滚动）
 // 注：不直接导入 @milkdown/crepe/style.css，避免 Vite 对未导出的样式路径解析失败。
@@ -250,7 +250,12 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
     .use(commonmark)
     .use(gfm)
     .use(upload)
-    .use(remarkMathPlugin).use(katexOptionsCtx).use(mathInlineSchema).use(mathBlockSchema).use(mathInlineInputRule)
+    .use(remarkMathPlugin)
+    .use(katexOptionsCtx)
+    .use(mathInlineSchema)
+    .use(mathBlockSchema)
+    .use(mathInlineInputRule)
+    .use(mathBlockInputRule)
     .use(mathInlineViewPlugin)
     .use(mathBlockViewPlugin)
     .use(mermaidPlugin)
@@ -303,11 +308,17 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
       try {
         pm.addEventListener('keydown', (ev) => {
           try {
-            if ((ev as KeyboardEvent).key !== 'ArrowRight') return
-            if (exitInlineCodeToRight()) {
-              ev.preventDefault()
-              try { ev.stopPropagation() } catch {}
-              try { (ev as any).stopImmediatePropagation?.() } catch {}
+            const kev = ev as KeyboardEvent
+            if (kev.key === 'ArrowRight') {
+              if (exitInlineCodeToRight()) {
+                kev.preventDefault()
+                try { kev.stopPropagation() } catch {}
+                try { (kev as any).stopImmediatePropagation?.() } catch {}
+              }
+              return
+            }
+            if (kev.key === 'Enter') {
+              tryHandleMathEnter(kev)
             }
           } catch {}
         }, true)
@@ -746,6 +757,43 @@ function scheduleInlineCodeMouseExit() {
     _inlineCodeMouseTimer = null
     try { exitInlineCodeToRight() } catch {}
   }, 0)
+}
+
+// 所见模式下：输入 $$ 回车 后自动打开 KaTeX 源码编辑框
+function tryHandleMathEnter(ev: KeyboardEvent) {
+  try {
+    if (ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey) return
+    if (!_editor) return
+    const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+    if (!view) return
+    const state = view.state
+    const $from = state.selection.$from
+    const parent: any = $from.parent
+    const text = String(parent?.textContent || '').trim()
+    if (text !== '$$') return
+
+    // 让 Milkdown 先处理输入规则（mathBlockInputRule），再定位到新建的 math_block 节点
+    window.setTimeout(() => {
+      try {
+        const viewNow: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+        if (!viewNow) return
+        const st = viewNow.state
+        const $pos = st.selection.$from
+        for (let d = $pos.depth; d >= 0; d--) {
+          const node: any = $pos.node(d)
+          if (node && node.type?.name === 'math_block') {
+            const nodePos = $pos.before(d)
+            let dom: HTMLElement | null = null
+            try { dom = viewNow.nodeDOM(nodePos) as HTMLElement | null } catch {}
+            if (dom) {
+              try { enterLatexSourceEdit(dom) } catch {}
+            }
+            break
+          }
+        }
+      } catch {}
+    }, 0)
+  } catch {}
 }
 
 function findInlineCodeAncestor(node: Node | null): HTMLElement | null {

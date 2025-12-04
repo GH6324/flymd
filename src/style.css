@@ -3817,6 +3817,91 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-pun
   .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-punctuation { color: #d4d4d4 !important; }
 }
 
+/* 代码块语言选择器 */
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
+  position: relative;
+  overflow: visible !important; /* 允许下拉菜单溢出 */
+  margin-bottom: 40px; /* 为语言选择器留出空间 */
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-selector {
+  position: absolute;
+  bottom: -36px;
+  right: 0;
+  z-index: 10;
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-input {
+  width: 120px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  background: rgba(127, 127, 127, 0.08);
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-radius: 4px;
+  color: var(--fg);
+  outline: none;
+  transition: all 0.15s ease;
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-input:focus {
+  background: var(--bg);
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-input::placeholder {
+  color: rgba(127, 127, 127, 0.6);
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-dropdown {
+  /* position: fixed 由 JS 动态设置 */
+  width: 180px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg, #fff);
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 9999; /* 提高层级确保显示在最上层 */
+  display: none;
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-dropdown.show {
+  display: block;
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-item:hover {
+  background: rgba(127, 127, 127, 0.1);
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-icon {
+  font-size: 14px;
+  width: 20px;
+  text-align: center;
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-name {
+  font-size: 13px;
+  color: var(--fg);
+}
+
+/* 夜间模式语言选择器 */
+body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-input {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-input:focus {
+  background: rgba(0, 0, 0, 0.3);
+}
+body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-dropdown {
+  background: #1e1e1e;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 /* 所见模式复制按钮：亮色模式下使用深色样式以提高对比度 */
 .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy {
   background: rgba(127, 127, 127, 0.12);
