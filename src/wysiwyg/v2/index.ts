@@ -720,6 +720,8 @@ function setupBracketPairingForWysiwyg(pm: HTMLElement | null) {
           const tgt = ev.target as HTMLElement | null
           // ProseMirror 内部点击完全交给编辑器自身处理
           if (tgt && tgt.closest('.ProseMirror')) return
+          // 覆盖层（如 Katex 编辑弹层、代码复制按钮等）内部点击也不拦截，避免干扰 textarea 光标定位
+          if (tgt && tgt.closest('.overlay-host')) return
           const view = _getView()
           if (!view) return
           const state = view.state
