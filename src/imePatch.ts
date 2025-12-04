@@ -177,7 +177,8 @@
               if (!insertUndoable(ta, data + mid + close)) {
                 ta.value = val.slice(0, s) + data + mid + close + val.slice(e)
               }
-              ta.selectionStart = s + 1; ta.selectionEnd = s + 1 + mid.length
+              // 环抱补全后光标移到闭合符号之后，而不是选中中间内容
+              ta.selectionStart = ta.selectionEnd = s + 1 + mid.length + close.length
             } else {
               if (!insertUndoable(ta, data + close)) {
                 ta.value = val.slice(0, s) + data + close + val.slice(e)
@@ -249,13 +250,7 @@
           }
           rememberPrev(); return
         }
-        // fence
-        if (inserted === '```') {
-          const content = hadSel ? ('\n' + removed + '\n') : ('\n\n')
-          ta.value = prev.slice(0, a) + '```' + content + '```' + prev.slice(prev.length - b)
-          ta.selectionStart = ta.selectionEnd = (hadSel ? (a + content.length + 3) : (a + 4))
-          rememberPrev(); return
-        }
+        // fence：中文输入法对 ``` 的补全效果差，此处删除处理，保留 handleBeforeInput 中的英文输入法路径
         // 加粗（** / ＊＊）：IME 一次性提交两颗星，仅将光标移至中间，避免重复补全
                 // 加粗（** / ＊＊）：IME 一次性提交两颗星，补全为 **|** 或 **选区**
         if (inserted === '**' || /^[\uFF0A]{2}$/.test(inserted)) {
@@ -292,7 +287,8 @@
           if (close) {
             if (hadSel) {
               ta.value = prev.slice(0, a) + inserted + removed + close + prev.slice(prev.length - b)
-              ta.selectionStart = a + 1; ta.selectionEnd = a + 1 + removed.length
+              // 环抱补全后光标移到闭合符号之后，而不是选中中间内容
+              ta.selectionStart = ta.selectionEnd = a + 1 + removed.length + close.length
             } else {
               ta.value = cur.slice(0, a + 1) + close + cur.slice(a + 1)
               ta.selectionStart = ta.selectionEnd = a + 1
