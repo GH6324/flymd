@@ -487,18 +487,25 @@ function updateFirstLinkLabel(oldLabel: string, newLabel: string, href: string) 
     const schema = st.schema as any
     const linkType = schema?.marks?.link
     if (!linkType) return
-    let target: { from: number, to: number } | null = null
+    let target: { from: number, to: number, node: any } | null = null
     st.doc.descendants((node: any, pos: number) => {
       if (!node?.isText) return true
       const text = String(node.text || '')
       if (text !== oldLabel) return true
       const hasLink = (node.marks || []).some((m: any) => m.type === linkType && String(m.attrs?.href || '') === href)
       if (!hasLink) return true
-      target = { from: pos, to: pos + text.length }
+      target = { from: pos, to: pos + text.length, node }
       return false
     })
     if (!target) return
-    const tr = st.tr.insertText(newLabel, target.from, target.to).scrollIntoView()
+    // 提取现有 link mark 的属性
+    const targetNode = target.node
+    const existingLink = (targetNode.marks || []).find((m: any) => m.type === linkType)
+    const attrs = existingLink?.attrs || { href }
+    // 创建带 link mark 的新文本节点
+    const textNode = schema.text(newLabel, [linkType.create(attrs)])
+    // 用 replaceWith 替换，保留 link mark
+    const tr = st.tr.replaceWith(target.from, target.to, textNode).scrollIntoView()
     view.dispatch(tr)
   } catch {}
 }
