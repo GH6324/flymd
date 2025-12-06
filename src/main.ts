@@ -39,9 +39,8 @@ import { transcodeToWebpIfNeeded } from './utils/image'
 // 方案A：多库管理（统一 libraries/activeLibraryId）
 import { getLibraries, getActiveLibraryId, getActiveLibraryRoot, setActiveLibraryId as setActiveLibId, upsertLibrary, removeLibrary as removeLib, renameLibrary as renameLib } from './utils/library'
 import appIconUrl from '../Flymdnew.png?url'
-import goodImgUrl from '../good.png?url'
 import { decorateCodeBlocks } from './decorate'
-import pkg from '../package.json'
+import { APP_VERSION } from './core/appInfo'
 // htmlToMarkdown 改为按需动态导入（仅在粘贴 HTML 时使用）
 import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConfiguredForActiveLibrary, syncNow as webdavSyncNow, setOnSyncComplete, openSyncLog as webdavOpenSyncLog } from './extensions/webdavSync'
 // 平台适配层（Android 支持）
@@ -89,7 +88,9 @@ import {
   type PluginUpdateState,
 } from './extensions/runtime'
 import { initPluginsMenu, addToPluginsMenu, removeFromPluginsMenu, togglePluginDropdown } from './extensions/pluginMenu'
+import { openLinkDialog, openRenameDialog } from './ui/linkDialogs'
 import { initExtensionsPanel, refreshExtensionsUI as panelRefreshExtensionsUI, showExtensionsOverlay as panelShowExtensionsOverlay } from './extensions/extensionsPanel'
+import { initAboutOverlay, showAbout } from './ui/aboutOverlay'
 import {
   removeContextMenu,
   showContextMenu,
@@ -98,7 +99,6 @@ import {
   type PluginContextMenuItem,
 } from './ui/contextMenus'
 // 应用版本号（用于窗口标题/关于弹窗）
-const APP_VERSION: string = (pkg as any)?.version ?? '0.0.0'
 
 // UI 缩放与预览宽度（已拆分到 core/uiZoom.ts）
 import { getUiZoom, setUiZoom, applyUiZoom, zoomIn, zoomOut, zoomReset, getPreviewWidth, setPreviewWidth, applyPreviewWidth, resetPreviewWidth, PREVIEW_WIDTH_STEP } from './core/uiZoom'
@@ -2561,65 +2561,7 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
             </div>
           </div>
         `
-        containerEl.appendChild(about)
-        try {
-          const aboutBody = about.querySelector('.about-body') as HTMLDivElement | null
-          if (aboutBody) {
-            aboutBody.innerHTML = `
-              <div style="display:flex;align-items:flex-start;gap:12px;">
-                <img src="${goodImgUrl}" alt="flyMD" style="width:72px;height:72px;border-radius:8px;object-fit:cover;"/>
-                <div>
-                  <p>一款跨平台、轻量稳定好用的 Markdown 编辑与PDF阅读工具。</p>
-                  <p style="margin:6px 0 0;color:var(--muted);font-size:12px;">开源协议：非商业开源（NC 1.0）。商业使用需授权。</p>
-                  <p style="margin:4px 0 0;"><a href="https://github.com/flyhunterl/flymd/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">查看完整许可文本</a></p>
-                  
-                </div>
-              </div>
-            `
-          }
-          const aboutTitle = about.querySelector('#about-title') as HTMLDivElement | null
-          if (aboutTitle) aboutTitle.textContent = `${t('about.title')} FlyMD v${APP_VERSION}`
-          const aboutClose = about.querySelector('#about-close') as HTMLButtonElement | null
-          if (aboutClose) { aboutClose.textContent = '×'; aboutClose.title = t('about.close') }
-          // 覆盖关于内容：移除快捷键，加入离线二维码与许可说明
-          try {
-            const bodyEl = about.querySelector('.about-body') as HTMLDivElement | null
-            if (bodyEl) {
-              bodyEl.innerHTML = `
-                <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
-                  <p>${t('about.tagline')}</p>
-                  <img src="${goodImgUrl}" alt="二维码" style="width:320px;height:320px;border-radius:0;object-fit:contain;"/>
-                  <div style="text-align:center;">
-                    <p style="margin:6px 0 0;color:var(--muted);font-size:12px;">${t('about.license.brief')}</p>
-                    <p style="margin:4px 0 0;"><a href="https://github.com/flyhunterl/flymd/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">${t('about.license.link')}</a></p>
-                    
-                  </div>
-                </div>
-              `
-            }
-          } catch {}
-        } catch {}
-    try {
-    const overlay = document.getElementById('about-overlay') as HTMLDivElement | null
-    const dialog = overlay?.querySelector('.about-dialog') as HTMLDivElement | null
-    if (dialog) {
-      const footer = document.createElement('div')
-      footer.className = 'about-footer'
-      footer.innerHTML = '<div class="about-footer-links">\
-<a href="https://flymd.llingfei.com/" target="_blank" rel="noopener noreferrer">\
-  <img class="favicon" src="https://icons.duckduckgo.com/ip3/flymd.llingfei.com.ico" alt="" referrerpolicy="no-referrer"/>官方网站\
-</a><span class="sep">&nbsp;&nbsp;</span>\
-<a href="https://www.llingfei.com" target="_blank" rel="noopener noreferrer">\
-  <img class="favicon" src="https://icons.duckduckgo.com/ip3/www.llingfei.com.ico" alt="" referrerpolicy="no-referrer"/>博客\
-</a><span class="sep">&nbsp;&nbsp;</span>\
-<a href="https://github.com/flyhunterl/flymd" target="_blank" rel="noopener noreferrer">\
-  <img class="favicon" src="https://icons.duckduckgo.com/ip3/github.com.ico" alt="" referrerpolicy="no-referrer"/>GitHub\
-</a></div><span id="about-version"></span>'
-      dialog.appendChild(footer)
-      const verEl = footer.querySelector('#about-version') as HTMLSpanElement | null
-      if (verEl) verEl.textContent = `v${APP_VERSION}`
-    }
-    } catch {}
+  try { initAboutOverlay() } catch {}
 
     // 插入链接对话框：初始化并挂载到容器
     const link = document.createElement('div')
@@ -2770,101 +2712,7 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
   containerEl.appendChild(upl)
   }
 
-// 打开“插入链接”对话框的 Promise 控制器
-let linkDialogResolver: ((result: { label: string; url: string } | null) => void) | null = null
-
-function showLinkOverlay(show: boolean) {
-  const overlay = document.getElementById('link-overlay') as HTMLDivElement | null
-  if (!overlay) return
-  if (show) overlay.classList.remove('hidden')
-  else overlay.classList.add('hidden')
-}
-
-async function openRenameDialog(stem: string, ext: string): Promise<string | null> {
-  try {
-    const overlay = document.getElementById('rename-overlay') as HTMLDivElement | null
-    const form = overlay?.querySelector('#rename-form') as HTMLFormElement | null
-    const inputText = overlay?.querySelector('#rename-text') as HTMLInputElement | null
-    const inputExt = overlay?.querySelector('#rename-ext') as HTMLInputElement | null
-    const btnCancel = overlay?.querySelector('#rename-cancel') as HTMLButtonElement | null
-    const btnClose = overlay?.querySelector('#rename-close') as HTMLButtonElement | null
-    if (!overlay || !form || !inputText || !inputExt) {
-      const v = prompt('重命名为（不含后缀）：', stem) || ''
-      return v.trim() || null
-    }
-    inputText.value = stem
-    inputExt.value = ext
-    return await new Promise<string | null>((resolve) => {
-      const onSubmit = (e: Event) => { e.preventDefault(); const v = (inputText.value || '').trim(); resolve(v || null); cleanup() }
-      const onCancel = () => { resolve(null); cleanup() }
-      const onOverlay = (e: MouseEvent) => { if (e.target === overlay) onCancel() }
-      function cleanup() {
-        overlay.classList.add('hidden')
-        try { form.removeEventListener('submit', onSubmit); btnCancel?.removeEventListener('click', onCancel); btnClose?.removeEventListener('click', onCancel); overlay.removeEventListener('click', onOverlay) } catch {}
-      }
-      form.addEventListener('submit', onSubmit)
-      btnCancel?.addEventListener('click', onCancel)
-      btnClose?.addEventListener('click', onCancel)
-      overlay.addEventListener('click', onOverlay)
-      overlay.classList.remove('hidden')
-      setTimeout(() => inputText.focus(), 0)
-    })
-  } catch { return null }
-}
-async function openLinkDialog(presetLabel: string, presetUrl = 'https://'): Promise<{ label: string; url: string } | null> {
-  const overlay = document.getElementById('link-overlay') as HTMLDivElement | null
-  const form = overlay?.querySelector('#link-form') as HTMLFormElement | null
-  const inputText = overlay?.querySelector('#link-text') as HTMLInputElement | null
-  const inputUrl = overlay?.querySelector('#link-url') as HTMLInputElement | null
-  const btnCancel = overlay?.querySelector('#link-cancel') as HTMLButtonElement | null
-  const btnClose = overlay?.querySelector('#link-close') as HTMLButtonElement | null
-
-  // 如果没有自定义对话框，降级使用 prompt（保持功能可用）
-  if (!overlay || !form || !inputText || !inputUrl) {
-    const url = prompt('输入链接 URL：', presetUrl) || ''
-    if (!url) return null
-    const label = presetLabel || '链接文本'
-    return { label, url }
-  }
-
-  inputText.value = presetLabel || '链接文本'
-  inputUrl.value = presetUrl
-
-  return new Promise((resolve) => {
-    // 清理并设置 resolver
-    linkDialogResolver = (result) => {
-      showLinkOverlay(false)
-      // 解除事件绑定（一次性）
-      try {
-        form.removeEventListener('submit', onSubmit)
-        btnCancel?.removeEventListener('click', onCancel)
-        btnClose?.removeEventListener('click', onCancel)
-        overlay.removeEventListener('click', onOverlayClick)
-      } catch {}
-      resolve(result)
-      linkDialogResolver = null
-    }
-
-    function onSubmit(e: Event) {
-      e.preventDefault()
-      const label = (inputText.value || '').trim() || '链接文本'
-      const url = (inputUrl.value || '').trim()
-      if (!url) { inputUrl.focus(); return }
-      linkDialogResolver && linkDialogResolver({ label, url })
-    }
-    function onCancel() { linkDialogResolver && linkDialogResolver(null) }
-    function onOverlayClick(e: MouseEvent) { if (e.target === overlay) onCancel() }
-
-    form.addEventListener('submit', onSubmit)
-    btnCancel?.addEventListener('click', onCancel)
-    btnClose?.addEventListener('click', onCancel)
-    overlay.addEventListener('click', onOverlayClick)
-    // 测试连接事件
-    showLinkOverlay(true)
-    // 聚焦并选中 URL 输入框内容，方便直接粘贴覆盖
-    setTimeout(() => { try { inputUrl.focus(); inputUrl.select() } catch {} }, 0)
-  })
-}
+// 插入链接 / 重命名 对话框逻辑已拆分到 ./ui/linkDialogs
 // 更新标题和未保存标记
 function refreshTitle() {
   // 以文件名为主；未保存附加 *；悬浮显示完整路径；同步 OS 窗口标题
@@ -7149,13 +6997,6 @@ async function newFolderSafe(dir: string, name = '新建文件夹'): Promise<str
       container.appendChild(row)
     }
   }
-}
-
-function showAbout(show: boolean) {
-  const overlay = document.getElementById('about-overlay') as HTMLDivElement | null
-  if (!overlay) return
-  if (show) overlay.classList.remove('hidden')
-  else overlay.classList.add('hidden')
 }
 
 // 顶级菜单下拉（参考库右键菜单的样式实现，纯 JS 内联样式，避免全局 CSS 入侵）
