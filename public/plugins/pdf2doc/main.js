@@ -56,6 +56,34 @@ function pickPdfFile() {
   })
 }
 
+// 选择图片文件（仅限常见格式）
+function pickImageFile() {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/png,image/jpeg,image/jpg,image/webp'
+    input.style.display = 'none'
+
+    input.onchange = () => {
+      const file = input.files && input.files[0]
+      if (!file) {
+        reject(new Error('未选择文件'))
+      } else {
+        resolve(file)
+      }
+      input.remove()
+    }
+
+    try {
+      document.body.appendChild(input)
+    } catch {
+      // 忽略挂载失败，后续点击会直接抛错
+    }
+
+    input.click()
+  })
+}
+
 
 async function uploadAndParsePdfFile(context, cfg, file, output) {
   let apiUrl = (cfg.apiBaseUrl || DEFAULT_API_BASE).trim()
@@ -113,6 +141,65 @@ async function uploadAndParsePdfFile(context, cfg, file, output) {
   return data // { ok, format, markdown?, docx_url?, pages, uid }
 }
 
+// 上传并解析图片文件，仅支持输出 Markdown
+async function uploadAndParseImageFile(context, cfg, file) {
+  let apiUrl = (cfg.apiBaseUrl || DEFAULT_API_BASE).trim()
+
+  if (apiUrl.endsWith('/pdf')) {
+    apiUrl += '/'
+  }
+
+  const form = new FormData()
+  form.append('file', file, file.name)
+  form.append('output', 'markdown')
+
+  const headers = {}
+  if (cfg.apiToken) {
+    headers['Authorization'] = 'Bearer ' + cfg.apiToken
+  }
+
+  let res
+  try {
+    res = await context.http.fetch(apiUrl, {
+      method: 'POST',
+      headers,
+      body: form
+    })
+  } catch (e) {
+    throw new Error(
+      '网络请求失败：' + (e && e.message ? e.message : String(e))
+    )
+  }
+
+  let data = null
+  try {
+    data = await res.json()
+  } catch (e) {
+    const statusText = 'HTTP ' + res.status
+    throw new Error(
+      '解析响应 JSON 失败（' +
+        statusText +
+        '）：' +
+        (e && e.message ? e.message : String(e))
+    )
+  }
+
+  if (!data || typeof data !== 'object') {
+    throw new Error('响应格式错误：不是 JSON 对象')
+  }
+
+  if (!data.ok) {
+    const msg = data.message || data.error || '图片解析失败'
+    throw new Error(msg)
+  }
+
+  if (data.format !== 'markdown' || !data.markdown) {
+    throw new Error('解析成功，但返回格式不是 Markdown')
+  }
+
+  return data // { ok, format: 'markdown', markdown, pages, uid }
+}
+
 
 async function parsePdfBytes(context, cfg, bytes, filename, output) {
   // bytes: Uint8Array | ArrayBuffer | number[]
@@ -125,8 +212,30 @@ async function parsePdfBytes(context, cfg, bytes, filename, output) {
   const name = filename && typeof filename === 'string' && filename.trim()
     ? filename.trim()
     : 'document.pdf'
-  const file = new File([blob], name, { type: 'application/pdf' })
-  return await uploadAndParsePdfFile(context, cfg, file, output)
+    const file = new File([blob], name, { type: 'application/pdf' })
+    return await uploadAndParsePdfFile(context, cfg, file, output)
+  }
+
+// 解析图片二进制为 Markdown
+async function parseImageBytes(context, cfg, bytes, filename) {
+  const arr = bytes instanceof Uint8Array
+    ? bytes
+    : (bytes instanceof ArrayBuffer
+      ? new Uint8Array(bytes)
+      : new Uint8Array(bytes || []))
+
+  // 简单根据扩展名推断 MIME 类型
+  const lower = (filename || '').toLowerCase()
+  let mime = 'image/jpeg'
+  if (lower.endsWith('.png')) mime = 'image/png'
+  else if (lower.endsWith('.webp')) mime = 'image/webp'
+
+  const blob = new Blob([arr], { type: mime })
+  const name = filename && typeof filename === 'string' && filename.trim()
+    ? filename.trim()
+    : 'image.jpg'
+  const file = new File([blob], name, { type: mime })
+  return await uploadAndParseImageFile(context, cfg, file)
 }
 
 
@@ -613,12 +722,12 @@ export async function activate(context) {
     }
   })()
 
-  context.addMenuItem({
-    label: 'PDF 解析',
-    title: '解析 PDF 为 Markdown 或 docx',
-    children: [
-      {
-        label: '选择文件',
+    context.addMenuItem({
+      label: 'PDF / 图片高精度解析',
+      title: '解析 PDF 或图片为 Markdown 或 docx（图片仅支持 Markdown）',
+      children: [
+        {
+          label: '选择文件',
         onClick: async () => {
           let loadingId = null
           try {
@@ -696,14 +805,66 @@ export async function activate(context) {
                 context.ui.hideNotification(loadingId)
               } catch {}
             }
-            context.ui.notice(
-              'PDF 解析失败：' + (err && err.message ? err.message : String(err)),
-              'err'
-            )
+              context.ui.notice(
+                'PDF 解析失败：' + (err && err.message ? err.message : String(err)),
+                'err'
+              )
+            }
           }
-        }
-      },
-      {
+        },
+        {
+          label: '选择图片 (To MD)',
+          onClick: async () => {
+            let loadingId = null
+            try {
+              const cfg = await loadConfig(context)
+              if (!cfg.apiToken) {
+                context.ui.notice('请先在插件设置中配置密钥', 'err')
+                return
+              }
+
+              const file = await pickImageFile()
+
+              if (context.ui.showNotification) {
+                loadingId = context.ui.showNotification('正在解析图片为 Markdown，请稍候...', {
+                  type: 'info',
+                  duration: 0
+                })
+              } else {
+                context.ui.notice('正在解析图片为 Markdown，请稍候...', 'ok', 3000)
+              }
+
+              const result = await uploadAndParseImageFile(context, cfg, file)
+
+              if (loadingId && context.ui.hideNotification) {
+                context.ui.hideNotification(loadingId)
+              }
+
+              if (result.format === 'markdown' && result.markdown) {
+                const current = context.getEditorValue()
+                const merged = current ? current + '\n\n' + result.markdown : result.markdown
+                context.setEditorValue(merged)
+                context.ui.notice(
+                  '图片解析完成，已插入 Markdown（' + (result.pages || '?') + ' 页）',
+                  'ok'
+                )
+              } else {
+                context.ui.notice('解析成功，但返回格式不是 Markdown', 'err')
+              }
+            } catch (err) {
+              if (loadingId && context.ui.hideNotification) {
+                try {
+                  context.ui.hideNotification(loadingId)
+                } catch {}
+              }
+              context.ui.notice(
+                '图片解析失败：' + (err && err.message ? err.message : String(err)),
+                'err'
+              )
+            }
+          }
+        },
+        {
         label: 'To MD',
         onClick: async () => {
           let loadingId = null
@@ -882,6 +1043,31 @@ export async function activate(context) {
             throw new Error('解析成功，但返回格式不是 Markdown')
           }
           return result
+        },
+        // path: 绝对路径（应为图片文件：png/jpg/webp 等）
+        // 返回 { ok, markdown, pages, uid?, format }
+        parseImageToMarkdownByPath: async (path) => {
+          const p = String(path || '').trim()
+          if (!p) {
+            throw new Error('path 不能为空')
+          }
+          if (!/\.(png|jpe?g|webp)$/i.test(p)) {
+            throw new Error('仅支持解析图片文件（png/jpg/webp）')
+          }
+          const cfg = await loadConfig(context)
+          if (!cfg.apiToken) {
+            throw new Error('未配置 pdf2doc 密钥')
+          }
+          if (typeof context.readFileBinary !== 'function') {
+            throw new Error('当前版本不支持按路径读取二进制文件')
+          }
+          const bytes = await context.readFileBinary(p)
+          const fileName = p.split(/[\\/]+/).pop() || 'image.jpg'
+          const result = await parseImageBytes(context, cfg, bytes, fileName)
+          if (result.format !== 'markdown' || !result.markdown) {
+            throw new Error('解析成功，但返回格式不是 Markdown')
+          }
+          return result
         }
       })
     } catch (e) {
@@ -890,6 +1076,7 @@ export async function activate(context) {
       console.error('[pdf2doc] registerAPI 失败', e)
     }
   }
+
 }
 
 export async function openSettings(context) {
