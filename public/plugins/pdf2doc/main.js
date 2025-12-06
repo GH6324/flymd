@@ -1011,6 +1011,220 @@ export async function activate(context) {
             )
           }
         }
+      },
+      {
+        label: '翻译 PDF',
+        onClick: async () => {
+          let loadingId = null
+          try {
+            const ai =
+              typeof context.getPluginAPI === 'function'
+                ? context.getPluginAPI('ai-assistant')
+                : null
+            if (!ai) {
+              context.ui.notice(
+                '需要先安装并启用 AI 助手插件',
+                'err',
+                3000
+              )
+              return
+            }
+
+            const ready =
+              typeof ai.isConfigured === 'function'
+                ? await ai.isConfigured()
+                : true
+            if (!ready) {
+              context.ui.notice(
+                '请先在 AI 助手插件中配置 API Key 或切换免费模式',
+                'err',
+                4000
+              )
+              return
+            }
+
+            const cfg = await loadConfig(context)
+            if (!cfg.apiToken) {
+              context.ui.notice(
+                '请先在 PDF2Doc 插件设置中配置密钥',
+                'err',
+                3000
+              )
+              return
+            }
+
+            let markdown = ''
+            let pages = '?'
+            let fileName = ''
+
+            const canUseCurrent =
+              typeof context.getCurrentFilePath === 'function' &&
+              typeof context.readFileBinary === 'function'
+
+            if (canUseCurrent) {
+              const path = context.getCurrentFilePath()
+              if (path && /\.pdf$/i.test(path)) {
+                if (context.ui.showNotification) {
+                  loadingId = context.ui.showNotification(
+                    '正在解析当前 PDF...',
+                    {
+                      type: 'info',
+                      duration: 0
+                    }
+                  )
+                } else {
+                  context.ui.notice(
+                    '正在解析当前 PDF...',
+                    'ok',
+                    3000
+                  )
+                }
+
+                const bytes = await context.readFileBinary(path)
+                fileName =
+                  path.split(/[\\/]+/).pop() || 'document.pdf'
+                const result = await parsePdfBytes(
+                  context,
+                  cfg,
+                  bytes,
+                  fileName,
+                  'markdown'
+                )
+                if (result.format === 'markdown' && result.markdown) {
+                  markdown = result.markdown
+                  pages = result.pages || '?'
+                } else {
+                  throw new Error('解析成功，但返回格式不是 Markdown')
+                }
+              }
+            }
+
+            if (!markdown) {
+              const file = await pickPdfFile()
+              fileName = file && file.name
+
+              if (context.ui.showNotification) {
+                if (loadingId && context.ui.hideNotification) {
+                  try {
+                    context.ui.hideNotification(loadingId)
+                  } catch {}
+                  loadingId = null
+                }
+                loadingId = context.ui.showNotification(
+                  '正在解析选中的 PDF...',
+                  {
+                    type: 'info',
+                    duration: 0
+                  }
+                )
+              } else {
+                context.ui.notice(
+                  '正在解析选中的 PDF...',
+                  'ok',
+                  3000
+                )
+              }
+
+              const result = await uploadAndParsePdfFile(
+                context,
+                cfg,
+                file,
+                'markdown'
+              )
+              if (result.format === 'markdown' && result.markdown) {
+                markdown = result.markdown
+                pages = result.pages || '?'
+              } else {
+                throw new Error('解析成功，但返回格式不是 Markdown')
+              }
+            }
+
+            if (!markdown) {
+              if (loadingId && context.ui.hideNotification) {
+                try {
+                  context.ui.hideNotification(loadingId)
+                } catch {}
+              }
+              context.ui.notice(
+                'PDF 解析成功但未获取到文本内容',
+                'err',
+                4000
+              )
+              return
+            }
+
+            if (context.ui.showNotification) {
+              if (loadingId && context.ui.hideNotification) {
+                try {
+                  context.ui.hideNotification(loadingId)
+                } catch {}
+                loadingId = null
+              }
+              loadingId = context.ui.showNotification(
+                '正在翻译 PDF 内容...',
+                {
+                  type: 'info',
+                  duration: 0
+                }
+              )
+            } else {
+              context.ui.notice('正在翻译 PDF 内容...', 'ok', 3000)
+            }
+
+            const translation =
+              typeof ai.translate === 'function'
+                ? await ai.translate(markdown)
+                : null
+
+            if (!translation) {
+              if (loadingId && context.ui.hideNotification) {
+                try {
+                  context.ui.hideNotification(loadingId)
+                } catch {}
+              }
+              context.ui.notice(
+                '翻译失败：未获取到结果',
+                'err',
+                4000
+              )
+              return
+            }
+
+            if (loadingId && context.ui.hideNotification) {
+              try {
+                context.ui.hideNotification(loadingId)
+              } catch {}
+            }
+
+            const current = context.getEditorValue()
+            const title = fileName
+              ? '## PDF 翻译：' + fileName
+              : '## PDF 中文翻译'
+            const block =
+              '\n\n---\n\n' + title + '\n\n' + translation + '\n'
+            const merged = current ? current + block : block
+            context.setEditorValue(merged)
+
+            context.ui.notice(
+              'PDF 翻译完成' +
+                (pages ? '（' + pages + ' 页）' : ''),
+              'ok',
+              5000
+            )
+          } catch (err) {
+            if (loadingId && context.ui.hideNotification) {
+              try {
+                context.ui.hideNotification(loadingId)
+              } catch {}
+            }
+            context.ui.notice(
+              'PDF 翻译失败：' +
+                (err && err.message ? err.message : String(err)),
+              'err',
+              5000
+            )
+          }
+        }
       }
     ]
   })
