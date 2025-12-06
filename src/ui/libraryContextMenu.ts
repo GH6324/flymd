@@ -264,9 +264,33 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
       }
     } catch {}
 
-    menu.style.left = Math.min(ev.clientX, (window.innerWidth - 180)) + 'px'
-    menu.style.top = Math.min(ev.clientY, (window.innerHeight - 120)) + 'px'
+    // 先临时展示再根据实际尺寸计算位置，避免菜单在窗口底部被截断
+    menu.style.visibility = 'hidden'
     menu.style.display = 'block'
+
+    const rect = menu.getBoundingClientRect()
+    const margin = 8
+    let left = ev.clientX
+    let top = ev.clientY
+
+    // 水平方向避免超出视口
+    if (left + rect.width + margin > window.innerWidth) {
+      left = Math.max(margin, window.innerWidth - rect.width - margin)
+    }
+
+    // 垂直方向如果放不下则向上展开
+    if (top + rect.height + margin > window.innerHeight) {
+      top = Math.max(margin, ev.clientY - rect.height)
+      if (top + rect.height + margin > window.innerHeight) {
+        // 极端情况下仍然放不下，贴底展示
+        top = Math.max(margin, window.innerHeight - rect.height - margin)
+      }
+    }
+
+    menu.style.left = `${left}px`
+    menu.style.top = `${top}px`
+    menu.style.visibility = 'visible'
+
     setTimeout(() => document.addEventListener('click', onDoc, { once: true }), 0)
 
     _libCtxKeyHandler = (e: KeyboardEvent) => {
@@ -283,4 +307,3 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
     document.addEventListener('keydown', _libCtxKeyHandler)
   })
 }
-
