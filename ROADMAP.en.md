@@ -2,6 +2,16 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.6.6
+- Added: Source mode now supports a “Source + Reading” split view with editor on the left and live preview on the right, keeping scroll positions in sync and making large-screen writing more comfortable.
+- Improved: Split view is hardened with window-width guard rails, auto-exit when switching modes or files, and debounced preview refresh to keep the layout stable on narrow windows.
+- Added: File deletion in the library sidebar now uses an in-app JS confirmation dialog instead of the native system dialog, providing clearer copy, consistent styling and reducing the risk of accidental deletes.
+- Added: WYSIWYG mode now understands `<!-- ... -->` HTML comment nodes so comment blocks in Markdown are preserved instead of being silently dropped during rendering.
+- Added: New “Upload to image host (S3/R2)” entry in the image context menu that reads the underlying local file, uploads it to object storage and copies the generated Markdown link to the clipboard without touching current document content.
+- Added: Autosave capability on desktop environments that can write files, periodically saving the current document in the background and persisting the toggle state to reduce data loss on unexpected exits.
+- Fixed: Undo right after pasting text in source mode could clear the entire document; undo now only reverts the latest paste operation.
+- Misc: Small tweaks to the PDF-to-Word plugin and related details to improve stability and compatibility.
+
 ## Update v0.6.4
 - Added: Extension runtime now exposes `context.getLibraryRoot` and `context.saveMarkdownToCurrentFolder`, so plugins can safely read/write Markdown files inside the current library, enabling richer local automation flows such as PDF parsing and translation.
 - Improved: The “PDF & Image High-Precision Parser” extension now supports automatic paginated translation for large PDFs and shows a confirmation dialog before starting long-running translation tasks, reducing accidental heavy jobs and quota waste.
