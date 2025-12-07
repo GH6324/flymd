@@ -535,7 +535,7 @@ async function showTranslateConfirmDialog(context, cfg, fileName, pages) {
     const descRow = document.createElement('div')
     descRow.style.marginBottom = '8px'
     descRow.textContent =
-      '翻译将通过 AI 助手插件执行，默认使用当前配置的模型。如必须使用免费模型，建议在解析完成后通过 AI 助手窗口手动翻译，以提高成功率。'
+      '翻译将通过 AI 助手插件执行，默认使用当前配置的模型。如使用免费模型，可能因为超出速率限制失败，可再通过AI插件手动翻译'
 
     const modelRow = document.createElement('div')
     modelRow.style.marginBottom = '8px'
@@ -697,7 +697,7 @@ async function showTranslateConfirmDialog(context, cfg, fileName, pages) {
         let detail = ''
         if (alwaysFreeTrans) {
           detail =
-            '启用“翻译始终使用免费模型”，本次将使用免费模型' +
+            '已启用“翻译始终使用免费模型”，本次将使用免费模型' +
             (freeKey ? `（${freeKey}）` : '')
         } else if (isFreeProvider) {
           detail =
