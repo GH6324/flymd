@@ -24,6 +24,8 @@ let _panelRoot = null
 let _panelHandle = null
 // AI 推荐缓存：normPath -> [{ path, title, name }]
 const _aiRelatedCache = new Map()
+// 文档内容签名缓存：normPath -> hash，用于增量更新当前文档索引
+const _docHashCache = new Map()
 
 // 规范化路径：统一为 / 分隔，去掉多余空白，避免 Windows 与 Tauri 不同风格导致匹配失败
 function normalizePath(path) {
@@ -44,6 +46,20 @@ function normalizeNameForMatch(name) {
   // 折叠多余空白
   s = s.replace(/\s+/g, ' ').trim()
   return s
+}
+
+// 简单字符串哈希：用于检测文档内容是否变化（不追求安全性）
+function hashText(str) {
+  try {
+    let h = 0
+    const s = String(str || '')
+    for (let i = 0; i < s.length; i++) {
+      h = (h * 31 + s.charCodeAt(i)) >>> 0
+    }
+    return h.toString(16)
+  } catch {
+    return ''
+  }
 }
 
 // 将 Map/Set 转为可序列化对象，用于 storage
@@ -557,6 +573,13 @@ async function tryAiResolveUnmatchedLinks(context, docs, forward, backward, unre
 
 // 获取当前文档的反向链接列表
 function getBacklinksForCurrent(context) {
+  // 增量更新当前文档的出链索引（基于编辑器内容）
+  try {
+    updateIndexForCurrentDocIfNeeded(context)
+  } catch (e) {
+    console.error('[backlinks] 增量更新当前文档索引失败:', e)
+  }
+
   const path = context.getCurrentFilePath && context.getCurrentFilePath()
   const norm = normalizePath(path)
   if (!norm) return []
@@ -575,6 +598,69 @@ function getBacklinksForCurrent(context) {
   }
   items.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'))
   return items
+}
+
+// 若当前文档内容发生变化，则仅重建该文档的正/反向链接索引
+function updateIndexForCurrentDocIfNeeded(context) {
+  if (!context || typeof context.getCurrentFilePath !== 'function') return
+  const path = context.getCurrentFilePath()
+  const norm = normalizePath(path)
+  if (!norm) return
+  if (typeof context.getSourceText !== 'function') return
+  const text = context.getSourceText()
+  if (typeof text !== 'string') return
+
+  const newHash = hashText(text)
+  const oldHash = _docHashCache.get(norm)
+  if (oldHash && oldHash === newHash) return
+  _docHashCache.set(norm, newHash)
+
+  // 若索引尚未建立（docs 为空），不做任何操作，避免误报
+  if (!indexState || !indexState.docs || !indexState.docs.size) return
+
+  const docs = indexState.docs
+  const forward = indexState.forward
+  const backward = indexState.backward
+
+  // 更新当前文档的基本信息
+  const docName = getDocNameFromPath(path)
+  const titleFromBody = guessTitleFromBody(text)
+  const title = titleFromBody || docName
+  const info = { path, name: docName, title }
+  docs.set(norm, info)
+
+  // 清理旧的出链和对应的反向链接
+  const oldTargets = forward.get(norm)
+  if (oldTargets && oldTargets.size) {
+    for (const t of oldTargets.values()) {
+      const set = backward.get(t)
+      if (set) {
+        set.delete(norm)
+        if (!set.size) {
+          backward.delete(t)
+        }
+      }
+    }
+  }
+  forward.delete(norm)
+
+  // 重新解析当前文档的 [[...]] 链接
+  const links = extractWikiLinks(text)
+  if (!links || !links.length) return
+
+  const outSet = new Set()
+  for (const lk of links) {
+    const targetPath = resolveLinkTarget(lk, docs)
+    if (!targetPath || targetPath === norm) continue
+    outSet.add(targetPath)
+    if (!backward.has(targetPath)) {
+      backward.set(targetPath, new Set())
+    }
+    backward.get(targetPath).add(norm)
+  }
+  if (outSet.size > 0) {
+    forward.set(norm, outSet)
+  }
 }
 
 // 在 Panel 中渲染一个极简的反向链接列表
@@ -650,38 +736,37 @@ function renderBacklinksPanel(context, panelRoot) {
     empty.style.padding = '4px 0'
     empty.textContent = '没有文档链接到当前笔记'
     listWrap.appendChild(empty)
-    return
-  }
+  } else {
+    for (const item of items) {
+      const row = document.createElement('div')
+      row.style.cursor = 'pointer'
+      row.style.padding = '4px 0'
+      row.style.borderBottom = '1px solid rgba(0,0,0,0.04)'
 
-  for (const item of items) {
-    const row = document.createElement('div')
-    row.style.cursor = 'pointer'
-    row.style.padding = '4px 0'
-    row.style.borderBottom = '1px solid rgba(0,0,0,0.04)'
+      const titleEl = document.createElement('div')
+      titleEl.textContent = item.title
+      titleEl.style.fontWeight = '500'
+      titleEl.style.fontSize = '13px'
 
-    const titleEl = document.createElement('div')
-    titleEl.textContent = item.title
-    titleEl.style.fontWeight = '500'
-    titleEl.style.fontSize = '13px'
+      const pathEl = document.createElement('div')
+      pathEl.textContent = item.name
+      pathEl.style.fontSize = '11px'
+      pathEl.style.color = '#999'
 
-    const pathEl = document.createElement('div')
-    pathEl.textContent = item.name
-    pathEl.style.fontSize = '11px'
-    pathEl.style.color = '#999'
+      row.appendChild(titleEl)
+      row.appendChild(pathEl)
 
-    row.appendChild(titleEl)
-    row.appendChild(pathEl)
-
-    row.addEventListener('click', () => {
-      context.openFileByPath(item.path).catch(() => {
-        context.ui.notice('打开文档失败：' + item.title, 'err')
+      row.addEventListener('click', () => {
+        context.openFileByPath(item.path).catch(() => {
+          context.ui.notice('打开文档失败：' + item.title, 'err')
+        })
       })
-    })
 
-    listWrap.appendChild(row)
+      listWrap.appendChild(row)
+    }
   }
 
-  // AI 语义关联文档（Qwen 免费）
+  // AI 语义关联文档（Qwen 免费），即使没有任何反向链接也始终可用
   const aiRoot = document.createElement('div')
   aiRoot.style.fontSize = '12px'
   aiRoot.style.padding = '4px 6px 8px'
@@ -748,10 +833,24 @@ function renderAiRelatedSection(context, root) {
 
       row.appendChild(t)
       row.appendChild(n)
+      // 左键：跳转到该文档
       row.addEventListener('click', () => {
         context.openFileByPath(item.path).catch(() => {
           context.ui.notice('打开文档失败：' + item.title, 'err')
         })
+      })
+      // 右键：在当前编辑位置插入 [[链接]]
+      row.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault()
+        const label = item.title || item.name || getDocNameFromPath(item.path)
+        if (!label) return
+        try {
+          context.insertAtCursor(`[[${label}]]`)
+          context.ui.notice('已插入链接：[[ ' + label + ' ]]', 'ok', 1600)
+        } catch (e) {
+          console.error('[backlinks] 插入链接失败', e)
+          context.ui.notice('插入链接失败，请切换到编辑模式重试', 'err', 2000)
+        }
       })
       body.appendChild(row)
     }
@@ -927,11 +1026,22 @@ export async function activate(context) {
     )
     _pollTimer = window.setInterval(() => {
       try {
+        // 始终尝试增量更新当前文档的出链索引
+        try {
+          updateIndexForCurrentDocIfNeeded(context)
+        } catch {}
+
         const cur = normalizePath(
           context.getCurrentFilePath && context.getCurrentFilePath(),
         )
+        // 文档切换：更新 lastPath 并重绘
         if (cur && cur !== lastPath) {
           lastPath = cur
+          renderBacklinksPanel(context, panelRoot)
+          return
+        }
+        // 同一文档：也定期重绘，以反映刚编辑完的链接变化
+        if (cur) {
           renderBacklinksPanel(context, panelRoot)
         }
       } catch {
