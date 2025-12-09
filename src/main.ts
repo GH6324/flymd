@@ -5876,28 +5876,33 @@ function resetStickyModeFlags(): void {
 }
 
 // 兜底：如果检测到窗口尺寸异常偏小，则恢复到 960x640
-async function ensureMinWindowSize(): Promise<void> {
-  try {
-    const win = getCurrentWindow()
-    const size = await win.innerSize()
-    const minW = 960
-    const minH = 640
+  async function ensureMinWindowSize(): Promise<void> {
+    try {
+      const win = getCurrentWindow()
+      const size = await win.innerSize()
+      const minW = 960
+      const minH = 640
+      let targetW = size.width
+      let targetH = size.height
 
-    // 屏幕尺寸：用于避免窗口被恢复到远大于屏幕的异常尺寸
-    const screenW = window?.screen?.availWidth || window?.screen?.width || 0
-    const screenH = window?.screen?.availHeight || window?.screen?.height || 0
-    const maxScale = 1.2
+      // 下限：至少保持默认窗口大小
+      if (targetW < minW) targetW = minW
+      if (targetH < minH) targetH = minH
 
-    let targetW = size.width
-    let targetH = size.height
-
-    // 下限：至少保持默认窗口大小
-    if (targetW < minW) targetW = minW
-    if (targetH < minH) targetH = minH
-
-    // 上限：不超过屏幕尺寸的一定倍数，避免“无限变长”的异常情况
-    if (screenW && targetW > screenW * maxScale) targetW = Math.round(screenW * maxScale)
-    if (screenH && targetH > screenH * maxScale) targetH = Math.round(screenH * maxScale)
+      // 上限：使用 Rust 侧计算的虚拟桌面尺寸（多屏合并），避免无限变大的异常窗口
+      let maxW = 0
+      let maxH = 0
+      try {
+        const screen = await invoke('get_virtual_screen_size') as { width?: number; height?: number } | null
+        if (screen && typeof screen.width === 'number' && typeof screen.height === 'number') {
+          maxW = screen.width
+          maxH = screen.height
+        }
+      } catch {
+        // 若获取失败，则退化为仅做下限保护，保持旧版本行为
+      }
+      if (maxW > 0 && targetW > maxW) targetW = maxW
+      if (maxH > 0 && targetH > maxH) targetH = maxH
 
     if (targetW !== size.width || targetH !== size.height) {
       const { LogicalSize } = await import('@tauri-apps/api/dpi')

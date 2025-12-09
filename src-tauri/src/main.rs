@@ -458,6 +458,7 @@ fn main() {
       android_persist_uri_permission,
       get_cli_args,
       get_platform,
+      get_virtual_screen_size,
       open_as_sticky_note
     ])
     .setup(|app| {
@@ -507,6 +508,58 @@ fn main() {
   builder
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
+}
+
+#[derive(Debug, Serialize)]
+struct VirtualScreenSize {
+  width: u32,
+  height: u32,
+  monitors: usize,
+}
+
+#[tauri::command]
+async fn get_virtual_screen_size(app: tauri::AppHandle) -> Result<VirtualScreenSize, String> {
+  // Android 暂不支持多屏信息：直接返回错误，前端回退到仅下限保护逻辑
+  #[cfg(target_os = "android")]
+  {
+    let _ = app;
+    return Err("virtual screen size not supported on android".into());
+  }
+
+  #[cfg(not(target_os = "android"))]
+  {
+    let monitors = app
+      .available_monitors()
+      .map_err(|e| format!("获取显示器信息失败: {e}"))?;
+    if monitors.is_empty() {
+      return Err("no monitors".into());
+    }
+
+    let mut min_x = i32::MAX;
+    let mut min_y = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut max_y = i32::MIN;
+
+    for m in &monitors {
+      let pos = m.position();
+      let size = m.size();
+      if pos.x < min_x { min_x = pos.x; }
+      if pos.y < min_y { min_y = pos.y; }
+      let right = pos.x.saturating_add(size.width as i32);
+      let bottom = pos.y.saturating_add(size.height as i32);
+      if right > max_x { max_x = right; }
+      if bottom > max_y { max_y = bottom; }
+    }
+
+    let width = max_x.saturating_sub(min_x).max(0) as u32;
+    let height = max_y.saturating_sub(min_y).max(0) as u32;
+
+    Ok(VirtualScreenSize {
+      width,
+      height,
+      monitors: monitors.len(),
+    })
+  }
 }
 
 #[tauri::command]
