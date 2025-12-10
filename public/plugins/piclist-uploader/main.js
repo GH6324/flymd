@@ -26,6 +26,8 @@ function getDefaultConfig() {
     picbed: '',
     // 可选：PicList 中的配置名（configName），留空走当前默认配置
     configName: '',
+    // 是否在粘贴后自动上传到 PicList（默认关闭，只在用户显式开启时生效）
+    autoUploadEnabled: false,
   }
 }
 
@@ -44,6 +46,7 @@ async function loadConfig(context) {
       key: typeof raw.key === 'string' ? raw.key.trim() : '',
       picbed: typeof raw.picbed === 'string' ? raw.picbed.trim() : '',
       configName: typeof raw.configName === 'string' ? raw.configName.trim() : '',
+      autoUploadEnabled: !!raw.autoUploadEnabled,
     }
     debugLog('loadConfig: resolved config =', cfg)
     return cfg
@@ -358,6 +361,19 @@ async function autoUploadNewPastedImages(context) {
   }
 }
 
+async function triggerAutoUploadIfEnabled(context) {
+  try {
+    const cfg = await loadConfig(context)
+    if (!cfg.autoUploadEnabled) {
+      debugLog('triggerAutoUploadIfEnabled: autoUpload disabled in config')
+      return
+    }
+    await autoUploadNewPastedImages(context)
+  } catch (e) {
+    debugLog('triggerAutoUploadIfEnabled: error', e)
+  }
+}
+
 function bindAutoUploadOnPaste(context) {
   if (typeof document === 'undefined') return
   try {
@@ -372,7 +388,7 @@ function bindAutoUploadOnPaste(context) {
         debugLog('paste event captured on source editor, scheduling auto upload')
         // 等宿主完成粘贴插入，再扫描并替换
         setTimeout(() => {
-          autoUploadNewPastedImages(context).catch(() => {})
+          triggerAutoUploadIfEnabled(context).catch(() => {})
         }, 160)
       }
 
@@ -394,7 +410,7 @@ function bindAutoUploadOnPaste(context) {
       const handler = () => {
         debugLog('paste event captured on ProseMirror, scheduling auto upload')
         setTimeout(() => {
-          autoUploadNewPastedImages(context).catch(() => {})
+          triggerAutoUploadIfEnabled(context).catch(() => {})
         }, 200)
       }
 
@@ -430,7 +446,7 @@ export async function activate(context) {
       const anyWin = /** @type {any} */ (window)
       anyWin.flymdPiclistAutoUpload = () => {
         if (_globalContext) {
-          autoUploadNewPastedImages(_globalContext).catch(() => {})
+          triggerAutoUploadIfEnabled(_globalContext).catch(() => {})
         }
       }
     }
@@ -509,8 +525,8 @@ export async function activate(context) {
     context.addContextMenuItem({
       label: '使用 PicList 上传图片',
       condition: (ctx) => {
-        // 仅在源码模式有效
-        if (!ctx || ctx.mode !== 'edit') return false
+        // 只要有选中文本且像图片语法，就显示菜单（不再依赖具体模式）
+        if (!ctx) return false
         const s = (ctx.selectedText || '').trim()
         if (!s) return false
         return looksLikeImageText(s)
@@ -662,6 +678,27 @@ function ensureSettingsDialog(context, cfg) {
       inputs[f.key] = input
     })
 
+    // 自动上传开关
+    const autoRow = document.createElement('div')
+    autoRow.style.display = 'flex'
+    autoRow.style.alignItems = 'center'
+    autoRow.style.marginTop = '4px'
+
+    const autoChk = document.createElement('input')
+    autoChk.type = 'checkbox'
+    autoChk.id = 'piclist-auto-upload'
+    autoChk.style.marginRight = '6px'
+
+    const autoLab = document.createElement('label')
+    autoLab.htmlFor = 'piclist-auto-upload'
+    autoLab.textContent = '启用自动上传（粘贴图片后自动上传到 PicList）'
+
+    autoRow.appendChild(autoChk)
+    autoRow.appendChild(autoLab)
+    form.appendChild(autoRow)
+
+    inputs.autoUploadEnabled = autoChk
+
     const buttons = document.createElement('div')
     buttons.style.display = 'flex'
     buttons.style.justifyContent = 'flex-end'
@@ -698,6 +735,7 @@ function ensureSettingsDialog(context, cfg) {
           key: inputs.key.value.trim(),
           picbed: inputs.picbed.value.trim(),
           configName: inputs.configName.value.trim(),
+          autoUploadEnabled: !!inputs.autoUploadEnabled.checked,
         }
         await saveConfig(context, next)
         overlay.style.display = 'none'
@@ -740,6 +778,9 @@ function ensureSettingsDialog(context, cfg) {
   inputs.key && (inputs.key.value = cfg.key || '')
   inputs.picbed && (inputs.picbed.value = cfg.picbed || '')
   inputs.configName && (inputs.configName.value = cfg.configName || '')
+  if (inputs.autoUploadEnabled) {
+    inputs.autoUploadEnabled.checked = !!cfg.autoUploadEnabled
+  }
 
   _settingsRoot.style.display = 'flex'
   if (inputs.host) {

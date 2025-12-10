@@ -1809,10 +1809,10 @@ async function setWysiwygEnabled(enable: boolean) {
               dirty = true
               refreshTitle()
               refreshStatus()
-              // 通知 PicList 插件：有新的 Markdown 内容（可能包含粘贴图片）
+              // 通用“内容变更钩子”：供插件在所见模式内容落盘后执行额外逻辑
               try {
-                const fn = (window as any).flymdPiclistAutoUpload
-                if (typeof fn === 'function') fn()
+                const hook = (window as any).flymdPiclistAutoUpload
+                if (typeof hook === 'function') hook()
               } catch {}
             }
           } catch {}

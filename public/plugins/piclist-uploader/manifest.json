@@ -3,7 +3,7 @@
   "name": "PicList 图床",
   "version": "0.1.0",
   "author": "flyMD",
-  "description": "通过 PicList 上传本地图片/也可右键上传指定图片（仅源码模式）",
+  "description": "通过 PicList 上传本地图片/也可右键上传指定图片",
   "main": "main.js",
   "homepage": "https://github.com/Kuingsmile/PicList"
 }
