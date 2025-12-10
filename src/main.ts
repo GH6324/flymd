@@ -5977,6 +5977,10 @@ async function renamePathWithDialog(path: string): Promise<string | null> {
       currentFilePath = dst as any
       refreshTitle()
     }
+    // 通知其他模块：某个文件已从 path 重命名/移动到 dst
+    try {
+      window.dispatchEvent(new CustomEvent('flymd-file-renamed', { detail: { src: path, dst } }))
+    } catch {}
     const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
     if (treeEl && !fileTreeReady) {
       await fileTree.init(treeEl, {

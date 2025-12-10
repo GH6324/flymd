@@ -280,6 +280,26 @@ export async function initTabSystem(): Promise<void> {
   // 启动文件路径同步监听（处理直接调用 openFile2 的情况）
   startPathSyncWatcher()
 
+  // 监听文件重命名事件（例如从库侧栏重命名文档），同步更新标签中的文件路径
+  window.addEventListener('flymd-file-renamed', (ev: Event) => {
+    try {
+      const detail = (ev as CustomEvent).detail as { src?: string; dst?: string } | undefined
+      if (!detail || !detail.src || !detail.dst) return
+      const src = String(detail.src)
+      const dst = String(detail.dst)
+      const normalizedSrc = src.replace(/\\/g, '/')
+      const tabs = tabManager.getTabs()
+      for (const tab of tabs) {
+        const p = tab.filePath
+        if (p && p.replace(/\\/g, '/') === normalizedSrc) {
+          tabManager.updateTabPath(tab.id, dst)
+        }
+      }
+    } catch (e) {
+      console.error('[Tabs] 处理文件重命名事件失败:', e)
+    }
+  })
+
   initialized = true
   console.log('[Tabs] Tab system initialized')
 }
