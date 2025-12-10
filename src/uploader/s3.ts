@@ -285,23 +285,25 @@ export async function uploadImageToS3R2(input: Blob | ArrayBuffer | Uint8Array, 
   // 方案A：优先使用后端 SDK 直传（与 PicList 一致）
   if (isTauriRuntime()) {
     try {
-      const resp = await invoke<{ key: string; public_url: string }>('upload_to_s3', {
-        req: {
-          accessKeyId: cfg.accessKeyId,
-          secretAccessKey: cfg.secretAccessKey,
-          bucket: cfg.bucket,
-          region,
+        const resp = await invoke<{ key: string; public_url: string }>('upload_to_s3', {
+          req: {
+            accessKeyId: cfg.accessKeyId,
+            secretAccessKey: cfg.secretAccessKey,
+            bucket: cfg.bucket,
+            region,
           endpoint: cfg.endpoint,
           forcePathStyle: forcePathStyle,
           aclPublicRead: aclPublicRead,
-          customDomain: cfg.customDomain,
-          key,
-          contentType,
-          bytes: Array.from(new Uint8Array(bytes))
-        }
-      })
-      return { key: resp.key, publicUrl: resp.public_url }
-    } catch (e) {
+            customDomain: cfg.customDomain,
+            key,
+            contentType,
+            bytes: Array.from(new Uint8Array(bytes))
+          }
+        })
+        const publicUrl = resp.public_url
+        await recordUploadHistoryIfPossible(resp.key, publicUrl, cfg, fileName, contentType, bytes.byteLength || 0)
+        return { key: resp.key, publicUrl }
+      } catch (e) {
       console.warn('upload_to_s3 (sdk) failed, fallback to presign', e)
       // 方案B 作为兜底：预签名 + PUT（插件/浏览器）
       try {
@@ -319,18 +321,24 @@ export async function uploadImageToS3R2(input: Blob | ArrayBuffer | Uint8Array, 
           }
         })
         // 插件优先
-        try {
-          const client = await tryPluginHttp()
-          if (client && client.fetch && client.Body) {
-            const body = new Uint8Array(bytes)
-            const r1 = await client.fetch(pres.put_url, { method: 'PUT', body: client.Body.bytes(body) })
-            if (r1 && (r1.ok === true || (typeof r1.status === 'number' && r1.status >= 200 && r1.status < 300))) {
-              return { key, publicUrl: pres.public_url }
+          try {
+            const client = await tryPluginHttp()
+            if (client && client.fetch && client.Body) {
+              const body = new Uint8Array(bytes)
+              const r1 = await client.fetch(pres.put_url, { method: 'PUT', body: client.Body.bytes(body) })
+              if (r1 && (r1.ok === true || (typeof r1.status === 'number' && r1.status >= 200 && r1.status < 300))) {
+                const publicUrl = pres.public_url
+                await recordUploadHistoryIfPossible(key, publicUrl, cfg, fileName, contentType, bytes.byteLength || 0)
+                return { key, publicUrl }
+              }
             }
+          } catch {}
+          const r2 = await fetch(pres.put_url, { method: 'PUT', body: bytes })
+          if (r2.ok) {
+            const publicUrl = pres.public_url
+            await recordUploadHistoryIfPossible(key, publicUrl, cfg, fileName, contentType, bytes.byteLength || 0)
+            return { key, publicUrl }
           }
-        } catch {}
-        const r2 = await fetch(pres.put_url, { method: 'PUT', body: bytes })
-        if (r2.ok) return { key, publicUrl: pres.public_url }
       } catch {}
       // 仍失败则走本地兜底
     }
@@ -382,6 +390,7 @@ export async function uploadImageToS3R2(input: Blob | ArrayBuffer | Uint8Array, 
         throw new Error(`upload failed via plugin-http: ${status} ${statusText}`)
       }
       const publicUrl = buildPublicUrl(cfg.customDomain, endpointUrl, cfg.bucket, key, forcePathStyle)
+      await recordUploadHistoryIfPossible(key, publicUrl, cfg, fileName, contentType, bytes.byteLength || 0)
       return { key, publicUrl }
     } else {
       throw new Error('tauri plugin-http not available')
@@ -399,6 +408,40 @@ export async function uploadImageToS3R2(input: Blob | ArrayBuffer | Uint8Array, 
   }
 
   const publicUrl = buildPublicUrl(cfg.customDomain, endpointUrl, cfg.bucket, key, forcePathStyle)
+  await recordUploadHistoryIfPossible(key, publicUrl, cfg, fileName, contentType, bytes.byteLength || 0)
   return { key, publicUrl }
+}
+
+// 记录一次成功的 S3/R2 上传到后端，便于图床管理插件查询
+async function recordUploadHistoryIfPossible(
+  key: string,
+  publicUrl: string,
+  cfg: UploaderConfig,
+  fileName: string,
+  contentType: string,
+  size: number,
+): Promise<void> {
+  // 网页版本没有 Tauri 后端，直接忽略
+  if (!isTauriRuntime()) return
+  try {
+    const id = `s3-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const uploadedAt = new Date().toISOString()
+    const safeSize = Number.isFinite(size) && size > 0 ? Math.floor(size) : undefined
+    await invoke('flymd_record_uploaded_image', {
+      record: {
+        id,
+        bucket: cfg.bucket,
+        key,
+        public_url: publicUrl,
+        uploaded_at: uploadedAt,
+        file_name: fileName,
+        content_type: contentType,
+        size: safeSize,
+      },
+    } as any)
+  } catch (e) {
+    // 记录失败不影响主流程
+    console.warn('[Uploader] 记录上传历史失败', e)
+  }
 }
 

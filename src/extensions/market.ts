@@ -7,6 +7,8 @@ export type InstallableItem = {
   description?: string
   author?: string
   homepage?: string
+  // 可选分类信息，用于扩展市场筛选（仅由索引提供，宿主不强制）
+  category?: string
   install: { type: 'github' | 'manifest'; ref: string }
 }
 
@@ -195,4 +197,3 @@ export function createPluginMarket(deps: PluginMarketDeps) {
     loadInstallablePlugins,
   }
 }
-

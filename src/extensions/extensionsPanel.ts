@@ -51,6 +51,7 @@ let _extOverlayEl: HTMLDivElement | null = null
 let _extListHost: HTMLDivElement | null = null
 let _extInstallInput: HTMLInputElement | null = null
 let _extMarketSearchText = ''
+let _extMarketCategory = ''
 let _extLastMarketItems: InstallableItem[] = []
 let _extUpdatesOnly = false  // 是否仅显示可更新扩展（已安装区块过滤）
 let _extGlobalOrder: Record<string, number> = {} // 扩展卡片统一排序顺序
@@ -202,6 +203,29 @@ function renderInstalledExtensions(
 
   if (_extUpdatesOnly) {
     arr = arr.filter((p) => !!updateMap[p.id])
+  }
+
+  // 按分类过滤已安装扩展（分类来源于市场索引 _extLastMarketItems），仅在选择了分类时生效
+  const selectedCategory = (_extMarketCategory || '').trim()
+  if (selectedCategory) {
+    const catMap: Record<string, string> = {}
+    try {
+      for (const it of _extLastMarketItems || []) {
+        if (!it || !(it as any).id) continue
+        const c = (it as any).category
+        if (typeof c === 'string' && c) {
+          catMap[(it as any).id] = c
+        }
+      }
+    } catch {}
+    arr = arr.filter((p) => {
+      try {
+        const c = catMap[p.id]
+        return c === selectedCategory
+      } catch {
+        return false
+      }
+    })
   }
 
   arr = arr.slice().sort((a, b) => {
@@ -395,6 +419,27 @@ export async function refreshExtensionsUI(): Promise<void> {
   updatesOnlyWrap.appendChild(updatesOnlyLabel)
   hd.appendChild(updatesOnlyWrap)
 
+  // 分类选择：仅当市场索引中存在分类信息时显示
+  const categoryWrap = document.createElement('div')
+  categoryWrap.className = 'ext-market-channel'
+  categoryWrap.id = 'ext-category-wrap'
+  const categoryLabel = document.createElement('span')
+  categoryLabel.className = 'ext-market-channel-label'
+  categoryLabel.textContent = t('ext.market.category.label')
+  const categorySelect = document.createElement('select')
+  categorySelect.className = 'ext-market-channel-select'
+  categorySelect.id = 'ext-category-select'
+  categorySelect.addEventListener('change', () => {
+    _extMarketCategory = categorySelect.value || ''
+    void (async () => {
+      try { await refreshInstalledExtensionsUI() } catch {}
+      try { await applyMarketFilter() } catch {}
+    })()
+  })
+  categoryWrap.appendChild(categoryLabel)
+  categoryWrap.appendChild(categorySelect)
+  hd.appendChild(categoryWrap)
+
   // 渠道选择：GitHub / 官网
   const channelWrap = document.createElement('div')
   channelWrap.className = 'ext-market-channel'
@@ -470,10 +515,13 @@ export async function refreshExtensionsUI(): Promise<void> {
 
   // 2) 填充 Builtins（仅依赖本地 Store，不走网络）
   if (host) {
-    for (const b of builtinPlugins) {
-      const row = document.createElement('div')
-      row.className = 'ext-item'
-      row.setAttribute('data-type', 'builtin')
+    const hideBuiltinForCategory = !!(_extMarketCategory || '').trim()
+    // 选择了分类时不展示内置扩展，仅展示与分类匹配的已安装/可安装扩展
+    if (!hideBuiltinForCategory) {
+      for (const b of builtinPlugins) {
+        const row = document.createElement('div')
+        row.className = 'ext-item'
+        row.setAttribute('data-type', 'builtin')
       try { row.style.order = String(getPluginOrder(b.id, b.name, -1000)) } catch {}
       const meta = document.createElement('div'); meta.className = 'ext-meta'
       const name = document.createElement('div'); name.className = 'ext-name'
@@ -513,8 +561,9 @@ export async function refreshExtensionsUI(): Promise<void> {
         btn2.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host.openWebdavSyncDialog() } catch {} })
         actions.appendChild(btn2)
       }
-      row.appendChild(meta); row.appendChild(actions)
-      unifiedList.appendChild(row)
+        row.appendChild(meta); row.appendChild(actions)
+        unifiedList.appendChild(row)
+      }
     }
   }
 
@@ -561,6 +610,19 @@ export async function refreshExtensionsUI(): Promise<void> {
           return true
         }
       })
+
+      const category = (_extMarketCategory || '').trim()
+      if (category) {
+        items = items.filter((it) => {
+          try {
+            const c = (it as any).category
+            return c === category
+          } catch {
+            return false
+          }
+        })
+      }
+
       if (keywordRaw) {
         items = items.filter((it) => {
           try {
@@ -685,6 +747,47 @@ export async function refreshExtensionsUI(): Promise<void> {
   } catch {
     marketItems = FALLBACK_INSTALLABLES.slice()
   }
+
+  // 根据最新的市场索引构建分类列表（如果存在分类字段）
+  try {
+    const categories = new Set<string>()
+    for (const it of marketItems) {
+      const c = (it as any)?.category
+      if (c && typeof c === 'string') {
+        categories.add(c)
+      }
+    }
+    // 仅当真的有分类时才展示分类选择器，避免老索引/无分类场景下出现空的控件
+    const anyCategory = categories.size > 0
+    const categoryWrapEl = hd.querySelector('#ext-category-wrap') as HTMLDivElement | null
+    const categorySelectEl = hd.querySelector('#ext-category-select') as HTMLSelectElement | null
+    if (categoryWrapEl && categorySelectEl) {
+      if (!anyCategory) {
+        categoryWrapEl.style.display = 'none'
+        _extMarketCategory = ''
+      } else {
+        categoryWrapEl.style.display = ''
+        categorySelectEl.innerHTML = ''
+        const optAll = document.createElement('option')
+        optAll.value = ''
+        optAll.textContent = t('ext.market.category.all')
+        categorySelectEl.appendChild(optAll)
+        const sortedCats = Array.from(categories).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+        for (const c of sortedCats) {
+          const opt = document.createElement('option')
+          opt.value = c
+          opt.textContent = c
+          categorySelectEl.appendChild(opt)
+        }
+        if (_extMarketCategory && categories.has(_extMarketCategory)) {
+          categorySelectEl.value = _extMarketCategory
+        } else {
+          categorySelectEl.value = ''
+          _extMarketCategory = ''
+        }
+      }
+    }
+  } catch {}
 
   _extLastMarketItems = marketItems
   _extGlobalOrder = {}

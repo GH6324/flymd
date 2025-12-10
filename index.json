@@ -156,6 +156,18 @@
     },
     {
       "homepage": "https://github.com/flyhunterl/flymd",
+      "name": "S3 图床相册",
+      "description": "查看并管理通过内置 S3/R2 图床上传的图片，支持复制链接、插入当前文档以及删除远端对象。",
+      "author": "flyMD",
+      "id": "s3-gallery",
+      "category": "图床上传",
+      "install": {
+        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/s3-gallery/manifest.json",
+        "type": "manifest"
+      }
+    },
+    {
+      "homepage": "https://github.com/flyhunterl/flymd",
       "name": "Typecho 博文管理",
       "description": "从 Typecho 拉取博文列表并下载为本地 Markdown，支持按时间 / 分类筛选，同时支持从当前文档覆盖远端文章。",
       "author": "flyMD",
