@@ -31,7 +31,7 @@
 
 ### PDF 高精度解析 + 翻译
 
-**示例为高精度解析插件（0.024元/页），同时提供MinerU插件（免费，自行申请API）**
+**示例为高精度解析插件（0.024元/页），同时提供MinerU解析插件（免费，自行申请API）**
 
 <img src="https://github.com/user-attachments/assets/2a512b4b-7083-41d9-9b84-f9b411b849f1" alt="PDF高精度解析翻译" width="800">
 
