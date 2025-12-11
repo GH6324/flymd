@@ -75,7 +75,7 @@ FlyMD is a lightweight, high-performance local Markdown editor supporting high-p
 - **Multi-Format Export** - PDF / DOCX
 - **Portable Mode** - All config in app root directory, ideal for USB drives
 
-> ⚠️ Linux tip: On Arch / Manjaro and other Arch-based distributions, AppImage may show white screens due to WebKitGTK / GPU driver issues. Recommended to convert deb → debtap / PKGBUILD to pacman package. See [Arch installation & troubleshooting](arch.md).
+> ⚠️ Linux tip: On Arch / Manjaro and other Arch-based distributions, AppImage may show white screens due to WebKitGTK / GPU driver issues. ~~Recommended to convert deb → debtap / PKGBUILD to pacman package.~~ An official AUR package `flymd` is now available; it is recommended to install via AUR (e.g. `yay -S flymd`). See [Arch installation & troubleshooting](arch.md).
 
 ### Data Security
 
@@ -248,8 +248,9 @@ Stay connected for the latest updates, preview builds, and tips:
 
 | Developer | Contribution |
 |-----------|-------------|
-| [xf959211192](https://github.com/xf959211192) | Telegraph-Image image hosting uploader |
-| [Vita0519](https://github.com/Vita0519) | Xiaohongshu copywriting generator AI extension |
+| <a href="https://github.com/xf959211192"><img src="https://github.com/xf959211192.png" width="32" alt="xf959211192 avatar" /></a> [xf959211192](https://github.com/xf959211192) | Telegraph-Image image hosting uploader |
+| <a href="https://github.com/Vita0519"><img src="https://github.com/Vita0519.png" width="32" alt="Vita0519 avatar" /></a> [Vita0519](https://github.com/Vita0519) | Xiaohongshu copywriting generator AI extension |
+| <a href="https://github.com/Integral-Tech"><img src="https://github.com/Integral-Tech.png" width="32" alt="Integral-Tech avatar" /></a> [Integral-Tech](https://github.com/Integral-Tech) | Arch Linux AUR package maintainer |
 
 ### Contributing
 

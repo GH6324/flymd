@@ -61,7 +61,7 @@ FlyMD 是一款轻量级、高性能的本地 Markdown 编辑器,支持 PDF 高�
 - **多格式导出** - PDF / DOCX
 - **便携模式** - 所有配置写入应用根目录,适合 U 盘携带
 
-> ⚠️ Linux 提示:在 Arch / Manjaro 等基于 Arch 的发行版上,AppImage 可能因 WebKitGTK / 显卡驱动出现白屏,建议优先使用 deb → debtap / PKGBUILD 转换为 pacman 包,详见 [Arch 安装与排错说明](arch.md)。
+> ⚠️ Linux 提示:在 Arch / Manjaro 等基于 Arch 的发行版上,AppImage 可能因 WebKitGTK / 显卡驱动出现白屏,~~建议优先使用 deb → debtap / PKGBUILD 转换为 pacman 包~~。现已提供 AUR 包 `flymd`,建议通过 AUR 安装(例如:`yay -S flymd`),详见 [Arch 安装与排错说明](arch.md)。
 
 ### 数据安全
 
@@ -258,8 +258,9 @@ FlyMD 拥有丰富的插件生态,支持通过扩展插件无限扩展功能。
 
 | 开发者 | 贡献 |
 |--------|------|
-| [xf959211192](https://github.com/xf959211192) | Telegraph-Image 图床上传 |
-| [Vita0519](https://github.com/Vita0519) | 小红书文案生成 AI 文案扩展 |
+| <a href="https://github.com/xf959211192"><img src="https://github.com/xf959211192.png" width="32" alt="xf959211192 头像" /></a> [xf959211192](https://github.com/xf959211192) | Telegraph-Image 图床上传 |
+| <a href="https://github.com/Vita0519"><img src="https://github.com/Vita0519.png" width="32" alt="Vita0519 头像" /></a> [Vita0519](https://github.com/Vita0519) | 小红书文案生成 AI 文案扩展 |
+| <a href="https://github.com/Integral-Tech"><img src="https://github.com/Integral-Tech.png" width="32" alt="Integral-Tech 头像" /></a> [Integral-Tech](https://github.com/Integral-Tech) | Arch Linux AUR 包维护 |
 
 ### 贡献指南
 
@@ -297,12 +298,7 @@ FlyMD 拥有丰富的插件生态,支持通过扩展插件无限扩展功能。
 
 </details>
 
-<details>
-<summary><strong>Arch Linux 空白页面?</strong></summary>
 
-请参阅 [Arch Linux 空白页面解决方法](arch.md)。
-
-</details>
 
 <details>
 <summary><strong>右键菜单被插件占用了怎么办?</strong></summary>
