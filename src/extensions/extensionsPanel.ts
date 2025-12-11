@@ -202,6 +202,39 @@ export async function refreshInstalledExtensionsUI(): Promise<void> {
     const updateMap: Record<string, PluginUpdateState> = _extLastUpdateMap || {}
 
     renderInstalledExtensions(unifiedList, installedMap, updateMap)
+
+    // 内置扩展的状态标签（图床 / WebDAV 同步）也需要跟随配置刷新
+    if (host) {
+      try {
+        const s3Row = unifiedList.querySelector('[data-type="builtin"][data-ext-id="uploader-s3"]') as HTMLDivElement | null
+        if (s3Row) {
+          const tag = s3Row.querySelector('.ext-tag[data-role="status"]') as HTMLSpanElement | null
+          if (tag) {
+            const store = host.getStore()
+            let upCfg: any = null
+            try {
+              if (store) upCfg = (await store.get('uploader')) as any
+            } catch {
+              upCfg = null
+            }
+            const enabled = !!upCfg?.enabled
+            tag.textContent = enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
+            tag.style.color = enabled ? '#22c55e' : '#94a3b8'
+          }
+        }
+
+        const webdavRow = unifiedList.querySelector('[data-type="builtin"][data-ext-id="webdav-sync"]') as HTMLDivElement | null
+        if (webdavRow) {
+          const tag = webdavRow.querySelector('.ext-tag[data-role="status"]') as HTMLSpanElement | null
+          if (tag) {
+            const cfg = await host.getWebdavSyncConfig()
+            const enabled = !!cfg?.enabled
+            tag.textContent = enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
+            tag.style.color = enabled ? '#22c55e' : '#94a3b8'
+          }
+        }
+      } catch {}
+    }
   } catch {}
 }
 
@@ -553,45 +586,46 @@ export async function refreshExtensionsUI(): Promise<void> {
         const row = document.createElement('div')
         row.className = 'ext-item'
         row.setAttribute('data-type', 'builtin')
-      try { row.style.order = String(getPluginOrder(b.id, b.name, -1000)) } catch {}
-      const meta = document.createElement('div'); meta.className = 'ext-meta'
-      const name = document.createElement('div'); name.className = 'ext-name'
-      const nameText = document.createElement('span')
-      const fullName = `${b.name} (${b.version})`
-      nameText.textContent = fullName
-      nameText.title = fullName
-      name.appendChild(nameText)
-      const builtinTag = document.createElement('span')
-      builtinTag.className = 'ext-tag'
-      builtinTag.textContent = '内置'
-      builtinTag.style.marginLeft = '8px'
-      builtinTag.style.color = '#3b82f6'
-      name.appendChild(builtinTag)
-      const desc = document.createElement('div'); desc.className = 'ext-desc'; desc.textContent = b.description || ''
-      meta.appendChild(name); meta.appendChild(desc)
-      const actions = document.createElement('div'); actions.className = 'ext-actions'
-      if (b.id === 'uploader-s3') {
-        try {
-          const store = host.getStore()
-          const upCfg = await (async () => { try { if (store) return (await store.get('uploader')) as any } catch { return null } })()
-          const tag = document.createElement('span'); tag.className = 'ext-tag'; tag.textContent = upCfg?.enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
-          tag.style.opacity = '0.75'; tag.style.marginRight = '8px'; tag.style.color = upCfg?.enabled ? '#22c55e' : '#94a3b8'
-          actions.appendChild(tag)
-        } catch {}
-        const btn = document.createElement('button'); btn.className = 'btn primary'; btn.textContent = t('ext.settings')
-        btn.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host.openUploaderDialog() } catch {} })
-        actions.appendChild(btn)
-      } else if (b.id === 'webdav-sync') {
-        try {
-          const cfg = await host.getWebdavSyncConfig()
-          const tag = document.createElement('span'); tag.className = 'ext-tag'; tag.textContent = cfg.enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
-          tag.style.opacity = '0.75'; tag.style.marginRight = '8px'; tag.style.color = cfg.enabled ? '#22c55e' : '#94a3b8'
-          actions.appendChild(tag)
-        } catch {}
-        const btn2 = document.createElement('button'); btn2.className = 'btn primary'; btn2.textContent = t('ext.settings')
-        btn2.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host.openWebdavSyncDialog() } catch {} })
-        actions.appendChild(btn2)
-      }
+        row.setAttribute('data-ext-id', b.id)
+        try { row.style.order = String(getPluginOrder(b.id, b.name, -1000)) } catch {}
+        const meta = document.createElement('div'); meta.className = 'ext-meta'
+        const name = document.createElement('div'); name.className = 'ext-name'
+        const nameText = document.createElement('span')
+        const fullName = `${b.name} (${b.version})`
+        nameText.textContent = fullName
+        nameText.title = fullName
+        name.appendChild(nameText)
+        const builtinTag = document.createElement('span')
+        builtinTag.className = 'ext-tag'
+        builtinTag.textContent = '内置'
+        builtinTag.style.marginLeft = '8px'
+        builtinTag.style.color = '#3b82f6'
+        name.appendChild(builtinTag)
+        const desc = document.createElement('div'); desc.className = 'ext-desc'; desc.textContent = b.description || ''
+        meta.appendChild(name); meta.appendChild(desc)
+        const actions = document.createElement('div'); actions.className = 'ext-actions'
+        if (b.id === 'uploader-s3') {
+          try {
+            const store = host.getStore()
+            const upCfg = await (async () => { try { if (store) return (await store.get('uploader')) as any } catch { return null } })()
+            const tag = document.createElement('span'); tag.className = 'ext-tag'; tag.setAttribute('data-role', 'status'); tag.textContent = upCfg?.enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
+            tag.style.opacity = '0.75'; tag.style.marginRight = '8px'; tag.style.color = upCfg?.enabled ? '#22c55e' : '#94a3b8'
+            actions.appendChild(tag)
+          } catch {}
+          const btn = document.createElement('button'); btn.className = 'btn primary'; btn.textContent = t('ext.settings')
+          btn.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host.openUploaderDialog() } catch {} })
+          actions.appendChild(btn)
+        } else if (b.id === 'webdav-sync') {
+          try {
+            const cfg = await host.getWebdavSyncConfig()
+            const tag = document.createElement('span'); tag.className = 'ext-tag'; tag.setAttribute('data-role', 'status'); tag.textContent = cfg.enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
+            tag.style.opacity = '0.75'; tag.style.marginRight = '8px'; tag.style.color = cfg.enabled ? '#22c55e' : '#94a3b8'
+            actions.appendChild(tag)
+          } catch {}
+          const btn2 = document.createElement('button'); btn2.className = 'btn primary'; btn2.textContent = t('ext.settings')
+          btn2.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host.openWebdavSyncDialog() } catch {} })
+          actions.appendChild(btn2)
+        }
         row.appendChild(meta); row.appendChild(actions)
         unifiedList.appendChild(row)
       }
