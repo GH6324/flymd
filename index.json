@@ -268,7 +268,7 @@
     {
       "homepage": "https://github.com/flyhunterl/flymd",
       "name": "AutoYAML 元数据",
-      "description": "自动为当前文档补全 YAML 前置信息（title/created/updated/tags 等），可选调用 AI 助手生成标签和摘要。",
+      "description": "自动为当前文档补全 YAML 前置信息，可选调用 AI 助手生成标签和摘要。",
       "author": "flyMD",
       "id": "autoyaml",
       "category": "文档工具",

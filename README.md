@@ -164,6 +164,7 @@ FlyMD 拥有丰富的插件生态,支持通过扩展插件无限扩展功能。
 - **PDF 高精度解析** - 使用大模型高精度识别 PDF 为 Markdown 或 Docx,支持手写、布局、公式和表格
 - **MinerU PDF/图片解析** - 使用 MinerU 官方 API 解析 PDF 和图片
 - **批量导出 PDF** - 一次选择多个文档并批量导出为 PDF
+- **AutoYAML元数据** - 自动为当前文档补全 YAML 前置信息，可选调用 AI 助手生成标签和摘要
 
 **博客发布**:
 - **Typecho Publisher** - 一键发布到 Typecho 博客
