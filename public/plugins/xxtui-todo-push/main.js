@@ -6,6 +6,29 @@
 //   * 创建提醒：解析行尾 @YYYY-MM-DD HH:mm / @自然语言 调用 https://www.xxtui.com/scheduled/reminder/{apikey}
 // - 配置通过插件设置页（openSettings）保存在 context.storage 中
 
+// 轻量多语言：跟随宿主（flymd.locale），默认用系统语言
+const XXT_LOCALE_LS_KEY = 'flymd.locale'
+function xxtDetectLocale() {
+    try {
+        const nav = typeof navigator !== 'undefined' ? navigator : null
+        const lang = (nav && (nav.language || nav.userLanguage)) || 'en'
+        const lower = String(lang || '').toLowerCase()
+        if (lower.startsWith('zh')) return 'zh'
+    } catch {}
+    return 'en'
+}
+function xxtGetLocale() {
+    try {
+        const ls = typeof localStorage !== 'undefined' ? localStorage : null
+        const v = ls && ls.getItem(XXT_LOCALE_LS_KEY)
+        if (v === 'zh' || v === 'en') return v
+    } catch {}
+    return xxtDetectLocale()
+}
+function xxtText(zh, en) {
+    return xxtGetLocale() === 'en' ? en : zh
+}
+
 // 配置存储键
 const CFG_KEY = 'xxtui.todo.config'
 
@@ -223,20 +246,20 @@ function showKeyPicker(allKeys, defaultKey) {
             const renderDialog = () => {
                 overlay.innerHTML = [
                     '<div id="xtui-picker-dialog">',
-                    ' <div id="xtui-picker-head">选择 Key 推送</div>',
+                    ' <div id="xtui-picker-head">' + xxtText('选择 Key 推送', 'Choose Key and push') + '</div>',
                     ' <div id="xtui-picker-body">',
                     '   <div class="xt-picker-section">',
-                    '     <div class="xt-picker-label">选择 API Key</div>',
+                    '     <div class="xt-picker-label">' + xxtText('选择 API Key', 'Select API Key') + '</div>',
                     '     <div class="xt-picker-options" id="xtui-picker-keys"></div>',
                     '   </div>',
                     '   <div class="xt-picker-section">',
-                    '     <div class="xt-picker-label">选择推送类型</div>',
+                    '     <div class="xt-picker-label">' + xxtText('选择推送类型', 'Select push type') + '</div>',
                     '     <div class="xt-picker-options" id="xtui-picker-actions"></div>',
                     '   </div>',
                     ' </div>',
                     ' <div id="xtui-picker-actions">',
-                    '   <button id="xtui-picker-cancel">取消</button>',
-                    '   <button class="primary" id="xtui-picker-ok">确定推送</button>',
+                    '   <button id="xtui-picker-cancel">' + xxtText('取消', 'Cancel') + '</button>',
+                    '   <button class="primary" id="xtui-picker-ok">' + xxtText('确定推送', 'Confirm push') + '</button>',
                     ' </div>',
                     '</div>'
                 ].join('')
@@ -259,11 +282,11 @@ function showKeyPicker(allKeys, defaultKey) {
                         const mainText = doc.createElement('div')
                         mainText.className = 'xt-picker-option-main'
                         const isDefault = defaultKey && keyItem === defaultKey
-                        mainText.textContent = describeKey(keyItem) + (isDefault ? ' （默认）' : '')
+                        mainText.textContent = describeKey(keyItem) + (isDefault ? ' ' + xxtText('（默认）', '(default)') : '')
 
                         const subText = doc.createElement('div')
                         subText.className = 'xt-picker-option-sub'
-                        const channelText = keyItem.channel ? '渠道: ' + keyItem.channel : '默认渠道'
+                        const channelText = keyItem.channel ? xxtText('渠道: ', 'Channel: ') + keyItem.channel : xxtText('默认渠道', 'Default channel')
                         subText.textContent = 'Key: ' + keyItem.key + ' | ' + channelText
 
                         textDiv.appendChild(mainText)
@@ -285,9 +308,9 @@ function showKeyPicker(allKeys, defaultKey) {
                 const actionsContainer = overlay.querySelector('#xtui-picker-actions')
                 if (actionsContainer) {
                     const actionOptions = [
-                        { action: MENU_ACTIONS.PUSH_ALL, label: '推送全部', desc: '推送所有待办（已完成+未完成）' },
-                        { action: MENU_ACTIONS.PUSH_DONE, label: '推送已完成', desc: '仅推送已完成的待办' },
-                        { action: MENU_ACTIONS.PUSH_TODO, label: '推送未完成', desc: '仅推送未完成的待办' }
+                        { action: MENU_ACTIONS.PUSH_ALL, label: xxtText('推送全部', 'Push all'), desc: xxtText('推送所有待办（已完成+未完成）', 'Push all todos (done + undone)') },
+                        { action: MENU_ACTIONS.PUSH_DONE, label: xxtText('推送已完成', 'Push done'), desc: xxtText('仅推送已完成的待办', 'Push only completed todos') },
+                        { action: MENU_ACTIONS.PUSH_TODO, label: xxtText('推送未完成', 'Push todo'), desc: xxtText('仅推送未完成的待办', 'Push only incomplete todos') }
                     ]
 
                     actionOptions.forEach((item) => {
@@ -377,11 +400,11 @@ function showConfirm(message) {
             overlay.id = 'xtui-confirm-overlay'
             overlay.innerHTML = [
                 '<div id="xtui-confirm-dialog">',
-                ' <div id="xtui-confirm-head">提示</div>',
+                ' <div id="xtui-confirm-head">' + xxtText('提示', 'Notice') + '</div>',
                 ' <div id="xtui-confirm-body"></div>',
                 ' <div id="xtui-confirm-actions">',
-                '   <button id="xtui-confirm-cancel">取消</button>',
-                '   <button class="primary" id="xtui-confirm-ok">确定</button>',
+                '   <button id="xtui-confirm-cancel">' + xxtText('取消', 'Cancel') + '</button>',
+                '   <button class="primary" id="xtui-confirm-ok">' + xxtText('确定', 'OK') + '</button>',
                 ' </div>',
                 '</div>'
             ].join('')
@@ -425,7 +448,7 @@ function showConfirmWithCheckbox(message, checkboxLabel, defaultChecked = false)
             overlay.id = 'xtui-confirm-overlay'
             overlay.innerHTML = [
                 '<div id="xtui-confirm-dialog">',
-                ' <div id="xtui-confirm-head">提示</div>',
+                ' <div id="xtui-confirm-head">' + xxtText('提示', 'Notice') + '</div>',
                 ' <div id="xtui-confirm-body"></div>',
                 ' <div style="padding:12px 14px;border-top:1px solid #e5e7eb;">',
                 '   <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#111827;">',
@@ -434,8 +457,8 @@ function showConfirmWithCheckbox(message, checkboxLabel, defaultChecked = false)
                 '   </label>',
                 ' </div>',
                 ' <div id="xtui-confirm-actions">',
-                '   <button id="xtui-confirm-cancel">取消</button>',
-                '   <button class="primary" id="xtui-confirm-ok">确定</button>',
+                '   <button id="xtui-confirm-cancel">' + xxtText('取消', 'Cancel') + '</button>',
+                '   <button class="primary" id="xtui-confirm-ok">' + xxtText('确定', 'OK') + '</button>',
                 ' </div>',
                 '</div>'
             ].join('')
@@ -446,7 +469,7 @@ function showConfirmWithCheckbox(message, checkboxLabel, defaultChecked = false)
             const cb = overlay.querySelector('#xtui-confirm-checkbox')
             if (cb) cb.checked = !!defaultChecked
             const cbText = overlay.querySelector('#xtui-confirm-checkbox-text')
-            if (cbText) cbText.textContent = checkboxLabel || '强制执行'
+            if (cbText) cbText.textContent = checkboxLabel || xxtText('强制执行', 'Force execute')
 
             const host = doc.body || doc.documentElement
             host.appendChild(overlay)
@@ -473,7 +496,10 @@ function showConfirmWithCheckbox(message, checkboxLabel, defaultChecked = false)
 }
 
 // 自定义带"不再提示"选项的确认弹窗，返回 Promise<{ confirmed: boolean, dontShowAgain: boolean }>
-function showConfirmWithDontShowAgain(message, title = '确认操作') {
+function showConfirmWithDontShowAgain(
+    message,
+    title = xxtText('确认操作', 'Confirm operation')
+) {
     return new Promise((resolve) => {
         try {
             const doc = window && window.document ? window.document : null
@@ -494,10 +520,14 @@ function showConfirmWithDontShowAgain(message, title = '确认操作') {
                 '   <div style="margin-bottom:12px;font-weight:500;color:#0f172a;">' + question + '</div>',
                 info ? '   <div style="padding:10px 12px;background:#f1f5f9;border-radius:6px;font-size:13px;line-height:1.5;color:#475569;">' + info + '</div>' : '',
                 ' </div>',
-                ' <div style="padding:0 14px 10px;"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="xtui-confirm-dont-show-again" style="width:auto;height:auto;margin:0;">不再提示</label></div>',
+                ' <div style="padding:0 14px 10px;"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="xtui-confirm-dont-show-again" style="width:auto;height:auto;margin:0;">' +
+                xxtText('不再提示', 'Do not show again') +
+                '</label></div>',
                 ' <div id="xtui-confirm-actions">',
-                '   <button id="xtui-confirm-cancel">取消</button>',
-                '   <button class="primary" id="xtui-confirm-ok">确定</button>',
+                '   <button id="xtui-confirm-cancel">' + xxtText('取消', 'Cancel') + '</button>',
+                '   <button class="primary" id="xtui-confirm-ok">' +
+                xxtText('确定', 'OK') +
+                '</button>',
                 ' </div>',
                 '</div>'
             ].join('')
@@ -568,8 +598,11 @@ async function convertSelectedTextToTodo(context, selectedText) {
 
         // 显示带"不再提示"选项的确认弹窗
         const result = await showConfirmWithDontShowAgain(
-            '是否将选中的文本转换为待办事项格式？\n每一行前面将会添加 "- [ ] " 前缀。',
-            '转换为待办事项'
+            xxtText(
+                '是否将选中的文本转换为待办事项格式？\n每一行前面将会添加 "- [ ] " 前缀。',
+                'Convert selected text to todo format?\nEach line will be prefixed with "- [ ] ".'
+            ),
+            xxtText('转换为待办事项', 'Convert to todos')
         )
 
         // 如果用户选择了"不再提示"，则保存状态
@@ -584,7 +617,11 @@ async function convertSelectedTextToTodo(context, selectedText) {
     } catch (err) {
         log('转换为待办事项时出错', err)
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('转换为待办事项时出错', 'err', 2600)
+            context.ui.notice(
+                xxtText('转换为待办事项时出错', 'Error occurred while converting to todos'),
+                'err',
+                2600
+            )
         }
     }
 }
@@ -625,19 +662,37 @@ function performConvertToTodo(context, selectedText) {
                 document.execCommand('insertText', false, convertedText)
             } catch {
                 if (context.ui && context.ui.notice) {
-                    context.ui.notice('无法替换选中文本，请手动粘贴以下内容：\n' + convertedText, 'err', 4000)
+                    context.ui.notice(
+                        xxtText(
+                            '无法替换选中文本，请手动粘贴以下内容：\n',
+                            'Unable to replace selected text, please manually paste the following:\n'
+                        ) + convertedText,
+                        'err',
+                        4000
+                    )
                 }
                 return
             }
         }
 
         if (context.ui && context.ui.notice) {
-            context.ui.notice('已将选中文本转换为待办事项格式', 'ok', 2000)
+            context.ui.notice(
+                xxtText(
+                    '已将选中文本转换为待办事项格式',
+                    'Selected text has been converted to todo format'
+                ),
+                'ok',
+                2000
+            )
         }
     } catch (err) {
         log('执行转换操作时出错', err)
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('执行转换操作时出错', 'err', 2600)
+            context.ui.notice(
+                xxtText('执行转换操作时出错', 'Error occurred while performing conversion'),
+                'err',
+                2600
+            )
         }
     }
 }
@@ -654,11 +709,11 @@ async function showApiKeyMissingDialog(context) {
             overlay.id = 'xtui-confirm-overlay'
             overlay.innerHTML = [
                 '<div id="xtui-confirm-dialog">',
-                ' <div id="xtui-confirm-head">提示</div>',
-                ' <div id="xtui-confirm-body">您还没有配置API Key，请先配置。</div>',
+                ' <div id="xtui-confirm-head">' + xxtText('提示', 'Notice') + '</div>',
+                ' <div id="xtui-confirm-body">' + xxtText('您还没有配置API Key，请先配置。', 'You have not configured an API Key yet. Please configure it first.') + '</div>',
                 ' <div id="xtui-confirm-actions">',
-                '   <button id="xtui-confirm-cancel">取消</button>',
-                '   <button class="primary" id="xtui-confirm-ok">去配置</button>',
+                '   <button id="xtui-confirm-cancel">' + xxtText('取消', 'Cancel') + '</button>',
+                '   <button class="primary" id="xtui-confirm-ok">' + xxtText('去配置', 'Open settings') + '</button>',
                 ' </div>',
                 '</div>'
             ].join('')
@@ -1262,7 +1317,14 @@ async function runPushFlow(context, cfg, type, keyObj, selectedText) {
 
     if (!context || !context.getEditorValue) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('当前环境不支持读取待办内容', 'err', 2600)
+            context.ui.notice(
+                xxtText(
+                    '当前环境不支持读取待办内容',
+                    'Current environment does not support reading todo content'
+                ),
+                'err',
+                2600
+            )
         }
         return
     }
@@ -1273,7 +1335,14 @@ async function runPushFlow(context, cfg, type, keyObj, selectedText) {
     log('解析到待办数量', allTodos.length)
     if (!allTodos.length) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('当前文档没有待办（- [ ] 或 - [x] 语法）', 'err', 2600)
+            context.ui.notice(
+                xxtText(
+                    '当前文档没有待办（- [ ] 或 - [x] 语法）',
+                    'Current document has no todos (- [ ] or - [x] syntax)'
+                ),
+                'err',
+                2600
+            )
         }
         return
     }
@@ -1281,7 +1350,11 @@ async function runPushFlow(context, cfg, type, keyObj, selectedText) {
     const filtered = filterTodosByType(allTodos, type)
     if (!filtered.length) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('没有符合筛选条件的待办', 'err', 2600)
+            context.ui.notice(
+                xxtText('没有符合筛选条件的待办', 'No todos match the filter conditions'),
+                'err',
+                2600
+            )
         }
         return
     }
@@ -1293,16 +1366,25 @@ async function runPushFlow(context, cfg, type, keyObj, selectedText) {
     const hasMarked = pushedMarked.length > 0
     const hasUnmarked = unpushed.length > 0
     const confirmText =
-        '检测到 ' +
+        xxtText('检测到 ', 'Detected ') +
         filtered.length +
-        ' 条' +
+        xxtText(' 条', ' ') +
         label +
-        '待办。\n' +
+        xxtText('待办。\n', ' todos.\n') +
         (hasMarked
-            ? '其中 ' + pushedMarked.length + ' 条已标记为已推送，默认只推送未标记的。'
-            : '未发现已推送标记，将推送全部。')
+            ? xxtText('其中 ', 'Among them, ') +
+              pushedMarked.length +
+              xxtText(
+                  ' 条已标记为已推送，默认只推送未标记的。',
+                  ' have been marked as pushed. By default, only unmarked ones will be pushed.'
+              )
+            : xxtText('未发现已推送标记，将推送全部。', 'No pushed marks found. All will be pushed.'))
 
-    const { confirmed, checked } = await showConfirmWithCheckbox(confirmText, '强制推送（包含已标记）', false)
+    const { confirmed, checked } = await showConfirmWithCheckbox(
+        confirmText,
+        xxtText('强制推送（包含已标记）', 'Force push (including marked ones)'),
+        false
+    )
     if (!confirmed) return
 
     const forcePush = !!checked
@@ -1310,7 +1392,14 @@ async function runPushFlow(context, cfg, type, keyObj, selectedText) {
 
     if (!target.length) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('目标待办均已标记，可勾选“强制推送”后发送', 'err', 3200)
+            context.ui.notice(
+                xxtText(
+                    '目标待办均已标记，可勾选“强制推送”后发送',
+                    'All target todos have been marked. You can enable "Force push" to send them.'
+                ),
+                'err',
+                3200
+            )
         }
         return
     }
@@ -1318,7 +1407,13 @@ async function runPushFlow(context, cfg, type, keyObj, selectedText) {
     try {
         await pushInstantBatch(context, cfg, target, label, keyObj)
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('xxtui 推送完成：已发送 ' + target.length + ' 条', 'ok', 3600)
+            context.ui.notice(
+                xxtText('xxtui 推送完成：已发送 ', 'xxtui push complete: sent ') +
+                    target.length +
+                    xxtText(' 条', ' items'),
+                'ok',
+                3600
+            )
         }
         if (cfg.enableWriteback !== false) {
             writeBackTodoFlags(context, {
@@ -1332,7 +1427,11 @@ async function runPushFlow(context, cfg, type, keyObj, selectedText) {
     } catch (err) {
         const msg = err && err.message ? String(err.message) : '推送失败'
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('xxtui 推送失败：' + msg, 'err', 3600)
+            context.ui.notice(
+                xxtText('xxtui 推送失败：', 'xxtui push failed: ') + msg,
+                'err',
+                3600
+            )
         }
     }
 }
@@ -1342,7 +1441,14 @@ async function runReminderFlow(context, cfg, keyObj, selectedText) {
 
     if (!context || !context.getEditorValue) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('当前环境不支持读取待办内容', 'err', 2600)
+            context.ui.notice(
+                xxtText(
+                    '当前环境不支持读取待办内容',
+                    'Current environment does not support reading todo content'
+                ),
+                'err',
+                2600
+            )
         }
         return
     }
@@ -1353,14 +1459,25 @@ async function runReminderFlow(context, cfg, keyObj, selectedText) {
     log('解析到待办数量（提醒）', allTodos.length)
     if (!allTodos.length) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('当前文档没有待办（- [ ] 或 - [x] 语法）', 'err', 2600)
+            context.ui.notice(
+                xxtText(
+                    '当前文档没有待办（- [ ] 或 - [x] 语法）',
+                    'Current document has no todos (- [ ] or - [x] syntax)'
+                ),
+                'err',
+                2600
+            )
         }
         return
     }
     const pending = allTodos.filter((item) => item && !item.done)
     if (!pending.length) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('当前文档没有未完成的待办', 'err', 2600)
+            context.ui.notice(
+                xxtText('当前文档没有未完成的待办', 'Current document has no uncompleted todos'),
+                'err',
+                2600
+            )
         }
         return
     }
@@ -1380,7 +1497,12 @@ async function runReminderFlow(context, cfg, keyObj, selectedText) {
     log('可创建提醒的待办数', scheduled.length)
 
     if (!scheduled.length) {
-        await showConfirm('未找到包含有效时间（@...）的未完成待办，无法创建定时提醒')
+        await showConfirm(
+            xxtText(
+                '未找到包含有效时间（@...）的未完成待办，无法创建定时提醒',
+                'No uncompleted todos with valid time (@...) were found, cannot create scheduled reminders.'
+            )
+        )
         return
     }
 
@@ -1391,14 +1513,26 @@ async function runReminderFlow(context, cfg, keyObj, selectedText) {
     const hasUnmarked = unreminded.length > 0
 
     const confirmText =
-        '检测到 ' +
+        xxtText('检测到 ', 'Detected ') +
         scheduled.length +
-        ' 条包含时间的未完成待办。\n' +
+        xxtText(' 条包含时间的未完成待办。\n', ' uncompleted todos with time.\n') +
         (hasMarked
-            ? '其中 ' + remindedMarked.length + ' 条已标记为已创建提醒，默认只创建未标记的。'
-            : '未发现已创建标记，将为全部创建提醒。')
+            ? xxtText('其中 ', 'Among them, ') +
+              remindedMarked.length +
+              xxtText(
+                  ' 条已标记为已创建提醒，默认只创建未标记的。',
+                  ' have been marked as created. By default, only unmarked ones will be created.'
+              )
+            : xxtText(
+                  '未发现已创建标记，将为全部创建提醒。',
+                  'No created marks found. Reminders will be created for all.'
+              ))
 
-    const { confirmed, checked } = await showConfirmWithCheckbox(confirmText, '强制创建提醒（包含已标记）', false)
+    const { confirmed, checked } = await showConfirmWithCheckbox(
+        confirmText,
+        xxtText('强制创建提醒（包含已标记）', 'Force create reminders (including marked ones)'),
+        false
+    )
     if (!confirmed) return
 
     const forceReminder = !!checked
@@ -1406,7 +1540,14 @@ async function runReminderFlow(context, cfg, keyObj, selectedText) {
 
     if (!target.length) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('目标待办均已标记，可勾选“强制创建”后继续', 'err', 3200)
+            context.ui.notice(
+                xxtText(
+                    '目标待办均已标记，可勾选“强制创建”后继续',
+                    'All target todos have been marked. You can enable "Force create" to continue.'
+                ),
+                'err',
+                3200
+            )
         }
         return
     }
@@ -1425,8 +1566,14 @@ async function runReminderFlow(context, cfg, keyObj, selectedText) {
     }
 
     const msgSchedule = failCount
-        ? 'xxtui 定时提醒创建完成：成功 ' + okCount + ' 条，失败 ' + failCount + ' 条'
-        : 'xxtui 定时提醒创建完成：成功 ' + okCount + ' 条'
+        ? xxtText('xxtui 定时提醒创建完成：成功 ', 'xxtui scheduled reminders created: success ') +
+          okCount +
+          xxtText(' 条，失败 ', ' items, failed ') +
+          failCount +
+          xxtText(' 条', ' items')
+        : xxtText('xxtui 定时提醒创建完成：成功 ', 'xxtui scheduled reminders created: success ') +
+          okCount +
+          xxtText(' 条', ' items')
     if (context && context.ui && context.ui.notice) {
         context.ui.notice(msgSchedule, failCount ? 'err' : 'ok', 4000)
     }
@@ -1604,7 +1751,14 @@ async function handleMenuAction(context, action, keyObj, selectedText) {
 
         if (!context || !context.http || !context.http.fetch) {
             if (context && context.ui && context.ui.notice) {
-                context.ui.notice('当前环境不支持待办推送所需接口', 'err', 2600)
+                context.ui.notice(
+                    xxtText(
+                        '当前环境不支持待办推送所需接口',
+                        'Current environment does not support required interfaces for todo push'
+                    ),
+                    'err',
+                    2600
+                )
             }
             return
         }
@@ -1643,7 +1797,11 @@ async function handleMenuAction(context, action, keyObj, selectedText) {
     } catch (e) {
         const msg = e && e.message ? String(e.message) : String(e || '未知错误')
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('xxtui 待办操作失败：' + msg, 'err', 4000)
+            context.ui.notice(
+                xxtText('xxtui 待办操作失败：', 'xxtui todo operation failed: ') + msg,
+                'err',
+                4000
+            )
         }
         log('处理菜单动作异常', e)
     }
@@ -1695,13 +1853,15 @@ async function registerContextMenus(context) {
 
     // 一级：推送到 xxtui（点击直接弹窗选择 Key）
     const pushDisposer = context.addContextMenuItem({
-        label: '推送到 xxtui',
+        label: xxtText('推送到 xxtui', 'Push to xxtui'),
         icon: '📤',
         condition,
         onClick: (ctx) => {
             const selectedText = getSelectedMarkdownOrText(context, ctx)
             if (!hasSelectedText(selectedText)) {
-                showConfirm('请先选择要推送的文本内容').then(() => {});
+                showConfirm(
+                    xxtText('请先选择要推送的文本内容', 'Please select text to push first')
+                ).then(() => {})
                 return
             }
             handlePushWithKeyPicker(context, selectedText)
@@ -1710,12 +1870,17 @@ async function registerContextMenus(context) {
 
     // 一级：创建提醒（使用默认 Key）
     const reminderDisposer = context.addContextMenuItem({
-            label: '创建提醒 (@时间)',
+            label: xxtText('创建提醒 (@时间)', 'Create reminder (@time)'),
             icon: '⏰',
             condition,
             onClick: (ctx) => {
                 if (!hasSelectedText(ctx.selectedText)) {
-                    showConfirm('请先选择要创建提醒的文本内容').then(() => {});
+                    showConfirm(
+                        xxtText(
+                            '请先选择要创建提醒的文本内容',
+                            'Please select text to create reminder first'
+                        )
+                    ).then(() => {})
                     return
                 }
                 handleMenuAction(context, MENU_ACTIONS.CREATE_REMINDER, defaultKey, ctx.selectedText)
@@ -1724,12 +1889,17 @@ async function registerContextMenus(context) {
 
     // 一级：转换为待办事项
     const convertTodoDisposer = context.addContextMenuItem({
-        label: '转换为待办事项',
+        label: xxtText('转换为待办事项', 'Convert to todos'),
         icon: '📝',
         condition,
         onClick: (ctx) => {
             if (!hasSelectedText(ctx.selectedText)) {
-                showConfirm('请先选择要转换为待办事项的文本内容').then(() => {});
+                showConfirm(
+                    xxtText(
+                        '请先选择要转换为待办事项的文本内容',
+                        'Please select text to convert to todos first'
+                    )
+                ).then(() => {})
                 return
             }
             convertSelectedTextToTodo(context, ctx.selectedText)
@@ -1747,7 +1917,14 @@ export function activate(context) {
     // 检查必要能力是否存在
     if (!context || !context.getEditorValue || !context.http || !context.http.fetch) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('当前环境不支持待办推送所需接口', 'err', 2600)
+            context.ui.notice(
+                xxtText(
+                    '当前环境不支持待办推送所需接口',
+                    'Current environment does not support the required interfaces for todo push'
+                ),
+                'err',
+                2600
+            )
         }
         return
     }
@@ -1759,53 +1936,73 @@ export function activate(context) {
     try { if (REMOVE_TOP_MENU) { REMOVE_TOP_MENU(); REMOVE_TOP_MENU = null } } catch {}
     try {
         REMOVE_TOP_MENU = context.addMenuItem({
-            label: '待办',
-            title: '推送或创建 xxtui 提醒',
+            label: xxtText('待办', 'Todos'),
+            title: xxtText('推送或创建 xxtui 提醒', 'Push or create xxtui reminders'),
             children: [
-                { type: 'group', label: '推送' },
+                { type: 'group', label: xxtText('推送', 'Push') },
                 {
-                    label: '全部',
-                    note: '含已完成/未完成',
+                    label: xxtText('全部', 'All'),
+                    note: xxtText('含已完成/未完成', 'Includes done/undone'),
                     onClick: (ctx) => {
                         const selectedText = getSelectedMarkdownOrText(context, ctx)
                         if (!hasSelectedText(selectedText)) {
-                            showConfirm('请先选择要推送的文本内容').then(() => {});
+                            showConfirm(
+                                xxtText(
+                                    '请先选择要推送的文本内容',
+                                    'Please select text to push first'
+                                )
+                            ).then(() => {})
                             return
                         }
                         handleMenuAction(context, MENU_ACTIONS.PUSH_ALL, null, selectedText)
                     }
                 },
                 {
-                    label: '已完成',
+                    label: xxtText('已完成', 'Done'),
                     onClick: (ctx) => {
                         const selectedText = getSelectedMarkdownOrText(context, ctx)
                         if (!hasSelectedText(selectedText)) {
-                            showConfirm('请先选择要推送的文本内容').then(() => {});
+                            showConfirm(
+                                xxtText(
+                                    '请先选择要推送的文本内容',
+                                    'Please select text to push first'
+                                )
+                            ).then(() => {})
                             return
                         }
                         handleMenuAction(context, MENU_ACTIONS.PUSH_DONE, null, selectedText)
                     }
                 },
                 {
-                    label: '未完成',
+                    label: xxtText('未完成', 'Todo'),
                     onClick: (ctx) => {
                         const selectedText = getSelectedMarkdownOrText(context, ctx)
                         if (!hasSelectedText(selectedText)) {
-                            showConfirm('请先选择要推送的文本内容').then(() => {});
+                            showConfirm(
+                                xxtText(
+                                    '请先选择要推送的文本内容',
+                                    'Please select text to push first'
+                                )
+                            ).then(() => {})
                             return
                         }
                         handleMenuAction(context, MENU_ACTIONS.PUSH_TODO, null, selectedText)
                     }
                 },
                 { type: 'divider' },
-                { type: 'group', label: '提醒' },
+                { type: 'group', label: xxtText('提醒', 'Reminder') },
                 {
-                    label: '创建提醒',
-                    note: '@时间',
+                    label: xxtText('创建提醒', 'Create reminder'),
+                    note: xxtText('@时间', '@time'),
                     onClick: (ctx) => {
                         const selectedText = getSelectedMarkdownOrText(context, ctx)
                         if (!hasSelectedText(selectedText)) {
-                            showConfirm('请先选择要创建提醒的文本内容').then(() => {});
+                            showConfirm(
+                                xxtText(
+                                    '请先选择要创建提醒的文本内容',
+                                    'Please select text to create reminder first'
+                                )
+                            ).then(() => {})
                             return
                         }
                         handleMenuAction(context, MENU_ACTIONS.CREATE_REMINDER, null, selectedText)
@@ -1852,7 +2049,14 @@ export async function openSettings(context) {
     try {
         if (!context || !context.storage || !context.storage.get || !context.storage.set) {
             if (context && context.ui && context.ui.notice) {
-                context.ui.notice('当前环境不支持插件配置存储', 'err', 2600)
+            context.ui.notice(
+                xxtText(
+                    '当前环境不支持插件配置存储',
+                    'Current environment does not support plugin config storage'
+                ),
+                'err',
+                2600
+            )
             }
             return
         }
@@ -1862,7 +2066,11 @@ export async function openSettings(context) {
 
         const doc = window && window.document ? window.document : null
         if (!doc) {
-            context.ui.notice('环境不支持设置面板', 'err', 2600)
+            context.ui.notice(
+                xxtText('环境不支持设置面板', 'Current environment does not support settings panel'),
+                'err',
+                2600
+            )
             return
         }
 
@@ -1875,90 +2083,195 @@ export async function openSettings(context) {
         overlay.id = 'xtui-set-overlay'
         overlay.innerHTML = [
             '<div id="xtui-set-dialog">',
-            ' <div id="xtui-set-head"><div id="xtui-set-title">xxtui 待办推送 设置</div><button id="xtui-set-close" title="关闭">×</button></div>',
+            ' <div id="xtui-set-head"><div id="xtui-set-title">' +
+                xxtText('xxtui 待办推送 设置', 'xxtui Todo Push Settings') +
+                '</div><button id="xtui-set-close" title="' +
+                xxtText('关闭', 'Close') +
+                '">×</button></div>',
             ' <div id="xtui-set-body">',
             '   <div id="xtui-set-nav">',
-            '     <button class="xtui-nav-btn active" data-tab="push">推送设置</button>',
-            '     <button class="xtui-nav-btn" data-tab="plugin">插件设置</button>',
-            '     <button class="xtui-nav-btn" data-tab="docs">文档</button>',
+            '     <button class="xtui-nav-btn active" data-tab="push">' +
+                xxtText('推送设置', 'Push settings') +
+                '</button>',
+            '     <button class="xtui-nav-btn" data-tab="plugin">' +
+                xxtText('插件设置', 'Plugin settings') +
+                '</button>',
+            '     <button class="xtui-nav-btn" data-tab="docs">' +
+                xxtText('文档', 'Docs') +
+                '</button>',
             '     <button class="xtui-nav-btn" data-tab="api">插件 API</button>',
             '   </div>',
             '   <div id="xtui-set-panel">',
             '     <div class="xtui-tab active" data-tab="push">',
-            '       <div class="xt-row"><label>来源 from</label><input id="xtui-set-from" type="text" placeholder="飞速MarkDown"/></div>',
+            '       <div class="xt-row"><label>' +
+                xxtText('来源 from', 'From') +
+                '</label><input id="xtui-set-from" type="text" placeholder="飞速MarkDown"/></div>',
             '       <div class="xt-row" style="flex-direction:column;align-items:stretch;">',
             '         <div class="xt-keys">',
             '           <div class="xt-keys-head">',
             '             <div style="font-weight:600;color:#111827;">API Keys</div>',
-            '             <button class="xt-small-btn" id="xtui-add-key">新增 Key</button>',
+            '             <button class="xt-small-btn" id="xtui-add-key">' +
+                xxtText('新增 Key', 'Add Key') +
+                '</button>',
             '           </div>',
             '           <div class="xt-keys-list" id="xtui-keys-list"></div>',
             '         </div>',
             '       </div>',
             '       <div class="xt-row xt-help">',
-            '         <div class="xt-help-title">获取 API Key</div>',
+            '         <div class="xt-help-title">' +
+                xxtText('获取 API Key', 'Get API Key') +
+                '</div>',
             '         <div class="xt-help-text">',
-            '           <div>方式一：扫描下方二维码关注公众号：</div>',
-            '           <div style="margin:10px 0;"><img src="https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=gQE_8TwAAAAAAAAAAS5odHRwOi8vd2VpeGluLnFxLmNvbS9xLzAyZC1lUzE3VFVjcEYxMDAwMHcwM1YAAgTE1VdnAwQAAAAA" style="width:150px;height:150px;" alt="公众号二维码"></div>',
-            '           <div>在公众号底部菜单点击「更多」→「API_KEY总览」查看所有 Key</div>',
-            '           <div style="margin-top:10px;">方式二：<a href="https://www.xxtui.com/apiKey/overview" target="_blank" rel="noopener noreferrer">访问网页获取 API Key</a></div>',
-            '           <div style="margin-top:10px;">将获取到的 API Key 填入上方输入框中</div>',
+            '           <div>' +
+                xxtText(
+                    '方式一：扫描下方二维码关注公众号：',
+                    'Option 1: Scan the QR code below to follow the WeChat official account:'
+                ) +
+                '</div>',
+            '           <div style="margin:10px 0;"><img src="https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=gQE_8TwAAAAAAAAAAS5odHRwOi8vd2VpeGluLnFxLmNvbS9xLzAyZC1lUzE3VFVjcEYxMDAwMHcwM1YAAgTE1VdnAwQAAAAA" style="width:150px;height:150px;" alt="' +
+                xxtText('公众号二维码', 'Official account QR code') +
+                '"></div>',
+            '           <div>' +
+                xxtText(
+                    '在公众号底部菜单点击「更多」→「API_KEY总览」查看所有 Key',
+                    'In the official account bottom menu, click "More" → "API_KEY Overview" to view all Keys'
+                ) +
+                '</div>',
+            '           <div style="margin-top:10px;">' +
+                xxtText(
+                    '方式二：<a href="https://www.xxtui.com/apiKey/overview" target="_blank" rel="noopener noreferrer">访问网页获取 API Key</a>',
+                    'Option 2: <a href="https://www.xxtui.com/apiKey/overview" target="_blank" rel="noopener noreferrer">Visit the webpage to get API Key</a>'
+                ) +
+                '</div>',
+            '           <div style="margin-top:10px;">' +
+                xxtText(
+                    '将获取到的 API Key 填入上方输入框中',
+                    'Fill the obtained API Key into the input above'
+                ) +
+                '</div>',
             '         </div>',
             '       </div>',
             '     </div>',
             '     <div class="xtui-tab" data-tab="plugin">',
             '       <div class="xt-row" style="align-items:center;gap:12px;">',
-            '         <label style="width:90px;color:#334155;font-size:13px;">是否回写标记</label>',
+            '         <label style="width:90px;color:#334155;font-size:13px;">' +
+                xxtText('是否回写标记', 'Write back flags') +
+                '</label>',
             '         <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#111827;white-space:nowrap;">',
             '           <input id="xtui-enable-writeback" type="checkbox" style="width:16px;height:16px;"/>',
-            '           <span>推送/提醒后写入状态标记</span>',
+            '           <span>' +
+                xxtText('推送/提醒后写入状态标记', 'Write status flags after push/reminder') +
+                '</span>',
             '         </label>',
             '       </div>',
             '       <div class="xt-row" style="align-items:center;gap:12px;">',
-            '         <label style="width:90px;color:#334155;font-size:13px;">推送标记</label>',
+            '         <label style="width:90px;color:#334155;font-size:13px;">' +
+                xxtText('推送标记', 'Push flag') +
+                '</label>',
             '         <input id="xtui-flag-push" type="text" style="width:160px;" placeholder="[pushed]" />',
             '       </div>',
             '       <div class="xt-row" style="align-items:center;gap:12px;">',
-            '         <label style="width:90px;color:#334155;font-size:13px;">创建提醒标记</label>',
+            '         <label style="width:90px;color:#334155;font-size:13px;">' +
+                xxtText('创建提醒标记', 'Reminder flag') +
+                '</label>',
             '         <input id="xtui-flag-remind" type="text" style="width:160px;" placeholder="[reminded]" />',
             '       </div>',
             '       <div class="xt-row" style="align-items:center;gap:12px;padding-top:6px;">',
-            '         <label style="width:90px;color:#334155;font-size:13px;">提示设置</label>',
-            '         <button class="xt-small-btn" id="xtui-reset-prompt-status">重置转换提示</button>',
-            '         <span style="color:#94a3b8;font-size:12px;">恢复“转换为待办”确认弹窗</span>',
+            '         <label style="width:90px;color:#334155;font-size:13px;">' +
+                xxtText('提示设置', 'Prompt settings') +
+                '</label>',
+            '         <button class="xt-small-btn" id="xtui-reset-prompt-status">' +
+                xxtText('重置转换提示', 'Reset convert prompt') +
+                '</button>',
+            '         <span style="color:#94a3b8;font-size:12px;">' +
+                xxtText('恢复“转换为待办”确认弹窗', 'Restore "Convert to todos" confirm dialog') +
+                '</span>',
             '       </div>',
             '     </div>',
             '     <div class="xtui-tab" data-tab="docs">',
             '       <div class="xt-row xt-help">',
-            '         <div class="xt-help-title">用法示例</div>',
+            '         <div class="xt-help-title">' +
+                xxtText('用法示例', 'Usage examples') +
+                '</div>',
             '         <div class="xt-help-text">',
-            '           <div>- [ ] 写周报 @2025-11-21 09:00</div>',
-            '           <div>- [ ] 开会 @明天 下午3点</div>',
-            '           <div>- [ ] 打电话 @2小时后</div>',
-            '           <div style="margin-top:4px;">创建提醒仅处理包含 @时间 的未完成待办。</div>',
+            '           <div>- [ ] ' +
+                xxtText('写周报', 'Write weekly report') +
+                ' @2025-11-21 09:00</div>',
+            '           <div>- [ ] ' +
+                xxtText('开会', 'Meeting') +
+                ' @' +
+                xxtText('明天 下午3点', 'tomorrow 3 PM') +
+                '</div>',
+            '           <div>- [ ] ' +
+                xxtText('打电话', 'Make a call') +
+                ' @' +
+                xxtText('2小时后', 'in 2 hours') +
+                '</div>',
+            '           <div style="margin-top:4px;">' +
+                xxtText(
+                    '创建提醒仅处理包含 @时间 的未完成待办。',
+                    'Creating reminders only processes incomplete todos containing @time.'
+                ) +
+                '</div>',
             '         </div>',
             '       </div>',
             '     </div>',
             '     <div class="xtui-tab" data-tab="api">',
             '       <div class="xt-row xt-help">',
-            '         <div class="xt-help-title">插件 API（供其他插件调用）</div>',
+            '         <div class="xt-help-title">' +
+                xxtText('插件 API（供其他插件调用）', 'Plugin API (for other plugins)') +
+                '</div>',
             '         <div class="xt-help-text" style="font-size:12px;line-height:1.6;">',
-            '           <div style="margin-bottom:6px;font-weight:600;color:#111827;">其他插件可通过以下方式获取并调用本插件 API：</div>',
+            '           <div style="margin-bottom:6px;font-weight:600;color:#111827;">' +
+                xxtText(
+                    '其他插件可通过以下方式获取并调用本插件 API：',
+                    'Other plugins can acquire and invoke this plugin API as follows:'
+                ) +
+                '</div>',
             '           <code style="display:block;background:#f1f5f9;padding:8px;border-radius:4px;margin-bottom:8px;overflow-x:auto;white-space:pre;">const api = context.getPluginAPI(\'xxtui-todo-push\')</code>',
-            '           <div style="margin-top:8px;font-weight:600;color:#111827;">提供的 3 个 API：</div>',
-            '           <div style="margin-top:4px;"><strong>1. pushToXxtui(title, content)</strong> - 推送消息</div>',
-            '           <div style="margin-left:12px;color:#64748b;">推送到默认 Key，from 取自设置项（默认：飞速MarkDown）</div>',
-            '           <div style="margin-top:4px;"><strong>2. createReminder(title, content, reminderTime)</strong> - 创建提醒</div>',
-            '           <div style="margin-left:12px;color:#64748b;">reminderTime 为秒级时间戳，使用默认 Key</div>',
-            '           <div style="margin-top:4px;"><strong>3. parseAndCreateReminders(content)</strong> - 解析并创建提醒</div>',
-            '           <div style="margin-left:12px;color:#64748b;">自动解析 Markdown 内容中的待办（- [ ] 任务 @时间），批量创建提醒</div>',
-            '           <div style="margin-left:12px;color:#64748b;">返回：{success: number, failed: number}</div>',
+            '           <div style="margin-top:8px;font-weight:600;color:#111827;">' +
+                xxtText('提供的 3 个 API：', '3 APIs provided:') +
+                '</div>',
+            '           <div style="margin-top:4px;"><strong>1. pushToXxtui(title, content)</strong> - ' +
+                xxtText('推送消息', 'Push message') +
+                '</div>',
+            '           <div style="margin-left:12px;color:#64748b;">' +
+                xxtText(
+                    '推送到默认 Key，from 取自设置项（默认：飞速MarkDown）',
+                    'Push to default Key, "from" comes from settings (default: Feisu Markdown)'
+                ) +
+                '</div>',
+            '           <div style="margin-top:4px;"><strong>2. createReminder(title, content, reminderTime)</strong> - ' +
+                xxtText('创建提醒', 'Create reminder') +
+                '</div>',
+            '           <div style="margin-left:12px;color:#64748b;">' +
+                xxtText(
+                    'reminderTime 为秒级时间戳，使用默认 Key',
+                    'reminderTime is a Unix timestamp in seconds, using the default Key'
+                ) +
+                '</div>',
+            '           <div style="margin-top:4px;"><strong>3. parseAndCreateReminders(content)</strong> - ' +
+                xxtText('解析并创建提醒', 'Parse and create reminders') +
+                '</div>',
+            '           <div style="margin-left:12px;color:#64748b;">' +
+                xxtText(
+                    '自动解析 Markdown 内容中的待办（- [ ] 任务 @时间），批量创建提醒',
+                    'Automatically parse todos in Markdown content (- [ ] task @time) and create reminders in batch'
+                ) +
+                '</div>',
+            '           <div style="margin-left:12px;color:#64748b;">' +
+                xxtText('返回：{success: number, failed: number}', 'Return: {success: number, failed: number}') +
+                '</div>',
             '         </div>',
             '       </div>',
             '     </div>',
             '   </div>',
             ' </div>',
-            ' <div id="xtui-set-actions"><button id="xtui-set-cancel">取消</button><button class="primary" id="xtui-set-ok">保存</button></div>',
+            ' <div id="xtui-set-actions"><button id="xtui-set-cancel">' +
+                xxtText('取消', 'Cancel') +
+                '</button><button class="primary" id="xtui-set-ok">' +
+                xxtText('保存', 'Save') +
+                '</button></div>',
             '</div>'
         ].join('')
 
@@ -2030,7 +2343,7 @@ export async function openSettings(context) {
                     renderKeys()
                 })
                 const rLabel = doc.createElement('span')
-                rLabel.textContent = '默认'
+                rLabel.textContent = xxtText('默认', 'Default')
                 radioWrap.appendChild(radio)
                 radioWrap.appendChild(rLabel)
 
@@ -2075,11 +2388,22 @@ export async function openSettings(context) {
                 try {
                     await savePromptStatus(context, { showConvertTodoPrompt: true })
                     if (context.ui && context.ui.notice) {
-                        context.ui.notice('提示状态已重置，下次转换时将重新显示提示', 'ok', 2000)
+                        context.ui.notice(
+                            xxtText(
+                                '提示状态已重置，下次转换时将重新显示提示',
+                                'Prompt status reset. The confirmation will show again next time.'
+                            ),
+                            'ok',
+                            2000
+                        )
                     }
                 } catch (err) {
                     if (context.ui && context.ui.notice) {
-                        context.ui.notice('重置提示状态失败', 'err', 2600)
+                        context.ui.notice(
+                            xxtText('重置提示状态失败', 'Failed to reset prompt status'),
+                            'err',
+                            2600
+                        )
                     }
                 }
             })
@@ -2143,7 +2467,14 @@ export async function openSettings(context) {
 
                 if (hasInvalidKey) {
                     if (context.ui && context.ui.notice) {
-                        context.ui.notice('请为每个 API Key 填写备注（必填）', 'err', 3000)
+                        context.ui.notice(
+                            xxtText(
+                                '请为每个 API Key 填写备注（必填）',
+                                'Please fill a note for each API Key (required)'
+                            ),
+                            'err',
+                            3000
+                        )
                     }
                     return
                 }
@@ -2166,18 +2497,28 @@ export async function openSettings(context) {
 
                 // 重新注册右键菜单以刷新多 Key 列表
                 if (PLUGIN_CONTEXT) {
-                    registerContextMenus(PLUGIN_CONTEXT).catch((err) => log('重新注册菜单失败', err))
+                    registerContextMenus(PLUGIN_CONTEXT).catch((err) =>
+                        log('重新注册菜单失败', err)
+                    )
                 }
 
                 if (context.ui && context.ui.notice) {
-                    context.ui.notice('xxtui 配置已保存', 'ok', 2000)
+                    context.ui.notice(
+                        xxtText('xxtui 配置已保存', 'xxtui configuration saved'),
+                        'ok',
+                        2000
+                    )
                 }
                 close()
             })
         }
     } catch (e) {
         if (context && context.ui && context.ui.notice) {
-            context.ui.notice('xxtui 配置保存失败', 'err', 2600)
+            context.ui.notice(
+                xxtText('xxtui 配置保存失败', 'xxtui configuration save failed'),
+                'err',
+                2600
+            )
         }
     }
 }
