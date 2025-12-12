@@ -3,6 +3,13 @@
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
 
+## Update v0.7.3
+- Added: New “Extension Menu Manager” dialog under the “Plugins” menu that lists all context-menu entries and “Plugins” dropdown actions registered by extensions, letting you toggle visibility per extension to declutter the UI without uninstalling plugins.
+- Added: Published the “AutoYAML Metadata” extension, which can automatically add YAML front matter to the current document (such as title and tags) and optionally call the AI assistant to generate tags and a summary, making it easier to maintain a more structured knowledge base.
+- Improved: The Backlinks plugin now scans the YAML front matter at the top of each document for a `tags` field and folds those tags into its index and “related notes” logic, giving tag-driven vaults more accurate backlinks and recommendations.
+- Improved: Completed English copy for the extensions marketplace and most official plugins (including Graph View, Backlinks, Git History, Word/Excel Importer, S3 Gallery, Typecho integrations, xxtui todo-push and AutoYAML Metadata), with manifests and plugin UIs now following flyMD’s language setting.
+- Fixed: WebDAV sync status indicators no longer get stuck after enabling or disabling the built-in sync extension; switches in the extensions panel and related menus now reflect the current state immediately.
+
 ## Update v0.7.2
 - Added: Official “Graph View” extension that builds a local relationship graph around the current note using the Backlinks index, rendered in a floating panel with clickable nodes and quick entries from the Plugins menu and editor context menu.
 - Added: New “Smart Floating Toolbar” extension that pops up a draggable rich-text toolbar near the selection when you select text, with configurable heading hotkeys (Ctrl+1–6 by default) and quick actions for links, images and formatting.
@@ -592,6 +599,5 @@ This version focuses on stability and detail experience optimization, main chang
 - Added: LaTeX (based on KaTeX) rendering support
 - Added: Mermaid flowchart/sequence diagram etc. rendering support
 - Added shortcuts: Ctrl+B bold, Ctrl+I italic, Ctrl+K insert link
-
 
 

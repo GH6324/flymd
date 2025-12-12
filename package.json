@@ -1,6 +1,6 @@
 {
   "name": "flymd",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": true,
   "license": "LicenseRef-flyMD-NC-1.0",
   "type": "module",
@@ -49,4 +49,3 @@
     "pdfjs-dist": "^5.4.394"
   }
 }
-
