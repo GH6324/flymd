@@ -2179,20 +2179,22 @@ function ensureDialogStyle() {
 .flysmart-btn.danger{ background:#ef4444; color:#fff; border-color:#ef4444; }
 .flysmart-btn:disabled{ opacity:.55; cursor:not-allowed; }
 .flysmart-close{ font-size:18px; line-height:1; padding:0 8px; }
-.flysmart-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.flysmart-input{
-  width:100%;
-  padding:6px 8px;
-  border-radius:6px;
-  border:1px solid rgba(0,0,0,.18);
-  outline:none;
-}
-.flysmart-textarea{
-  width:100%;
-  min-height:86px;
-  padding:6px 8px;
-  border-radius:6px;
-  border:1px solid rgba(0,0,0,.18);
+ .flysmart-grid{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; }
+ .flysmart-input{
+   width:100%;
+   box-sizing:border-box;
+   padding:6px 8px;
+   border-radius:6px;
+   border:1px solid rgba(0,0,0,.18);
+   outline:none;
+ }
+ .flysmart-textarea{
+   width:100%;
+   box-sizing:border-box;
+   min-height:86px;
+   padding:6px 8px;
+   border-radius:6px;
+   border:1px solid rgba(0,0,0,.18);
   outline:none;
   resize:vertical;
 }
