@@ -312,6 +312,19 @@
         "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/note-templates/manifest.json",
         "type": "manifest"
       }
+    },
+    {
+      "homepage": "https://github.com/flyhunterl/flymd",
+      "name": "flymd-RAG 知识库索引",
+      "description": "为本地 Markdown/TXT 构建向量索引，提供语义检索（RAG 基础能力），可与 AI 写作助手联动使用。",
+      "author": "flyMD",
+      "id": "flymd-RAG",
+      "featured": true,
+      "category": "AI",
+      "install": {
+        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/flymd-RAG/manifest.json",
+        "type": "manifest"
+      }
     }
   ]
 }
