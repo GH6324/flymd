@@ -12,6 +12,10 @@ const META_FILE = 'meta.json'
 const VEC_FILE = 'vectors.f32'
 const INDEX_LOG_FILE = 'flymd-rag-index.log'
 
+// 避免固定字符串被滥用：与 AI 助手保持一致，用于生成 X-Flymd-Token
+const FLYMD_TOKEN_SECRET = 'flymd-rolling-secret-v1'
+const FLYMD_TOKEN_WINDOW_MS = 120000 // 2 分钟一个窗口
+
 const DEFAULT_CFG = {
   enabled: false,
   includeExtensions: ['md', 'markdown', 'txt'],
@@ -22,7 +26,7 @@ const DEFAULT_CFG = {
   // 分块：优先按 Markdown 标题段落切分（更贴近语义），再做长度上限
   chunk: { maxChars: 512, overlapChars: 0, byHeading: true },
   embedding: {
-    provider: 'reuse-ai-assistant', // 'reuse-ai-assistant' | 'custom'
+    provider: 'reuse-ai-assistant', // 'reuse-ai-assistant' | 'custom' | 'flymd-bge-free'
     baseUrl: '',
     apiKey: '',
     model: 'text-embedding-3-small',
@@ -75,6 +79,26 @@ let FLYSMART_INCR_RUNNING = false
 
 // 轻量级多语言：与宿主/AI 助手共用 flymd.locale
 const RAG_LOCALE_LS_KEY = 'flymd.locale'
+
+function fnv1aHex(str) {
+  let hash = 0x811c9dc5
+  const prime = 0x01000193
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i)
+    hash = Math.imul(hash, prime)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
+function buildRollingClientToken(now) {
+  const ts = typeof now === 'number' && Number.isFinite(now) ? now : Date.now()
+  if (!FLYMD_TOKEN_SECRET) return 'flymd-client-legacy'
+  const slice = Math.floor(ts / FLYMD_TOKEN_WINDOW_MS)
+  const base = `${FLYMD_TOKEN_SECRET}:${slice}:2pai`
+  const partA = fnv1aHex(base)
+  const partB = fnv1aHex(base + ':' + (slice % 97))
+  return `flymd-${partA}${partB}`
+}
 
 function ragDetectSystemLocale() {
   try {
@@ -373,16 +397,6 @@ function normalizePathForKey(p) {
   return out
 }
 
-function fnv1aHex(str) {
-  let hash = 0x811c9dc5
-  const prime = 0x01000193
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i)
-    hash = Math.imul(hash, prime)
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0')
-}
-
 async function sha1Hex(str) {
   try {
     const c = typeof crypto !== 'undefined' ? crypto : null
@@ -671,7 +685,11 @@ function normalizeConfig(cfg) {
   out.embedding.provider = String(
     out.embedding.provider || DEFAULT_CFG.embedding.provider,
   ).trim()
-  if (out.embedding.provider !== 'custom' && out.embedding.provider !== 'reuse-ai-assistant') {
+  if (
+    out.embedding.provider !== 'custom' &&
+    out.embedding.provider !== 'reuse-ai-assistant' &&
+    out.embedding.provider !== 'flymd-bge-free'
+  ) {
     out.embedding.provider = DEFAULT_CFG.embedding.provider
   }
   out.embedding.baseUrl = String(out.embedding.baseUrl || '').trim()
@@ -871,6 +889,9 @@ async function getEmbeddingConn(ctx, vecCfg) {
     else emb = vecCfg
   }
   const provider = String(emb.provider || 'reuse-ai-assistant').trim()
+  if (provider === 'flymd-bge-free') {
+    return { baseUrl: 'https://flymd.llingfei.com/ai/ai_proxy.php/v1', apiKey: '' }
+  }
   if (provider === 'custom') {
     const baseUrl = String(emb.baseUrl || '').trim()
     const apiKey = String(emb.apiKey || '').trim()
@@ -898,7 +919,12 @@ async function fetchEmbeddings(conn, model, inputs, opt) {
   const base = isVoyage ? ensureVoyageV1Base(base0) : base0
   const url = base + '/embeddings'
   const headers = { 'Content-Type': 'application/json' }
-  if (conn && conn.apiKey) headers.Authorization = 'Bearer ' + conn.apiKey
+  const isFlymdProxy = /^https?:\/\/flymd\.llingfei\.com\/ai\/ai_proxy\.php(\/v1)?$/i.test(base)
+  if (isFlymdProxy) {
+    headers['X-Flymd-Token'] = buildRollingClientToken()
+  } else if (conn && conn.apiKey) {
+    headers.Authorization = 'Bearer ' + conn.apiKey
+  }
   const m = String(model || '').trim()
   if (!m) throw new Error('Embedding model 为空')
   const body = { model: m, input: inputs }
@@ -2432,17 +2458,34 @@ async function openSettingsDialog(settingsCtx) {
   const optReuse = document.createElement('option')
   optReuse.value = 'reuse-ai-assistant'
   optReuse.textContent = ragText('复用 AI 助手', 'Reuse AI Assistant')
+  const optFreeBge = document.createElement('option')
+  optFreeBge.value = 'flymd-bge-free'
+  optFreeBge.textContent = 'BAAI/bge-m3（免费）'
   const optCustom = document.createElement('option')
   optCustom.value = 'custom'
   optCustom.textContent = ragText('自定义', 'Custom')
   selectProvider.appendChild(optReuse)
+  selectProvider.appendChild(optFreeBge)
   selectProvider.appendChild(optCustom)
   selectProvider.value = String(cfg.embedding.provider || 'reuse-ai-assistant')
   const connTip = document.createElement('div')
   connTip.className = 'flysmart-tip'
+  const freeBgeTip = document.createElement('div')
+  freeBgeTip.className = 'flysmart-tip'
+  const freeBgeLink = document.createElement('a')
+  freeBgeLink.href = 'https://cloud.siliconflow.cn/i/X96CT74a'
+  freeBgeLink.target = '_blank'
+  freeBgeLink.rel = 'noreferrer'
+  freeBgeLink.textContent = ragText(
+    '免费模型由硅基流动提供',
+    'Free embedding model powered by SiliconFlow',
+  )
+  freeBgeTip.appendChild(freeBgeLink)
+  freeBgeTip.style.display = 'none'
   rowConn.appendChild(connLabel)
   rowConn.appendChild(selectProvider)
   rowConn.appendChild(connTip)
+  rowConn.appendChild(freeBgeTip)
 
   grid.appendChild(rowModel)
   grid.appendChild(rowConn)
@@ -2476,17 +2519,31 @@ async function openSettingsDialog(settingsCtx) {
   rowCustomConn.appendChild(customConnTip)
 
   function refreshConnHint() {
-    const isCustom = selectProvider.value === 'custom'
+    const provider = String(selectProvider.value || 'reuse-ai-assistant')
+    const isCustom = provider === 'custom'
+    const isFreeBge = provider === 'flymd-bge-free'
     rowCustomConn.style.display = isCustom ? '' : 'none'
-    connTip.textContent = isCustom
-      ? ragText(
-          '使用自定义 embedding 连接（不依赖 AI 助手配置）。',
-          'Use custom embedding connection (independent from AI Assistant settings).',
-        )
-      : ragText(
-          '复用 AI 助手（ai-assistant）的 baseUrl/apiKey',
-          'Reuse AI Assistant (ai-assistant) baseUrl/apiKey',
-        )
+    freeBgeTip.style.display = isFreeBge ? '' : 'none'
+    if (isCustom) {
+      connTip.textContent = ragText(
+        '使用自定义 embedding 连接（不依赖 AI 助手配置）。',
+        'Use custom embedding connection (independent from AI Assistant settings).',
+      )
+    } else if (isFreeBge) {
+      connTip.textContent = ragText(
+        '使用飞速Markdown 官方免费 BAAI/bge-m3 向量服务（可能存在调用频率和每日上限）。',
+        'Use flymd official free BAAI/bge-m3 embedding service (may be subject to rate limits and daily caps).',
+      )
+      const cur = String(inputModel.value || '').trim()
+      if (!cur || cur !== 'BAAI/bge-m3') {
+        inputModel.value = 'BAAI/bge-m3'
+      }
+    } else {
+      connTip.textContent = ragText(
+        '复用 AI 助手（ai-assistant）的 baseUrl/apiKey',
+        'Reuse AI Assistant (ai-assistant) baseUrl/apiKey',
+      )
+    }
   }
   selectProvider.onchange = refreshConnHint
   refreshConnHint()
