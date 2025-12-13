@@ -182,6 +182,7 @@ FlyMD has a rich plugin ecosystem supporting unlimited functionality extension t
 **Knowledge Management**:
 - **Backlinks (Bidirectional Links)** - Based on [[title]] syntax to build forward and reverse links between notes, with AI-powered related suggestions
 - **Graph View** - Graph view based on backlinks index that centers on the current note and visualizes its local graph
+- **RAG Knowledge Base Indexing (flymd-RAG)** - Builds vector indexes for local Markdown/TXT and provides semantic search and RAG-ready knowledge base support, integrated with the AI Assistant
 
 > 👉 [View all extensions](https://flymd.llingfei.com/extensions.html)
 
