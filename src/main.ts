@@ -819,9 +819,9 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
   const syncCfg = await (async () => { try { return await getWebdavSyncConfig() } catch { return null as any } })()
   const syncEnabled = !!syncCfg?.enabled
   const syncConfigured = await (async () => { try { return await isWebdavConfiguredForActiveLibrary() } catch { return false } })()
-  let syncNote = ''
-  if (!syncConfigured) syncNote = '当前库未配置 WebDAV，同步已禁用'
-  else if (!syncEnabled) syncNote = '未启用'
+  let syncTooltip = ''
+  if (!syncConfigured) syncTooltip = t('sync.tooltip.notConfigured') || '当前库未配置 WebDAV，同步已禁用'
+  else if (!syncEnabled) syncTooltip = t('sync.tooltip.disabled') || '已配置 WebDAV，但同步未启用'
   // 编辑器内置：纯文本粘贴（忽略 HTML / 图片 等富文本）
   items.push({
     label: t('ctx.pastePlain') || '纯文本粘贴',
@@ -857,7 +857,7 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
   items.push({
     label: t('sync.now') || '立即同步',
     icon: '🔁',
-    note: syncNote,
+    tooltip: syncTooltip || undefined,
     disabled: !syncEnabled || !syncConfigured,
     onClick: async () => { await handleManualSyncFromMenu() }
   })
