@@ -337,37 +337,20 @@ function hideLongRunningNotice(context, id){
   } catch {}
 }
 
-// Markdown 渲染器（动态加载 markdown-it + highlight.js）
-async function ensureMarkdownRenderer() {
-  if (__AI_MD__) return __AI_MD__
-  try {
-    const [{ default: MarkdownIt }, hljs] = await Promise.all([
-      import('markdown-it'),
-      import('highlight.js')
-    ])
-    __AI_HLJS__ = hljs.default
-    __AI_MD__ = new MarkdownIt({
-      html: false,
-      linkify: true,
-      breaks: true,
-      highlight(code, lang) {
-        if (lang && __AI_HLJS__.getLanguage(lang)) {
-          try {
-            return __AI_HLJS__.highlight(code, { language: lang, ignoreIllegals: true }).value
-          } catch {}
-        }
-        // 转义 HTML 字符
-        return code.replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch] || ch))
+  // Markdown 渲染器（内置轻量实现，避免外部依赖）
+  async function ensureMarkdownRenderer() {
+    if (__AI_MD__) return __AI_MD__
+    try {
+      // 使用内置的简单 Markdown 渲染器，避免运行时动态加载第三方库
+      __AI_MD__ = { render: aiRenderSimpleMarkdown }
+      return __AI_MD__
+    } catch (e) {
+      if (!__AI_MD_WARNED__) {
+        __AI_MD_WARNED__ = true
+        try { console.warn('[AI助手] Markdown 渲染器初始化失败，将降级为纯文本显示') } catch {}
       }
-    })
-    return __AI_MD__
-  } catch (e) {
-    if (!__AI_MD_WARNED__) {
-      __AI_MD_WARNED__ = true
-      try { console.warn('[AI助手] Markdown 渲染器加载失败，将降级为纯文本显示') } catch {}
+      return null
     }
-    return null
-  }
 }
 
 // 渲染 Markdown 文本为 HTML
@@ -381,12 +364,163 @@ async function renderMarkdownText(text) {
   }
 }
 
-// HTML 转义
-function escapeHtml(str) {
-  return String(str || '').replace(/[&<>"']/g, ch => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[ch] || ch))
-}
+  // HTML 转义
+  function escapeHtml(str) {
+    return String(str || '').replace(/[&<>"']/g, ch => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch] || ch))
+  }
+
+  // 内联 Markdown 渲染（粗粒度支持：`code`、*em*、**strong**、[text](url)）
+  function aiRenderInlineMarkdown(text) {
+    if (!text) return ''
+    let html = escapeHtml(String(text))
+    html = html.replace(/`([^`]+)`/g, (m, code) => `<code>${code}</code>`)
+    html = html.replace(/\*\*([^*]+)\*\*/g, (m, strong) => `<strong>${strong}</strong>`)
+    html = html.replace(/\*([^*]+)\*/g, (m, em) => `<em>${em}</em>`)
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, href) => {
+      const safeHref = href.replace(/"/g, '&quot;')
+      return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${label}</a>`
+    })
+    return html
+  }
+
+  // 简单 Markdown 渲染器：支持标题、列表、引用、代码块
+  function aiRenderSimpleMarkdown(src) {
+    const lines = String(src || '').split(/\r?\n/)
+    const out = []
+    let inCode = false
+    let codeLang = ''
+    let codeLines = []
+    let listType = ''
+    let listItems = []
+    let paragraph = []
+    let inBlockquote = false
+    let blockquoteLines = []
+
+    function flushParagraph() {
+      if (!paragraph.length) return
+      out.push(`<p>${aiRenderInlineMarkdown(paragraph.join(' '))}</p>`)
+      paragraph = []
+    }
+
+    function flushList() {
+      if (!listItems.length) return
+      const tag = listType === 'ol' ? 'ol' : 'ul'
+      out.push(`<${tag}>`)
+      listItems.forEach(item => {
+        out.push(`<li>${aiRenderInlineMarkdown(item)}</li>`)
+      })
+      out.push(`</${tag}>`)
+      listItems = []
+      listType = ''
+    }
+
+    function flushCode() {
+      if (!inCode) return
+      const code = codeLines.join('\n')
+      const lang = codeLang.trim().toLowerCase()
+      const cls = lang ? `language-${lang}` : ''
+      const classAttr = cls ? ` class="${cls}"` : ''
+      out.push(`<pre><code${classAttr}>${escapeHtml(code)}</code></pre>`)
+      inCode = false
+      codeLang = ''
+      codeLines = []
+    }
+
+    function flushBlockquote() {
+      if (!inBlockquote) return
+      const inner = aiRenderSimpleMarkdown(blockquoteLines.join('\n'))
+      out.push(`<blockquote>${inner}</blockquote>`)
+      inBlockquote = false
+      blockquoteLines = []
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i]
+      const line = raw.replace(/\s+$/, '')
+
+      if (!inCode) {
+        const fenceMatch = line.match(/^```(\s*\w+)?\s*$/)
+        if (fenceMatch) {
+          flushParagraph()
+          flushList()
+          flushBlockquote()
+          inCode = true
+          codeLang = fenceMatch[1] ? fenceMatch[1].trim() : ''
+          codeLines = []
+          continue
+        }
+      } else {
+        if (/^```/.test(line)) {
+          flushCode()
+          continue
+        }
+        codeLines.push(raw)
+        continue
+      }
+
+      const bqMatch = line.match(/^>\s?(.*)$/)
+      if (bqMatch) {
+        flushParagraph()
+        flushList()
+        inBlockquote = true
+        blockquoteLines.push(bqMatch[1] || '')
+        continue
+      }
+      if (inBlockquote) {
+        if (!line.trim()) {
+          blockquoteLines.push('')
+          continue
+        }
+        flushBlockquote()
+      }
+
+      if (!line.trim()) {
+        flushParagraph()
+        flushList()
+        continue
+      }
+
+      const headingMatch = line.match(/^(#{1,6})\s+(.*)$/)
+      if (headingMatch) {
+        flushParagraph()
+        flushList()
+        flushBlockquote()
+        const level = headingMatch[1].length
+        const content = headingMatch[2] || ''
+        out.push(`<h${level}>${aiRenderInlineMarkdown(content)}</h${level}>`)
+        continue
+      }
+
+      const olMatch = line.match(/^(\d+)\.\s+(.*)$/)
+      const ulMatch = line.match(/^[-+*]\s+(.*)$/)
+      if (olMatch || ulMatch) {
+        flushParagraph()
+        const curType = olMatch ? 'ol' : 'ul'
+        const text = (olMatch || ulMatch)[2] || ''
+        if (!listType) {
+          listType = curType
+          listItems = []
+        } else if (listType !== curType) {
+          flushList()
+          listType = curType
+        }
+        listItems.push(text)
+        continue
+      }
+
+      flushBlockquote()
+      paragraph.push(line.trim())
+    }
+
+    flushCode()
+    flushBlockquote()
+    flushParagraph()
+    flushList()
+
+    return out.join('\n')
+  }
 
 // 网络请求重试机制（支持 5xx 服务器错误自动重试）
 async function fetchWithRetry(url, options, maxRetries = 3) {
