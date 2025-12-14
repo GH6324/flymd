@@ -393,13 +393,14 @@ function registerContextMenu(context) {
   ) {
     return
   }
-  try {
-    AUTOYAML_CTX_MENU_DISPOSER = context.addContextMenuItem({
-      label: autoyamlText('🧾 AutoYAML', '🧾 AutoYAML'),
-      // 在源码、预览、所见三种模式下都提供右键入口
-      condition: (ctx) =>
-        ctx.mode === 'edit' ||
-        ctx.mode === 'preview' ||
+	  try {
+	    AUTOYAML_CTX_MENU_DISPOSER = context.addContextMenuItem({
+	      label: autoyamlText('AutoYAML', 'AutoYAML'),
+	      icon: '🧾',
+	      // 在源码、预览、所见三种模式下都提供右键入口
+	      condition: (ctx) =>
+	        ctx.mode === 'edit' ||
+	        ctx.mode === 'preview' ||
         ctx.mode === 'wysiwyg',
       onClick: () => {
         void applyAutoYaml(context)
