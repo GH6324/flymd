@@ -3,6 +3,14 @@
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
 
+## Update v0.7.6
+- Added: The Extensions panel now shows plugin provenance (Official / Third-party) and a safety notice for third-party extensions.
+- Added: Published a third-party extension “EasyImage2.0 Uploader”, which can upload images to a custom Web API by configuring URL, field names, and JsonPath.
+- Changed: Knowledge-base index storage is now fixed under the library root at `.flymd/rag-index/<libraryId>`, and a stable library ID is stored in `.flymd/library-id.json` for cross-device consistency; custom index directories are no longer supported (if you previously used a custom index directory, you may need to rebuild the index or migrate it manually).
+- Improved: The plugin host exposes a WebDAV plugin API so extensions can register extra sync paths and subscribe to sync-complete events, enabling cross-device sync for index/cache data.
+- Fixed: AI Assistant chat rendering incorrectly parsed unordered lists in some cases, which could drop list content.
+- Improved: Renamed the built-in image hosting settings entry from “Image Host” to “Image Host (S3/R2)” for clarity.
+
 ## Update v0.7.5
 - Added: Published the official “flymd-RAG Knowledge Index” extension, which builds vector indexes for local Markdown/TXT libraries, enabling semantic search over your vault and serving as the backbone for RAG-style knowledge conversations.
 - Added: AI Assistant can optionally integrate with flymd-RAG and, before sending a request, run semantic search and append cited snippets from your vault so answers can combine “current chat + local knowledge”; when flymd-RAG is not installed or disabled, existing behavior remains unchanged.
