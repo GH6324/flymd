@@ -3,6 +3,9 @@
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
 
+## Update v0.7.9
+- Fixed: When the OS is in dark mode but the user explicitly turns off Night Mode in flyMD, the UI could still render with dark-theme artifacts; now a dedicated light-mode override ensures a clean light appearance under system-dark environments.
+
 ## Update v0.7.8
 - Fixed: WebDAV sync scanning no longer skips required hidden paths; `.flymd/library-id.json` and extension-registered extra prefixes (e.g. flymd-RAG `.flymd/rag-index/<libraryId>`) can now be uploaded/synced correctly.
 - Improved: Built-in flymd-RAG upgraded to v0.1.1; toggling “Cloud Sync” in settings now refreshes WebDAV extra sync paths immediately to avoid stale index sync state.
@@ -632,3 +635,4 @@ This version focuses on stability and detail experience optimization, main chang
 - Added: LaTeX (based on KaTeX) rendering support
 - Added: Mermaid flowchart/sequence diagram etc. rendering support
 - Added shortcuts: Ctrl+B bold, Ctrl+I italic, Ctrl+K insert link
+

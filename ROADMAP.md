@@ -3,6 +3,9 @@
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
 
+## 更新 v0.7.9
+- 修复：在系统为深色模式但用户在 flyMD 中手动关闭夜间模式时，界面仍残留深色主题痕迹的问题；现在通过 light-mode 强制浅色覆盖，确保在系统深色环境下也能获得纯净的浅色视图。
+
 ## 更新 v0.7.8
 - 修复：WebDAV 同步扫描不再跳过必要的隐藏路径；`.flymd/library-id.json` 以及插件注册的额外同步前缀（如 flymd-RAG 的 `.flymd/rag-index/<libraryId>`）可正常上传/同步。
 - 改进：内置插件 flymd-RAG 升级至 v0.1.1，设置中开关“云端同步”后会即时刷新 WebDAV 额外同步路径，避免索引同步状态滞后。
@@ -647,3 +650,4 @@
 - 新增 LaTeX（基于 KaTeX）渲染支持
 - 新增 Mermaid 流程图/时序图等渲染支持
 - 新增快捷键：Ctrl+B 加粗、Ctrl+I 斜体、Ctrl+K 插入链接
+
