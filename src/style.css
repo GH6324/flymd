@@ -52,6 +52,34 @@
     --table-row-hover: rgba(55, 65, 81, 0.3);
   }
 }
+
+/* 强制浅色模式：覆盖系统深色偏好（当用户在系统深色模式下选择浅色主题时） */
+body.light-mode {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #7a7a7a;
+  --border: #e5e7eb;
+  --preview-bg: #fbf5e6;
+  --border-strong: #cbd5e1;
+  --panel-bg: #f3f4f6;
+  --wysiwyg-bg: #e9edf5;
+  --wysiwyg-status-bg: #d9e2f2;
+  --code-bg: #f6f8fa;
+  --table-border: #cbd5e1;
+  --table-header-bg: #f1f5f9;
+  --table-header-fg: #1e293b;
+  --table-row-hover: #f8fafc;
+  /* 代码高亮浅色变量 */
+  --code-border: #e5e7eb;
+  --code-fg: #1f2328;
+  --code-muted: #6b7280;
+  --c-key: #1d4ed8;
+  --c-str: #059669;
+  --c-num: #059669;
+  --c-fn: #db2777;
+  --c-com: #9ca3af;
+}
+
 html, body, #app { height: 100%; }
 html, body {
   margin: 0;
@@ -640,7 +668,7 @@ body.compact-titlebar .window-btn.window-close:hover {
   z-index: 3;
 }
 @media (prefers-color-scheme: dark) {
-  .container.split-preview:not(.wysiwyg):not(.wysiwyg-v2)::before {
+  body:not(.light-mode) .container.split-preview:not(.wysiwyg):not(.wysiwyg-v2)::before {
     border-left-color: rgba(255,255,255,0.25);
   }
 }
@@ -682,14 +710,14 @@ body.compact-titlebar .window-btn.window-close:hover {
   box-shadow: none;
 }
 @media (prefers-color-scheme: dark) {
-  .container.preview-plain:not(.wysiwyg):not(.wysiwyg-v2) .preview {
+  body:not(.light-mode) .container.preview-plain:not(.wysiwyg):not(.wysiwyg-v2) .preview {
     background-image: none;
     box-shadow: none;
   }
 }
 
 @media (prefers-color-scheme: dark) {
-  .container:not(.wysiwyg):not(.wysiwyg-v2) .preview {
+  body:not(.light-mode) .container:not(.wysiwyg):not(.wysiwyg-v2) .preview {
     background-image:
       radial-gradient(170% 120% at 50% -10%,
         rgba(255,255,255,0.12) 0%,
@@ -727,11 +755,11 @@ body.compact-titlebar .window-btn.window-close:hover {
   border-color: rgba(120, 90, 40, 0.18);
 }
 @media (prefers-color-scheme: dark) {
-  .container:not(.wysiwyg):not(.wysiwyg-v2) .preview pre {
+  body:not(.light-mode) .container:not(.wysiwyg):not(.wysiwyg-v2) .preview pre {
     background: rgba(0, 0, 0, 0.35);
     border-color: rgba(240, 220, 180, 0.08);
   }
-  .container:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code {
+  body:not(.light-mode) .container:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code {
     background: rgba(0, 0, 0, 0.28);
     border-color: rgba(240, 220, 180, 0.10);
   }
@@ -1835,10 +1863,10 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   border-bottom-color: #1e40af;
 }
 @media (prefers-color-scheme: dark) {
-  .preview a {
+  body:not(.light-mode) .preview a {
     color: #60a5fa;
   }
-  .preview a:hover {
+  body:not(.light-mode) .preview a:hover {
     color: #93c5fd;
     border-bottom-color: #93c5fd;
   }
@@ -2730,18 +2758,18 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .container.md-docs { --c-key: #1d4ed8; --c-str: #0d9488; --c-num: #ea580c; --c-fn: #7c3aed; --c-com: #6b7280; }
 
 @media (prefers-color-scheme: dark) {
-  .container.md-docs .preview pre { background: #0f1217; border-color: #202733; }
-  .container.md-docs .preview :not(pre) > code { background: #12161c; border-color: #202733; }
-  .container.md-docs .preview th,
-  .container.md-docs .preview td { border-color: #202733; }
-  .container.md-docs .preview th { background: #141922; }
-  .container.md-docs { --c-key: #93c5fd; --c-str: #5eead4; --c-num: #fdba74; --c-fn: #d8b4fe; --c-com: #9ca3af; }
+  body:not(.light-mode) .container.md-docs .preview pre { background: #0f1217; border-color: #202733; }
+  body:not(.light-mode) .container.md-docs .preview :not(pre) > code { background: #12161c; border-color: #202733; }
+  body:not(.light-mode) .container.md-docs .preview th,
+  body:not(.light-mode) .container.md-docs .preview td { border-color: #202733; }
+  body:not(.light-mode) .container.md-docs .preview th { background: #141922; }
+  body:not(.light-mode) .container.md-docs { --c-key: #93c5fd; --c-str: #5eead4; --c-num: #fdba74; --c-fn: #d8b4fe; --c-com: #9ca3af; }
 
-  .container.md-docs.wysiwyg-v2 .ProseMirror pre { background: #0f1217; border-color: #202733; }
-  .container.md-docs.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #12161c; border-color: #202733; }
-  .container.md-docs.wysiwyg-v2 .ProseMirror th,
-  .container.md-docs.wysiwyg-v2 .ProseMirror td { border-color: #202733; }
-  .container.md-docs.wysiwyg-v2 .ProseMirror th { background: #141922; }
+  body:not(.light-mode) .container.md-docs.wysiwyg-v2 .ProseMirror pre { background: #0f1217; border-color: #202733; }
+  body:not(.light-mode) .container.md-docs.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #12161c; border-color: #202733; }
+  body:not(.light-mode) .container.md-docs.wysiwyg-v2 .ProseMirror th,
+  body:not(.light-mode) .container.md-docs.wysiwyg-v2 .ProseMirror td { border-color: #202733; }
+  body:not(.light-mode) .container.md-docs.wysiwyg-v2 .ProseMirror th { background: #141922; }
 }
 
 /* Markdown 风格：卡片风（Card）- 强化卡片化信息密度 */
@@ -2908,52 +2936,52 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 
 @media (prefers-color-scheme: dark) {
   /* 所见模式表格深色主题优化 */
-  .container.wysiwyg-v2 .ProseMirror table {
+  body:not(.light-mode) .container.wysiwyg-v2 .ProseMirror table {
     box-shadow: 0 1px 3px rgba(0,0,0,0.4);
   }
-  .container.wysiwyg-v2 .ProseMirror tbody tr:nth-child(even) {
+  body:not(.light-mode) .container.wysiwyg-v2 .ProseMirror tbody tr:nth-child(even) {
     background: rgba(31, 41, 55, 0.4);
   }
 
-  .container.md-card .preview pre { background: #0f1114; border-color: #262a33; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
-  .container.md-card .preview :not(pre) > code { background: #13161a; border-color: #262a33; }
+  body:not(.light-mode) .container.md-card .preview pre { background: #0f1114; border-color: #262a33; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+  body:not(.light-mode) .container.md-card .preview :not(pre) > code { background: #13161a; border-color: #262a33; }
 
   /* 终端风（已移除） */
 
-  .container.md-card.wysiwyg-v2 .ProseMirror pre { background: #0f1114; border-color: #262a33; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
-  .container.md-card.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #13161a; border-color: #262a33; }
-  .container.md-terminal.wysiwyg-v2 .ProseMirror pre {}
-  .container.md-terminal.wysiwyg-v2 .ProseMirror :not(pre) > code {}
+  body:not(.light-mode) .container.md-card.wysiwyg-v2 .ProseMirror pre { background: #0f1114; border-color: #262a33; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+  body:not(.light-mode) .container.md-card.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #13161a; border-color: #262a33; }
+  body:not(.light-mode) .container.md-terminal.wysiwyg-v2 .ProseMirror pre {}
+  body:not(.light-mode) .container.md-terminal.wysiwyg-v2 .ProseMirror :not(pre) > code {}
 }
 
 @media (prefers-color-scheme: dark) {
-  .container.md-github .preview pre { background: #0d1117; border-color: #30363d; }
-  .container.md-github .preview :not(pre) > code { background: #161b22; border-color: #30363d; color: #c9d1d9; }
+  body:not(.light-mode) .container.md-github .preview pre { background: #0d1117; border-color: #30363d; }
+  body:not(.light-mode) .container.md-github .preview :not(pre) > code { background: #161b22; border-color: #30363d; color: #c9d1d9; }
 
   /* 深色主题下，阅读模式的 GitHub 风格代码块/行内代码（与浅色规则同等特异性，避免被覆盖） */
-  .container.md-github:not(.wysiwyg):not(.wysiwyg-v2) .preview pre { background: #0d1117; border-color: #30363d; }
-  .container.md-github:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code { background: #161b22; border-color: #30363d; color: #c9d1d9; }
+  body:not(.light-mode) .container.md-github:not(.wysiwyg):not(.wysiwyg-v2) .preview pre { background: #0d1117; border-color: #30363d; }
+  body:not(.light-mode) .container.md-github:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code { background: #161b22; border-color: #30363d; color: #c9d1d9; }
 
-  .container.md-notion .preview pre { background: #1c1c1a; box-shadow: 0 1px 2px rgba(0,0,0,0.4); }
-  .container.md-notion .preview :not(pre) > code { background: #1a1917; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); }
+  body:not(.light-mode) .container.md-notion .preview pre { background: #1c1c1a; box-shadow: 0 1px 2px rgba(0,0,0,0.4); }
+  body:not(.light-mode) .container.md-notion .preview :not(pre) > code { background: #1a1917; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); }
 
   /* 深色主题下，阅读模式的 Notion 风格代码块/行内代码（与浅色规则同等特异性，避免被覆盖） */
-  .container.md-notion:not(.wysiwyg):not(.wysiwyg-v2) .preview pre { background: #1c1c1a; box-shadow: 0 1px 2px rgba(0,0,0,0.4); }
-  .container.md-notion:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code { background: #1a1917; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); }
+  body:not(.light-mode) .container.md-notion:not(.wysiwyg):not(.wysiwyg-v2) .preview pre { background: #1c1c1a; box-shadow: 0 1px 2px rgba(0,0,0,0.4); }
+  body:not(.light-mode) .container.md-notion:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code { background: #1a1917; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); }
 
-  .container.md-journal .preview pre { background: #141210; border-color: #3a332a; }
-  .container.md-journal .preview :not(pre) > code { background: #17130f; border-color: #3a332a; }
+  body:not(.light-mode) .container.md-journal .preview pre { background: #141210; border-color: #3a332a; }
+  body:not(.light-mode) .container.md-journal .preview :not(pre) > code { background: #17130f; border-color: #3a332a; }
 
   /* 深色主题下，阅读模式的 出版风（journal）代码块/行内代码（与浅色规则同等特异性，避免被覆盖） */
-  .container.md-journal:not(.wysiwyg):not(.wysiwyg-v2) .preview pre { background: #141210; border-color: #3a332a; }
-  .container.md-journal:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code { background: #17130f; border-color: #3a332a; }
+  body:not(.light-mode) .container.md-journal:not(.wysiwyg):not(.wysiwyg-v2) .preview pre { background: #141210; border-color: #3a332a; }
+  body:not(.light-mode) .container.md-journal:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code { background: #17130f; border-color: #3a332a; }
 
-  .container.md-github.wysiwyg-v2 .ProseMirror pre { background: #0d1117; border-color: #30363d; }
-  .container.md-github.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #161b22; border-color: #30363d; color: #c9d1d9; }
-  .container.md-notion.wysiwyg-v2 .ProseMirror pre { background: #1c1c1a; box-shadow: 0 1px 2px rgba(0,0,0,0.4); }
-  .container.md-notion.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #1a1917; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); }
-  .container.md-journal.wysiwyg-v2 .ProseMirror pre { background: #141210; border-color: #3a332a; }
-  .container.md-journal.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #17130f; border-color: #3a332a; }
+  body:not(.light-mode) .container.md-github.wysiwyg-v2 .ProseMirror pre { background: #0d1117; border-color: #30363d; }
+  body:not(.light-mode) .container.md-github.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #161b22; border-color: #30363d; color: #c9d1d9; }
+  body:not(.light-mode) .container.md-notion.wysiwyg-v2 .ProseMirror pre { background: #1c1c1a; box-shadow: 0 1px 2px rgba(0,0,0,0.4); }
+  body:not(.light-mode) .container.md-notion.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #1a1917; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); }
+  body:not(.light-mode) .container.md-journal.wysiwyg-v2 .ProseMirror pre { background: #141210; border-color: #3a332a; }
+  body:not(.light-mode) .container.md-journal.wysiwyg-v2 .ProseMirror :not(pre) > code { background: #17130f; border-color: #3a332a; }
 }
 
 /* WYSIWYG 对应覆盖（与预览一致的风格） */
@@ -4808,7 +4836,7 @@ textarea:focus {
   border-radius: 3px;
 }
 @media (prefers-color-scheme: dark) {
-  .preview mark {
+  body:not(.light-mode) .preview mark {
     background: rgba(250, 204, 21, 0.2);
   }
 }

@@ -404,15 +404,27 @@ export function loadThemePrefs(): ThemePrefs {
 }
 
 export function applySavedTheme(): void {
-  // 首先检测系统深色模式，如果是则强制启用夜间模式
+  // 检测系统深色模式并应用主题
   try {
     const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+    const savedDark = localStorage.getItem('flymd:darkmode')
+
     if (isSystemDark) {
-      document.body.classList.add('dark-mode')
+      // 系统深色模式下，检查用户是否明确选择了浅色
+      if (savedDark === 'false') {
+        // 用户明确选择浅色：移除深色类，添加强制浅色类
+        document.body.classList.remove('dark-mode')
+        document.body.classList.add('light-mode')
+      } else {
+        // 默认跟随系统或用户选择深色
+        document.body.classList.add('dark-mode')
+        document.body.classList.remove('light-mode')
+      }
     } else {
-      // 非系统深色模式时，读取用户保存的设置
-      const savedDark = localStorage.getItem('flymd:darkmode') === 'true'
-      document.body.classList.toggle('dark-mode', savedDark)
+      // 系统浅色模式：无需强制浅色类
+      document.body.classList.remove('light-mode')
+      const isDark = savedDark === 'true'
+      document.body.classList.toggle('dark-mode', isDark)
     }
   } catch {}
 
@@ -1504,17 +1516,21 @@ export function initThemeUI(): void {
         } catch { return false }
       }
       const getDarkMode = (): boolean => {
-        // 如果系统是深色模式，强制启用夜间模式
-        if (isSystemDarkMode()) return true
+        // 读取用户保存的设置（系统深色模式下默认开启，但尊重用户选择）
         try {
           const v = localStorage.getItem(DARK_MODE_KEY)
-          return v === 'true'
-        } catch { return false }
+          // 用户有明确选择时使用用户设置，否则跟随系统
+          if (v !== null) return v === 'true'
+          return isSystemDarkMode()
+        } catch { return isSystemDarkMode() }
       }
       const setDarkMode = (enabled: boolean) => {
         try {
           localStorage.setItem(DARK_MODE_KEY, enabled ? 'true' : 'false')
           document.body.classList.toggle('dark-mode', enabled)
+          // 系统深色模式下关闭夜间模式时，添加 light-mode 强制浅色
+          const sysIsDark = isSystemDarkMode()
+          document.body.classList.toggle('light-mode', sysIsDark && !enabled)
           // 重新应用主题设置（切换模式时使用对应的背景色）
           const cur = loadThemePrefs()
           applyThemePrefs(cur)
@@ -1526,11 +1542,13 @@ export function initThemeUI(): void {
           window.dispatchEvent(ev)
         } catch {}
       }
-      // 初始化开关状态（系统深色模式会强制开启）
+      // 初始化开关状态
       const isDark = getDarkMode()
       darkModeToggle.checked = isDark
-     // darkModeToggle.disabled = isSystemDarkMode() // 系统深色模式时禁用开关
       document.body.classList.toggle('dark-mode', isDark)
+      // 同步 light-mode 类（系统深色且用户选择浅色时）
+      const sysIsDark = isSystemDarkMode()
+      document.body.classList.toggle('light-mode', sysIsDark && !isDark)
       // 监听开关变化
       darkModeToggle.addEventListener('change', () => {
         setDarkMode(darkModeToggle.checked)
