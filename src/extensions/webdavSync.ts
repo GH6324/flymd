@@ -149,6 +149,8 @@ function shouldSyncRelativePath(rel: string, nameOpt?: string): boolean {
     let r = raw.replace(/\\/g, '/')
     r = r.replace(/^\/+/, '')
     const lower = r.toLowerCase()
+    // flyMD 的跨设备库标识文件：需要随库同步（体积很小，且不含敏感信息）
+    if (lower === '.flymd/library-id.json') return true
     // 默认扩展名白名单
     const nm = lower.split('/').pop() || ''
     const ext = (nm.split('.').pop() || '').toLowerCase()
@@ -165,10 +167,29 @@ function shouldSyncRelativePath(rel: string, nameOpt?: string): boolean {
     ]
     if (allowExts.includes(ext)) return true
     // 额外同步前缀：相对于库根目录
-    for (const p of _extraSyncPrefixes) {
+    for (const p of getAllExtraSyncPrefixes()) {
       if (!p) continue
       if (lower === p) return true
       if (lower.startsWith(p + '/')) return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
+function shouldDiveIntoHiddenDir(relDir: string): boolean {
+  try {
+    const raw = String(relDir || '').trim()
+    if (!raw) return false
+    let r = raw.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+    const lower = r.toLowerCase()
+    // 特例：允许进入 .flymd（用于同步 library-id.json，以及可能的插件扩展前缀）
+    if (lower === '.flymd') return true
+    for (const p of getAllExtraSyncPrefixes()) {
+      if (!p) continue
+      if (p === lower) return true
+      if (p.startsWith(lower + '/')) return true
     }
     return false
   } catch {
@@ -429,7 +450,6 @@ async function quickSummarizeLocal(root: string): Promise<LocalStructureHint> {
     for (const e of ents) {
       const name = String(e.name || '')
       if (!name) continue
-      if (name.startsWith('.')) continue
       const full = dir + (dir.includes('\\') ? '\\' : '/') + name
       const relp = rel ? rel + '/' + name : name
       try {
@@ -437,11 +457,18 @@ async function quickSummarizeLocal(root: string): Promise<LocalStructureHint> {
         if ((e as any)?.isDirectory === undefined) {
           try { const st = await stat(full) as any; isDir = !!st?.isDirectory } catch { isDir = false }
         }
+        const relUnix = relp.replace(/\\/g, '/')
+        if (name.startsWith('.')) {
+          if (isDir) {
+            if (!shouldDiveIntoHiddenDir(relUnix)) continue
+          } else {
+            if (!shouldSyncRelativePath(relUnix, name)) continue
+          }
+        }
         if (isDir) {
           totalDirs++
           await walk(full, relp)
         } else {
-          const relUnix = relp.replace(/\\/g, '/')
           if (!shouldSyncRelativePath(relUnix, name)) continue
           totalFiles++
           try {
@@ -497,23 +524,59 @@ async function getStore(): Promise<Store> {
   return _store
 }
 
-// 额外同步路径（由插件注册），使用目录前缀匹配
-const _extraSyncPrefixes: string[] = []
+// 额外同步路径（由插件注册），使用目录前缀匹配；按 owner 隔离，便于开关控制
+const _extraSyncPrefixesByOwner = new Map<string, string[]>()
 
+function normalizeExtraPrefix(input: string): string {
+  const raw = String(input || '').trim()
+  if (!raw) return ''
+  let p = raw.replace(/\\/g, '/')
+  p = p.replace(/^\/+/, '').replace(/\/+$/, '')
+  return p ? p.toLowerCase() : ''
+}
+
+function getAllExtraSyncPrefixes(): string[] {
+  const out: string[] = []
+  for (const arr of _extraSyncPrefixesByOwner.values()) {
+    for (const p of arr || []) {
+      if (!p) continue
+      if (out.includes(p)) continue
+      out.push(p)
+    }
+  }
+  return out
+}
+
+export function setExtraSyncPaths(owner: string, paths: WebdavExtraSyncPath[] | any): void {
+  try {
+    const keyOwner = String(owner || '').trim() || 'unknown'
+    const arrIn = Array.isArray(paths) ? paths : [paths]
+    const out: string[] = []
+    for (const it of arrIn) {
+      if (!it || (it as any).type !== 'prefix') continue
+      const p = normalizeExtraPrefix((it as any).path)
+      if (!p) continue
+      if (out.includes(p)) continue
+      out.push(p)
+    }
+    _extraSyncPrefixesByOwner.set(keyOwner, out)
+  } catch {}
+}
+
+// 兼容旧调用：作为 legacy owner 追加（不支持移除）
 export function registerExtraSyncPaths(paths: WebdavExtraSyncPath[] | any): void {
   try {
-    const arr = Array.isArray(paths) ? paths : [paths]
-    for (const it of arr) {
+    const legacy = _extraSyncPrefixesByOwner.get('legacy') || []
+    const arrIn = Array.isArray(paths) ? paths : [paths]
+    const out = [...legacy]
+    for (const it of arrIn) {
       if (!it || (it as any).type !== 'prefix') continue
-      const raw = String((it as any).path || '').trim()
-      if (!raw) continue
-      let p = raw.replace(/\\/g, '/')
-      p = p.replace(/^\/+/, '').replace(/\/+$/, '')
+      const p = normalizeExtraPrefix((it as any).path)
       if (!p) continue
-      const key = p.toLowerCase()
-      if (_extraSyncPrefixes.includes(key)) continue
-      _extraSyncPrefixes.push(key)
+      if (out.includes(p)) continue
+      out.push(p)
     }
+    _extraSyncPrefixesByOwner.set('legacy', out)
   } catch {}
 }
 
@@ -834,7 +897,6 @@ async function scanLocal(root: string, lastMeta?: SyncMetadata): Promise<Map<str
     try { ents = await readDir(dir, { recursive: false } as any) as any[] } catch { ents = [] }
     for (const e of ents) {
       const name = String(e.name || '')
-if (name.startsWith('.')) { await syncLog('[scan-skip-hidden] ' + (rel ? rel + '/' : '') + name); continue }
       if (!name) continue
       const full = dir + (dir.includes('\\') ? '\\' : '/') + name
       const relp = rel ? rel + '/' + name : name
@@ -845,14 +907,22 @@ if (name.startsWith('.')) { await syncLog('[scan-skip-hidden] ' + (rel ? rel + '
           try { const st = await stat(full) as any; isDir = !!st?.isDirectory } catch { isDir = false }
         }
 
+        const relUnix = relp.replace(/\\\\/g, '/')
+        if (name.startsWith('.')) {
+          if (isDir) {
+            if (!shouldDiveIntoHiddenDir(relUnix)) { await syncLog('[scan-skip-hidden] ' + relUnix); continue }
+          } else {
+            if (!shouldSyncRelativePath(relUnix, name)) continue
+          }
+        }
+
         if (isDir) {
           await walk(full, relp)
         } else {
           const meta = await stat(full)
           const mt = toEpochMs((meta as any)?.modifiedAt || (meta as any)?.mtime || (meta as any)?.mtimeMs)
           const size = Number((meta as any)?.size || 0)
-          const __relUnix = relp.replace(/\\\\/g, '/')
-          if (!shouldSyncRelativePath(__relUnix)) continue
+          if (!shouldSyncRelativePath(relUnix)) continue
 
           fileCount++
           if (fileCount % 10 === 0) {
@@ -860,7 +930,7 @@ if (name.startsWith('.')) { await syncLog('[scan-skip-hidden] ' + (rel ? rel + '
           }
 
           // 优化：检查是否可以复用上次的哈希
-          const lastFile = lastMeta?.files[__relUnix]
+          const lastFile = lastMeta?.files[relUnix]
           let hash = ''
           if (lastFile && lastFile.size === size && lastFile.hash) {
             // 文件 size 没变且有哈希记录，复用上次的哈希（不重新计算）
@@ -872,7 +942,7 @@ if (name.startsWith('.')) { await syncLog('[scan-skip-hidden] ' + (rel ? rel + '
             hash = await calculateFileHash(fileData as Uint8Array)
           }
 
-          map.set(__relUnix, { path: __relUnix, mtime: mt, size, hash })
+          map.set(relUnix, { path: relUnix, mtime: mt, size, hash })
         }
       } catch {}
     }
@@ -1038,12 +1108,19 @@ async function tryListRemoteInfinity(baseUrl: string, auth: { username: string; 
       const itemUrl = href.startsWith('http') ? new URL(href) : new URL(href, rootUrl)
       let rel = itemUrl.pathname.replace(rootUrl.pathname, '').replace(/^\/+/, '')
       if (!rel) continue
-      if (rel.startsWith('.')) continue
 
       const typeXml = typeEl?.outerHTML || typeEl?.innerHTML || ''
       const isDir = /<d:collection\b/i.test(typeXml) || /<collection\b/i.test(typeXml) || /\bcollection\b/i.test(typeXml) || rawHref.endsWith('/')
       const mt = mEl?.textContent ? toEpochMs(mEl.textContent) : undefined
       const etag = etagEl?.textContent ? String(etagEl.textContent).replace(/^["']|["']$/g, '') : undefined
+
+      if (rel.startsWith('.')) {
+        if (isDir) {
+          if (!shouldDiveIntoHiddenDir(rel)) continue
+        } else {
+          if (!shouldSyncRelativePath(rel)) continue
+        }
+      }
 
       if (isDir) {
         dirsProps[rel] = { mtime: mt, etag }
@@ -1103,18 +1180,24 @@ async function listRemoteRecursively(
 
     for (const f of files) {
       if (!f?.name) continue
-      if (String(f.name).startsWith('.')) continue
-      const r = rel ? rel + '/' + f.name : f.name
+      const name = String(f.name)
+      const r = rel ? rel + '/' + name : name
+      if (name.startsWith('.')) {
+        if (f.isDir) {
+          if (!shouldDiveIntoHiddenDir(r)) continue
+        } else {
+          if (!shouldSyncRelativePath(r, name)) continue
+        }
+      }
       if (f.isDir) {
         // 记录目录条目属性（若服务器提供）
         dirsProps[r] = { mtime: f.mtime, etag: f.etag }
         // 暂时禁用目录剪枝优化，确保检测到所有文件变化（包括重命名）
-        subDirs.push({ name: f.name, rel: r, needDive: true })
+        subDirs.push({ name, rel: r, needDive: true })
       } else {
+        if (!shouldSyncRelativePath(r, name)) continue
         fileCount++
-        if (shouldSyncRelativePath(r)) {
-          map.set(r, { path: r, mtime: toEpochMs(f.mtime), size: 0, etag: f.etag })
-        }
+        map.set(r, { path: r, mtime: toEpochMs(f.mtime), size: 0, etag: f.etag })
       }
     }
 

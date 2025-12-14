@@ -8574,14 +8574,28 @@ function bindEvents() {
                 return null
               }
             },
-            registerExtraPaths: async (paths: any[]) => {
+            registerExtraPaths: async (input: any) => {
               try {
-                if (!paths) return
+                if (!input) return
+                let owner = 'legacy'
+                let paths: any = input
+                if (
+                  input &&
+                  typeof input === 'object' &&
+                  !Array.isArray(input) &&
+                  Object.prototype.hasOwnProperty.call(input, 'paths')
+                ) {
+                  owner = String((input as any).owner || '').trim() || 'unknown'
+                  paths = (input as any).paths
+                }
+                if (!paths) paths = []
                 if (!Array.isArray(paths)) paths = [paths]
                 // 直接交给 WebDAV 扩展内部处理
                 try {
                   const mod: any = await import('./extensions/webdavSync')
-                  if (typeof mod.registerExtraSyncPaths === 'function') {
+                  if (typeof mod.setExtraSyncPaths === 'function') {
+                    mod.setExtraSyncPaths(owner, paths)
+                  } else if (typeof mod.registerExtraSyncPaths === 'function') {
                     mod.registerExtraSyncPaths(paths)
                   }
                 } catch {}

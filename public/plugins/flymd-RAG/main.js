@@ -2842,6 +2842,20 @@ async function openSettingsDialog(settingsCtx) {
       }
       const next = await saveConfig(runtime, patch)
       cfg = next
+      // 保存后同步更新 WebDAV 额外同步路径（支持开关即时生效）
+      try {
+        const webdav = runtime && typeof runtime.getWebdavAPI === 'function' ? runtime.getWebdavAPI() : null
+        if (webdav && typeof webdav.registerExtraPaths === 'function') {
+          const libKey = cfg.libraryKey || (await getLibraryKey(runtime))
+          const prefixes = cfg.cloudSyncEnabled
+            ? [
+                { type: 'prefix', path: `${RAG_INDEX_DIR}/${libKey}` },
+                { type: 'prefix', path: `${LIBRARY_META_DIR}/library-id.json` },
+              ]
+            : []
+          webdav.registerExtraPaths({ owner: 'flymd-RAG', paths: prefixes })
+        }
+      } catch {}
       if (mig && mig.changed && mig.copied > 0 && mig.oldDir) {
         await cleanupIndexFiles(runtime, mig.oldDir)
       }
@@ -3296,10 +3310,15 @@ export function activate(context) {
     try {
       const cfg = await loadConfig(context)
       const webdav = context && typeof context.getWebdavAPI === 'function' ? context.getWebdavAPI() : null
-      if (webdav && cfg && cfg.cloudSyncEnabled && typeof webdav.registerExtraPaths === 'function') {
+      if (webdav && cfg && typeof webdav.registerExtraPaths === 'function') {
         const libKey = cfg.libraryKey || (await getLibraryKey(context))
-        const prefix = `${RAG_INDEX_DIR}/${libKey}`
-        webdav.registerExtraPaths([{ type: 'prefix', path: prefix }])
+        const prefixes = cfg.cloudSyncEnabled
+          ? [
+              { type: 'prefix', path: `${RAG_INDEX_DIR}/${libKey}` },
+              { type: 'prefix', path: `${LIBRARY_META_DIR}/library-id.json` },
+            ]
+          : []
+        webdav.registerExtraPaths({ owner: 'flymd-RAG', paths: prefixes })
       }
       if (webdav && typeof webdav.onSyncComplete === 'function') {
         try {
