@@ -70,6 +70,8 @@ let __AI_CONTEXT__ = null // 保存插件 context，供消息操作按钮使用
 let __AI_PENDING_ACTION__ = null // 标记待办/提醒快捷模式
 let __AI_PENDING_IMAGES__ = [] // 待发送的图片（来自对话框粘贴）
 let __AI_MD__ = null // Markdown 渲染器实例
+let __AI_KATEX__ = null // KaTeX 渲染器实例（可选）
+let __AI_KATEX_LOADING__ = null // KaTeX 加载中 Promise（避免并发加载）
 let __AI_HLJS__ = null // highlight.js 实例
 let __AI_MD_WARNED__ = false // Markdown 渲染失败仅提示一次
 let __AI_DOCK_PANEL__ = null // 布局句柄（宿主统一管理推挤间距）
@@ -371,18 +373,118 @@ async function renderMarkdownText(text) {
     }[ch] || ch))
   }
 
-  // 内联 Markdown 渲染（粗粒度支持：`code`、*em*、**strong**、[text](url)）
-  function aiRenderInlineMarkdown(text) {
+  function aiLooksLikeMath(s) {
+    const t = String(s || '').trim()
+    if (!t) return false
+    // 经验规则：避免把 `$5$` 这种“看起来像钱”的内容误判为数学
+    if (/^[0-9.,]+$/.test(t)) return false
+    return /[\\^_{}=+\-*/()\[\]|<>]/.test(t) || /[a-zA-Z]/.test(t)
+  }
+
+  function aiFindClosingDelim(src, start, delimChar) {
+    const s = String(src || '')
+    for (let i = start; i < s.length; i++) {
+      if (s[i] !== delimChar) continue
+      // 处理转义：奇数个反斜杠表示被转义
+      let bs = 0
+      for (let j = i - 1; j >= 0 && s[j] === '\\'; j--) bs++
+      if ((bs & 1) === 1) continue
+      return i
+    }
+    return -1
+  }
+
+  function aiTokenizeInline(src) {
+    const s = String(src || '')
+    const out = []
+    let i = 0
+    let buf = ''
+
+    function flushText() {
+      if (!buf) return
+      out.push({ type: 'text', value: buf })
+      buf = ''
+    }
+
+    while (i < s.length) {
+      const ch = s[i]
+
+      // code span：`...`
+      if (ch === '`') {
+        const end = aiFindClosingDelim(s, i + 1, '`')
+        if (end >= 0) {
+          flushText()
+          out.push({ type: 'code', value: s.slice(i + 1, end) })
+          i = end + 1
+          continue
+        }
+      }
+
+      // inline math：$...$（不处理 $$，避免和块级冲突）
+      if (ch === '$') {
+        // 跳过 $$
+        if (i + 1 < s.length && s[i + 1] === '$') {
+          buf += '$$'
+          i += 2
+          continue
+        }
+        // 跳过被转义的 $
+        if (i > 0 && s[i - 1] === '\\') {
+          buf += '$'
+          i++
+          continue
+        }
+        const end = (() => {
+          for (let j = i + 1; j < s.length; j++) {
+            if (s[j] !== '$') continue
+            if (j + 1 < s.length && s[j + 1] === '$') { j++; continue }
+            let bs = 0
+            for (let k = j - 1; k >= 0 && s[k] === '\\'; k--) bs++
+            if ((bs & 1) === 1) continue
+            return j
+          }
+          return -1
+        })()
+        if (end > i + 1) {
+          const content = s.slice(i + 1, end)
+          if (aiLooksLikeMath(content)) {
+            flushText()
+            out.push({ type: 'math', value: content })
+            i = end + 1
+            continue
+          }
+        }
+      }
+
+      buf += ch
+      i++
+    }
+
+    flushText()
+    return out
+  }
+
+  function aiRenderInlineMarkdownText(text) {
     if (!text) return ''
     let html = escapeHtml(String(text))
-    html = html.replace(/`([^`]+)`/g, (m, code) => `<code>${code}</code>`)
     html = html.replace(/\*\*([^*]+)\*\*/g, (m, strong) => `<strong>${strong}</strong>`)
     html = html.replace(/\*([^*]+)\*/g, (m, em) => `<em>${em}</em>`)
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, href) => {
-      const safeHref = href.replace(/"/g, '&quot;')
+      const safeHref = String(href || '').replace(/"/g, '&quot;')
       return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${label}</a>`
     })
     return html
+  }
+
+  // 内联 Markdown 渲染（粗粒度支持：KaTeX、`code`、*em*、**strong**、[text](url)）
+  function aiRenderInlineMarkdown(text) {
+    const tokens = aiTokenizeInline(text)
+    if (!tokens.length) return ''
+    return tokens.map(t => {
+      if (t.type === 'code') return `<code>${escapeHtml(t.value)}</code>`
+      if (t.type === 'math') return `<span class="md-math-inline" data-math="${escapeHtml(t.value)}"></span>`
+      return aiRenderInlineMarkdownText(t.value)
+    }).join('')
   }
 
   // 简单 Markdown 渲染器：支持标题、列表、引用、代码块
@@ -392,6 +494,8 @@ async function renderMarkdownText(text) {
     let inCode = false
     let codeLang = ''
     let codeLines = []
+    let inMath = false
+    let mathLines = []
     let listType = ''
     let listItems = []
     let paragraph = []
@@ -428,6 +532,14 @@ async function renderMarkdownText(text) {
       codeLines = []
     }
 
+    function flushMath() {
+      if (!inMath) return
+      const raw = mathLines.join('\n')
+      out.push(`<div class="md-math-block" data-math="${escapeHtml(raw)}"></div>`)
+      inMath = false
+      mathLines = []
+    }
+
     function flushBlockquote() {
       if (!inBlockquote) return
       const inner = aiRenderSimpleMarkdown(blockquoteLines.join('\n'))
@@ -440,24 +552,59 @@ async function renderMarkdownText(text) {
       const raw = lines[i]
       const line = raw.replace(/\s+$/, '')
 
-      if (!inCode) {
-        const fenceMatch = line.match(/^```(\s*\w+)?\s*$/)
-        if (fenceMatch) {
-          flushParagraph()
-          flushList()
-          flushBlockquote()
-          inCode = true
-          codeLang = fenceMatch[1] ? fenceMatch[1].trim() : ''
-          codeLines = []
-          continue
-        }
-      } else {
+      if (inCode) {
         if (/^```/.test(line)) {
           flushCode()
           continue
         }
         codeLines.push(raw)
         continue
+      }
+
+      if (inMath) {
+        if (/^\s*\$\$\s*$/.test(line)) {
+          flushMath()
+          continue
+        }
+        mathLines.push(raw)
+        continue
+      }
+
+      // 代码块围栏
+      {
+        const fenceMatch = line.match(/^```(\s*\w+)?\s*$/)
+        if (fenceMatch) {
+          flushParagraph()
+          flushList()
+          flushBlockquote()
+          flushMath()
+          inCode = true
+          codeLang = fenceMatch[1] ? fenceMatch[1].trim() : ''
+          codeLines = []
+          continue
+        }
+      }
+
+      // 数学块：支持单行 $$...$$ 或围栏 $$\n...\n$$
+      {
+        const oneLine = line.match(/^\s*\$\$(.+?)\$\$\s*$/)
+        if (oneLine && aiLooksLikeMath(oneLine[1])) {
+          flushParagraph()
+          flushList()
+          flushBlockquote()
+          out.push(
+            `<div class="md-math-block" data-math="${escapeHtml(oneLine[1])}"></div>`,
+          )
+          continue
+        }
+        if (/^\s*\$\$\s*$/.test(line)) {
+          flushParagraph()
+          flushList()
+          flushBlockquote()
+          inMath = true
+          mathLines = []
+          continue
+        }
       }
 
       const bqMatch = line.match(/^>\s?(.*)$/)
@@ -479,6 +626,7 @@ async function renderMarkdownText(text) {
       if (!line.trim()) {
         flushParagraph()
         flushList()
+        flushMath()
         continue
       }
 
@@ -487,6 +635,7 @@ async function renderMarkdownText(text) {
         flushParagraph()
         flushList()
         flushBlockquote()
+        flushMath()
         const level = headingMatch[1].length
         const content = headingMatch[2] || ''
         out.push(`<h${level}>${aiRenderInlineMarkdown(content)}</h${level}>`)
@@ -511,16 +660,107 @@ async function renderMarkdownText(text) {
       }
 
       flushBlockquote()
+      flushMath()
       paragraph.push(line.trim())
     }
 
     flushCode()
+    flushMath()
     flushBlockquote()
     flushParagraph()
     flushList()
 
     return out.join('\n')
   }
+
+function ensureKatexCssOnce(href) {
+  try {
+    if (!href) return
+    if (DOC().getElementById('ai-assist-katex-css')) return
+    const link = DOC().createElement('link')
+    link.id = 'ai-assist-katex-css'
+    link.rel = 'stylesheet'
+    link.href = String(href)
+    DOC().head.appendChild(link)
+  } catch {}
+}
+
+async function ensureKatexRuntime(context) {
+  try {
+    if (__AI_KATEX__) return __AI_KATEX__
+    if (__AI_KATEX_LOADING__) return await __AI_KATEX_LOADING__
+
+    __AI_KATEX_LOADING__ = (async () => {
+      // 先尝试宿主是否已暴露 katex（有则复用，零侵入）
+      try {
+        const g = typeof window !== 'undefined' ? window : globalThis
+        const k = g && (g.katex || g.KaTeX)
+        if (k && typeof k.render === 'function') {
+          __AI_KATEX__ = k
+          return __AI_KATEX__
+        }
+      } catch {}
+
+      // 再尝试插件内置资源；最后才走 CDN（加载失败不报错，保留原始公式文本）
+      let modUrl = ''
+      let cssUrl = ''
+      try {
+        if (context && typeof context.getAssetUrl === 'function') {
+          const u1 = context.getAssetUrl('vendor/katex/katex.mjs')
+          const u2 = context.getAssetUrl('vendor/katex/katex.min.css')
+          if (u1 && u2) {
+            modUrl = u1
+            cssUrl = u2
+          }
+        }
+      } catch {}
+      if (!modUrl) {
+        modUrl = 'https://unpkg.com/katex@0.16.25/dist/katex.mjs'
+        cssUrl = 'https://unpkg.com/katex@0.16.25/dist/katex.min.css'
+      }
+
+      ensureKatexCssOnce(cssUrl)
+      const mod = await import(/* @vite-ignore */ modUrl)
+      const katex = (mod && (mod.default || mod)) || null
+      if (katex && typeof katex.render === 'function') {
+        __AI_KATEX__ = katex
+        return __AI_KATEX__
+      }
+      return null
+    })()
+
+    return await __AI_KATEX_LOADING__
+  } catch {
+    return null
+  } finally {
+    __AI_KATEX_LOADING__ = null
+  }
+}
+
+async function decorateAIMath(container, context) {
+  try {
+    const nodes = container
+      ? container.querySelectorAll('.md-math-inline, .md-math-block')
+      : null
+    if (!nodes || nodes.length === 0) return
+
+    const katex = await ensureKatexRuntime(context)
+    if (!katex) return
+
+    nodes.forEach(el => {
+      try {
+        if (el.dataset && el.dataset.aiKatexDone) return
+        if (el.dataset) el.dataset.aiKatexDone = '1'
+        const value = el.getAttribute('data-math') || ''
+        const displayMode = el.classList.contains('md-math-block')
+        el.innerHTML = ''
+        katex.render(value, el, { throwOnError: false, displayMode })
+      } catch {
+        try { el.textContent = el.getAttribute('data-math') || '' } catch {}
+      }
+    })
+  } catch {}
+}
 
 // 网络请求重试机制（支持 5xx 服务器错误自动重试）
 async function fetchWithRetry(url, options, maxRetries = 3) {
@@ -1005,13 +1245,14 @@ function ensureCss() {
     '.ai-toolbar-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px}',
     '.ai-toolbar-actions{display:flex;flex-wrap:wrap;align-items:center;gap:16px;width:100%}',
     '#ai-chat{flex:1;overflow:auto;padding:16px 18px;background:#fff;display:flex;flex-direction:column}',
-    '.msg-wrapper{display:flex;margin:8px 0;max-width:88%;gap:8px}',
-    '.msg-wrapper:has(.msg.u){margin-left:auto;flex-direction:row-reverse}',
-    '.msg-wrapper:has(.msg.a){margin-right:auto;flex-direction:row}',
+    '.msg-wrapper{display:flex;margin:8px 0;max-width:100%;gap:8px}',
+    '.msg-wrapper:has(.msg.u){margin-left:auto;flex-direction:row-reverse;max-width:88%}',
+    '.msg-wrapper:has(.msg.a){margin-right:auto;flex-direction:row;max-width:100%}',
     '.msg-wrapper .ai-avatar{width:36px;height:36px;border-radius:50%;flex-shrink:0;object-fit:cover;box-shadow:0 2px 8px rgba(0,0,0,0.1)}',
     '.msg-wrapper .msg-content-wrapper{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}',
     '.msg-wrapper .ai-nickname{font-size:12px;color:#6b7280;padding-left:4px}',
     '.msg{white-space:pre-wrap;line-height:1.55;border-radius:16px;padding:12px 14px;box-shadow:0 6px 16px rgba(15,23,42,.08);position:relative;font-size:14px;max-width:100%;word-wrap:break-word}',
+    '.msg-wrapper:has(.msg.a) .msg{flex:1}',
     '.msg.u{background:linear-gradient(135deg,#e0f2ff,#f0f7ff);border:1px solid rgba(59,130,246,.3)}',
     '.msg.a{background:#fefefe;border:1px solid #e5e7eb}',
     '.msg.u::before{content:"";display:none}',
@@ -1223,6 +1464,10 @@ function ensureCss() {
     '.msg.a .ai-md-content h1{font-size:1.3em}',
     '.msg.a .ai-md-content h2{font-size:1.2em}',
     '.msg.a .ai-md-content h3{font-size:1.1em}',
+    // 数学公式（KaTeX：通过占位符 data-math 渲染）
+    '.msg.a .ai-md-content .md-math-inline{display:inline-block}',
+    '.msg.a .ai-md-content .md-math-block{margin:0.6em 0}',
+    '.msg.a .ai-md-content .katex-display{margin:0.5em 0}',
     '.msg.a .ai-md-content blockquote{margin:0.5em 0;padding:0.5em 1em;border-left:3px solid var(--border,#e5e7eb);background:var(--panel-bg,#f3f4f6);border-radius:4px}',
     '#ai-assist-win.dark .msg.a .ai-md-content blockquote{border-left-color:var(--border,#374151);background:var(--panel-bg,#1a1b1e)}',
     '.msg.a .ai-md-content a{color:#2563eb;text-decoration:none}',
@@ -1355,7 +1600,9 @@ function renderMsgs(root) {
             d.textContent = ''
             d.appendChild(mdWrapper)
             // 装饰代码块（添加复制按钮）
-            decorateAICodeBlocks(d)
+            try { decorateAICodeBlocks(d) } catch {}
+            // 渲染 KaTeX（可选：加载失败则保留原始公式）
+            try { decorateAIMath(d, __AI_CONTEXT__).catch(() => {}) } catch {}
           }
         } catch {}
       })()
