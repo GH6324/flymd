@@ -417,6 +417,36 @@ export class TabManager {
   }
 
   /**
+   * 将某个标签与文件路径解绑（文件被删除但有未保存内容时使用）
+   * 目的：避免静默丢失用户未保存内容，同时让“已删除文件”的标签不再指向不存在的路径。
+   */
+  detachTabFromFile(tabId: string): void {
+    const tab = this.findTabById(tabId)
+    if (!tab) return
+
+    tab.filePath = null
+    tab.dirty = true
+
+    // 如果解绑的是当前标签，同步 main.ts 的路径/dirty，并刷新标题栏
+    if (tabId === this.activeTabId && this.hooks) {
+      try {
+        tab.content = this.hooks.getEditorContent()
+      } catch {}
+      try {
+        this.hooks.setCurrentFilePath(null)
+      } catch {}
+      try {
+        this.hooks.setDirty(true)
+      } catch {}
+      try {
+        this.hooks.refreshTitle()
+      } catch {}
+    }
+
+    this.emit({ type: 'tab-updated', tab })
+  }
+
+  /**
    * 标记当前标签为已保存
    */
   markCurrentTabSaved(): void {

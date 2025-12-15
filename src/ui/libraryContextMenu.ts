@@ -6,6 +6,7 @@ import type { LibSortMode } from '../core/librarySort'
 import { openRenameDialog } from './linkDialogs'
 import { newFileSafe, newFolderSafe } from '../fileTree'
 import { showLibraryDeleteDialog } from '../dialog'
+import { dispatchPathDeleted } from '../core/pathEvents'
 
 export type LibraryContextMenuDeps = {
   getCurrentFilePath(): string | null
@@ -235,7 +236,22 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
         const ok = await showLibraryDeleteDialog(name, isDir)
         if (!ok) return
         await deps.deleteFileSafe(path, false)
-        deps.onAfterDeleteCurrent()
+
+        // 通知：某个路径已被删除（由标签系统订阅并决定是否关闭标签）
+        dispatchPathDeleted(path, isDir)
+
+        // 兜底：仅当“当前打开文档”被删除时，才清空编辑器（避免误伤其他打开文档）
+        try {
+          const cur = deps.getCurrentFilePath()
+          if (cur) {
+            const n = (p: string) => deps.normalizePath(p).replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '')
+            const curN = n(cur)
+            const delN = n(path)
+            const hit = isDir ? (curN === delN || curN.startsWith(delN + '/')) : (curN === delN)
+            if (hit) deps.onAfterDeleteCurrent()
+          }
+        } catch {}
+
         await deps.ensureTreeInitialized()
         await deps.refreshTree()
       } catch (e) {

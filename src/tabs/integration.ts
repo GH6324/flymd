@@ -9,6 +9,7 @@ import { tabManager, TabManagerHooks } from './TabManager'
 import { TabBar } from './TabBar'
 import type { EditorMode, TabDocument } from './types'
 import { TextareaUndoManager } from './TextareaUndoManager'
+import { FLYMD_PATH_DELETED_EVENT, type FlymdPathDeletedDetail } from '../core/pathEvents'
 
 // 全局引用
 let tabBar: TabBar | null = null
@@ -298,6 +299,45 @@ export async function initTabSystem(): Promise<void> {
     } catch (e) {
       console.error('[Tabs] 处理文件重命名事件失败:', e)
     }
+  })
+
+  // 监听文件/文件夹删除事件：删除后自动关闭对应标签
+  // 约定：不在这里做“删除文件”的文件系统操作，只做 UI/标签状态同步。
+  window.addEventListener(FLYMD_PATH_DELETED_EVENT, (ev: Event) => {
+    void (async () => {
+      try {
+        const detail = (ev as CustomEvent).detail as FlymdPathDeletedDetail | undefined
+        if (!detail || !detail.path) return
+        const deletedPath = String(detail.path)
+        const deletedIsDir = !!detail.isDir
+
+        const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '')
+        const delN = norm(deletedPath)
+        const isInsideDir = (dirN: string, fileN: string) => fileN === dirN || fileN.startsWith(dirN + '/')
+
+        // 复制一份快照，避免边遍历边修改造成漏关/越界
+        const tabs = [...tabManager.getTabs()]
+        const targets: TabDocument[] = []
+        for (const tab of tabs) {
+          if (!tab.filePath) continue
+          const tabN = norm(tab.filePath)
+          const hit = deletedIsDir ? isInsideDir(delN, tabN) : (tabN === delN)
+          if (hit) targets.push(tab)
+        }
+        if (!targets.length) return
+
+        // 逐个处理：无未保存内容就直接关闭；有未保存内容则解绑为“未命名”避免丢失
+        for (const tab of targets) {
+          if (tab.dirty) {
+            tabManager.detachTabFromFile(tab.id)
+            continue
+          }
+          await tabManager.closeTab(tab.id)
+        }
+      } catch (e) {
+        console.error('[Tabs] 处理删除事件失败:', e)
+      }
+    })()
   })
 
   initialized = true
