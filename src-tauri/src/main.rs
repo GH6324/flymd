@@ -689,33 +689,84 @@ async fn ai_novel_api(req: AiNovelApiReq) -> Result<serde_json::Value, String> {
   // 插件所有接口统一放宽超时：网络差/上游慢时避免误判失败
   let req_timeout = Duration::from_secs(180);
 
-  let client = reqwest::Client::builder()
-    .connect_timeout(Duration::from_secs(30))
-    .build()
-    .map_err(|e| format!("client error: {e:?}"))?;
+  fn is_retryable_send_error(e: &reqwest::Error) -> bool {
+    // 经验：部分服务器/中间层会直接断开 TLS（不发 close_notify），会被 rustls 识别为 UnexpectedEof；重试一次通常就好。
+    let s = format!("{e:?}");
+    s.contains("UnexpectedEof")
+      || s.contains("peer closed connection")
+      || s.contains("connection closed")
+      || s.contains("broken pipe")
+      || s.contains("ConnectionReset")
+      || s.contains("SendRequest")
+  }
 
-  let mut rb = if method == "GET" {
-    client.get(&url)
-  } else {
-    client.post(&url)
+  let make_client = || {
+    reqwest::Client::builder()
+      .connect_timeout(Duration::from_secs(30))
+      // 很多 CDN/反代在 HTTP/2 下会“粗暴断流”（不发 close_notify），导致 rustls 报 UnexpectedEof。
+      // 这里强制降级到 HTTP/1.1，让 Connection: close 真正生效，并规避一堆 h2/ALPN 兼容性坑。
+      .http1_only()
+      // 避免复用“半死不活”的 TLS 连接（最常见的 UnexpectedEof 来源）
+      .pool_max_idle_per_host(0)
+      .build()
   };
 
-  let token = req.token.trim();
-  if !token.is_empty() {
-    rb = rb.header("Authorization", format!("Bearer {}", token));
+  let client = make_client().map_err(|e| format!("client error: {e:?}"))?;
+
+  let token = req.token.trim().to_string();
+  let payload = req.body.unwrap_or_else(|| serde_json::json!({}));
+
+  let build_rb = |c: &reqwest::Client| -> reqwest::RequestBuilder {
+    let mut rb = if method == "GET" { c.get(&url) } else { c.post(&url) };
+    // 直接关闭连接：避免服务端/中间层对 keep-alive 的不标准关闭导致 UnexpectedEof
+    rb = rb.header("Connection", "close");
+    if !token.is_empty() {
+      rb = rb.header("Authorization", format!("Bearer {}", token));
+    }
+    if method == "POST" {
+      rb = rb.header("Content-Type", "application/json").json(&payload);
+    }
+    rb.timeout(req_timeout)
+  };
+
+  let mut res: Option<reqwest::Response> = None;
+  let mut last_err: Option<reqwest::Error> = None;
+
+  // 首次用已构建的 client，失败后再用新 client 退避重试
+  match build_rb(&client).send().await {
+    Ok(r) => res = Some(r),
+    Err(e) => last_err = Some(e),
   }
 
-  if method == "POST" {
-    let payload = req.body.unwrap_or_else(|| serde_json::json!({}));
-    rb = rb.header("Content-Type", "application/json").json(&payload);
+  if res.is_none() {
+    let backoffs = [250u64, 800u64, 1500u64];
+    for ms in backoffs {
+      let le = last_err.as_ref().unwrap();
+      if !is_retryable_send_error(le) {
+        return Err(format!("send error: {le:?}"));
+      }
+
+      std::thread::sleep(Duration::from_millis(ms));
+      let client2 = make_client().map_err(|e2| format!("client error: {e2:?}"))?;
+      match build_rb(&client2).send().await {
+        Ok(r2) => {
+          res = Some(r2);
+          break;
+        }
+        Err(e2) => last_err = Some(e2),
+      }
+    }
   }
 
-  // 这里的错误基本都是“网络/证书/代理/连接”问题；用 Debug 输出保留根因链路，别再给用户一句废话。
-  let res = rb
-    .timeout(req_timeout)
-    .send()
-    .await
-    .map_err(|e| format!("send error: {e:?}"))?;
+  let res = match res {
+    Some(r) => r,
+    None => {
+      let le = last_err.expect("last_err must exist when res is None");
+      return Err(format!(
+        "send error: {le:?}；提示：这是对端/中间层粗暴断开 TLS（常见于 CDN/HTTP2），建议对 /xiaoshuo/ai/proxy/* 关闭 CDN 加速或切 DNS-only，并确保 Nginx/网关不会提前断开连接。"
+      ));
+    }
+  };
   let status = res.status();
   let text = res.text().await.map_err(|e| format!("read error: {e:?}"))?;
 
