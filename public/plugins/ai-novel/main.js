@@ -1663,6 +1663,67 @@ async function openSettingsDialog(ctx) {
   rowUp2.appendChild(inpNovelRoot.wrap)
   secUp.appendChild(rowUp2)
 
+  const rowUp3 = document.createElement('div')
+  rowUp3.style.marginTop = '10px'
+  const btnUpCheck = document.createElement('button')
+  btnUpCheck.className = 'ain-btn gray'
+  btnUpCheck.textContent = t('检查连接', 'Test connection')
+  rowUp3.appendChild(btnUpCheck)
+  secUp.appendChild(rowUp3)
+
+  const upCheckHint = document.createElement('div')
+  upCheckHint.className = 'ain-muted'
+  upCheckHint.style.marginTop = '6px'
+  upCheckHint.textContent = t('提示：会发起一次“咨询”请求用于验证上游配置（不扣费）。', 'Note: sends a consult request to validate upstream settings (no billing).')
+  secUp.appendChild(upCheckHint)
+
+  btnUpCheck.onclick = async () => {
+    try {
+      cfg = await loadCfg(ctx)
+      if (!cfg.token) throw new Error(t('请先登录后端', 'Please login first'))
+
+      const baseUrl = safeText(inpUpBase.inp.value).trim()
+      const apiKey = safeText(inpUpKey.inp.value).trim()
+      const model = safeText(inpUpModel.inp.value).trim()
+      if (!baseUrl || !model) throw new Error(t('请先填写 BaseURL 和模型', 'Please fill BaseURL and model first'))
+
+      setBusy(btnUpCheck, true)
+      const started = Date.now()
+      upCheckHint.textContent = t('检查中…', 'Testing...')
+
+      const resp = await apiFetchConsultWithJob(ctx, cfg, {
+        upstream: { baseUrl, apiKey, model },
+        input: {
+          async: true,
+          mode: 'job',
+          question: '连接测试：请只回复 OK',
+          progress: '',
+          bible: '',
+          prev: '',
+          constraints: '',
+        }
+      }, {
+        timeoutMs: 60000,
+        onTick: ({ waitMs }) => {
+          const s = Math.max(0, Math.round(Number(waitMs || 0) / 1000))
+          upCheckHint.textContent = t('检查中… 已等待 ', 'Testing... waited ') + s + 's'
+        }
+      })
+
+      const txt = safeText(resp && resp.text).trim()
+      if (!txt) throw new Error(t('上游返回空内容', 'Upstream returned empty response'))
+      const ms = Math.max(0, Date.now() - started)
+      upCheckHint.textContent = t('连接正常，耗时 ', 'OK. Took ') + ms + 'ms'
+      ctx.ui.notice(t('上游连接正常', 'Upstream OK'), 'ok', 1800)
+    } catch (e) {
+      const msg = e && e.message ? String(e.message) : String(e)
+      try { upCheckHint.textContent = t('检查失败：', 'Failed: ') + msg } catch {}
+      ctx.ui.notice(t('检查失败：', 'Failed: ') + msg, 'err', 2600)
+    } finally {
+      setBusy(btnUpCheck, false)
+    }
+  }
+
   const secCtx = document.createElement('div')
   secCtx.className = 'ain-card'
   secCtx.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${t('上下文与约束', 'Context & Constraints')}</div>`
