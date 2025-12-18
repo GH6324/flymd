@@ -6188,7 +6188,6 @@ function showFileMenu() {
       portableEnabled = await isPortableModeEnabled()
     } catch {}
     const items: TopMenuItemSpec[] = [
-      { label: t('file.new'), accel: 'Ctrl+N', action: () => { void newFile() } },
       { label: t('file.open'), accel: 'Ctrl+O', action: () => { void openFile2() } },
       // “最近文件”入口移入 文件 菜单
       { label: t('menu.recent'), accel: 'Ctrl+Shift+R', action: () => { void renderRecentPanel(true) } },
