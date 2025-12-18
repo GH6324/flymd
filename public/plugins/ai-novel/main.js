@@ -2843,7 +2843,7 @@ async function openWriteWithChoiceDialog(ctx) {
   cbAgent.type = 'checkbox'
   cbAgent.checked = !!a0.enabled
   agentLine.appendChild(cbAgent)
-  agentLine.appendChild(document.createTextNode(t('Agent（Plan/TODO 多轮写作）', 'Agent (Plan/TODO multi-round writing)')))
+  agentLine.appendChild(document.createTextNode(t('Agent（Plan模式）', 'Agent (Plan)')))
   agentBox.appendChild(agentLine)
 
   const selAgentTarget = document.createElement('select')
@@ -4329,7 +4329,7 @@ async function openBootstrapDialog(ctx) {
   cbAgent.type = 'checkbox'
   cbAgent.checked = !!a0.enabled
   agentLine.appendChild(cbAgent)
-  agentLine.appendChild(document.createTextNode(t('Agent（Plan/TODO 多轮写作）', 'Agent (Plan/TODO multi-round writing)')))
+  agentLine.appendChild(document.createTextNode(t('Agent（Plan模式）', 'Agent (Plan)')))
   agentBox.appendChild(agentLine)
 
   const selAgentTarget = document.createElement('select')
