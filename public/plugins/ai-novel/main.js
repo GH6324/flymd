@@ -580,8 +580,10 @@ async function computeNextChapterPath(ctx, cfg) {
   const inf = await inferProjectDir(ctx, cfg)
   if (!inf) return null
 
-  const chapDir = joinFsPath(inf.projectAbs, '03_章节')
-  const files = await listMarkdownFilesAny(ctx, chapDir)
+  const chapRoot = joinFsPath(inf.projectAbs, '03_章节')
+  const chapDir = await inferCurrentChapterDir(ctx, inf, chapRoot)
+  const filesAll = await listMarkdownFilesAny(ctx, chapRoot)
+  const files = (filesAll || []).filter((p) => fsDirName(p) === chapDir)
 
   let maxNo = 0
   for (let i = 0; i < files.length; i++) {
@@ -609,14 +611,132 @@ async function computeNextChapterPath(ctx, cfg) {
   return null
 }
 
+function parseVolumeNoFromDirName(name) {
+  // 约定：卷目录名形如：卷02_第二卷（允许无后缀：卷2）
+  const bn = safeFileName(String(name || '').trim(), '')
+  const m = /^卷(\d{1,3})(?:_|$)/.exec(bn)
+  if (!m || !m[1]) return 0
+  const n = parseInt(m[1], 10)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function pickLastChapterPathInDir(filesAll, dirAbs, excludeBase) {
+  const dir = normFsPath(dirAbs).replace(/\/+$/, '')
+  const ex = String(excludeBase || '').trim()
+  let maxNo = 0
+  let best = ''
+  for (let i = 0; i < (filesAll || []).length; i++) {
+    const p = normFsPath(filesAll[i] || '')
+    if (!p) continue
+    if (fsDirName(p) !== dir) continue
+    const bn = fsBaseName(p)
+    if (!bn) continue
+    if (ex && bn === ex) continue
+    const m = /^(\d{3,})_/.exec(bn)
+    if (!m || !m[1]) continue
+    const n = parseInt(m[1], 10)
+    if (!Number.isFinite(n) || n <= 0) continue
+    if (n > maxNo) { maxNo = n; best = p }
+  }
+  return best
+}
+
+function findVolumeDirByNo(filesAll, chapRoot, volNo) {
+  const root = normFsPath(chapRoot).replace(/\/+$/, '')
+  const want = volNo | 0
+  if (want <= 0) return ''
+  for (let i = 0; i < (filesAll || []).length; i++) {
+    const p = normFsPath(filesAll[i] || '')
+    if (!p.startsWith(root + '/')) continue
+    const d = fsDirName(p)
+    if (!d || d === root) continue
+    const relDir = d.slice(root.length).replace(/^\/+/, '')
+    const first = (relDir.split('/').filter(Boolean)[0] || '')
+    if (parseVolumeNoFromDirName(first) === want) return joinFsPath(root, first)
+  }
+  return ''
+}
+
+async function inferCurrentChapterDir(ctx, inf, chapRoot) {
+  // 目标：让“下一章”默认在当前卷/当前目录下递增，而不是全项目混着算。
+  // - 旧项目：章节都在 03_章节/ 下 => 兼容
+  // - 新项目：卷= 03_章节/卷02_第二卷/ => 每卷章节从 001 开始
+  try {
+    if (!ctx || !inf) return chapRoot
+    let curPath = ''
+    try {
+      if (ctx.getCurrentFilePath) curPath = String(await ctx.getCurrentFilePath() || '')
+    } catch {}
+    const cur = normFsPath(curPath)
+    const root = normFsPath(chapRoot).replace(/\/+$/, '')
+    if (cur && cur.startsWith(root + '/')) {
+      const rel = cur.slice(root.length).replace(/^\/+/, '')
+      const first = (rel.split('/').filter(Boolean)[0] || '')
+      // 只把“卷目录”当成作用域，避免用户在 03_章节 里随手建其它目录导致“下一章”跑偏
+      if (parseVolumeNoFromDirName(first) > 0) return joinFsPath(root, first)
+      return root
+    }
+    return root
+  } catch {
+    return chapRoot
+  }
+}
+
+async function computeNextVolumeChapterPath(ctx, cfg) {
+  // 新开卷：创建卷目录 + 生成该卷第一章（001_第一章.md）
+  const inf = await inferProjectDir(ctx, cfg)
+  if (!inf) return null
+
+  const chapRoot = joinFsPath(inf.projectAbs, '03_章节')
+  const filesAll = await listMarkdownFilesAny(ctx, chapRoot)
+
+  const root = normFsPath(chapRoot).replace(/\/+$/, '')
+  let hasRootChapters = false
+  let maxVol = 0
+
+  for (let i = 0; i < (filesAll || []).length; i++) {
+    const p = normFsPath(filesAll[i] || '')
+    if (!p.startsWith(root + '/')) continue
+    const dir = fsDirName(p)
+    if (dir === root) { hasRootChapters = true; continue }
+    const relDir = dir.slice(root.length).replace(/^\/+/, '')
+    const first = (relDir.split('/').filter(Boolean)[0] || '')
+    const v = parseVolumeNoFromDirName(first)
+    if (v > maxVol) maxVol = v
+  }
+
+  const baseVol = Math.max(maxVol, hasRootChapters ? 1 : 0)
+  const volNo = baseVol > 0 ? (baseVol + 1) : 1
+  const volZh = zhNumber(volNo)
+  const volDirName = `卷${String(volNo).padStart(2, '0')}_第${volZh}卷`
+  const volDir = joinFsPath(chapRoot, volDirName)
+
+  const chapNo = 1
+  const chapZh = zhNumber(chapNo)
+  const chapPath = joinFsPath(volDir, `${String(chapNo).padStart(3, '0')}_第${chapZh}章.md`)
+
+  // 如果极端情况下同名已存在，就递增卷号再试（避免用户手工创建冲突目录）
+  for (let tries = 0; tries < 200; tries++) {
+    const dirName = `卷${String(volNo + tries).padStart(2, '0')}_第${zhNumber(volNo + tries)}卷`
+    const dir = joinFsPath(chapRoot, dirName)
+    const path = joinFsPath(dir, `001_第一章.md`)
+    if (!(await fileExists(ctx, path))) {
+      return { ...inf, chapRoot, chapDir: dir, chapPath: path, chapNo: 1, chapZh: '一', volNo: (volNo + tries), volZh: zhNumber(volNo + tries), volDirName: dirName }
+    }
+  }
+  return null
+}
+
 async function getPrevChapterTailText(ctx, cfg, maxChars) {
   try {
     if (!ctx || !cfg) return ''
     const inf = await inferProjectDir(ctx, cfg)
     if (!inf) return ''
 
-    const chapDir = joinFsPath(inf.projectAbs, '03_章节')
-    const files = await listMarkdownFilesAny(ctx, chapDir)
+    const chapRoot = joinFsPath(inf.projectAbs, '03_章节')
+    const chapDir = await inferCurrentChapterDir(ctx, inf, chapRoot)
+    const filesAll = await listMarkdownFilesAny(ctx, chapRoot)
+    const files = (filesAll || []).filter((p) => fsDirName(p) === chapDir)
     if (!files.length) return ''
 
     let curPath = ''
@@ -648,7 +768,21 @@ async function getPrevChapterTailText(ctx, cfg, maxChars) {
       }
     }
 
-    if (targetNo <= 0) return ''
+    if (targetNo <= 0) {
+      // 新开卷的第一章：优先回退到“上一卷最后一章”，这样续写/咨询不会丢上下文
+      const curVolNo = parseVolumeNoFromDirName(fsBaseName(chapDir))
+      if (curVolNo > 1) {
+        const prevVolNo = curVolNo - 1
+        const chapRootAbs = normFsPath(chapRoot).replace(/\/+$/, '')
+        const prevDir = findVolumeDirByNo(filesAll, chapRoot, prevVolNo) || (prevVolNo === 1 ? chapRootAbs : '')
+        const fallbackPath = prevDir ? pickLastChapterPathInDir(filesAll, prevDir, '') : ''
+        if (fallbackPath) {
+          const raw = await readTextAny(ctx, fallbackPath)
+          return sliceTail(String(raw || ''), maxChars)
+        }
+      }
+      return ''
+    }
     const pad = String(targetNo).padStart(3, '0')
     let targetPath = ''
     for (let i = 0; i < files.length; i++) {
@@ -3093,7 +3227,7 @@ async function openWriteWithChoiceDialog(ctx) {
   const agentHint = document.createElement('div')
   agentHint.className = 'ain-muted'
   agentHint.textContent = t(
-    '提示：Agent 会先生成Plan，再逐项执行；思考模式：默认=普遍场景；中等=写作时会自查修整；加强=正常思考前提下加入额外的索引，适用复杂剧情。越高耗费token越多，甚至翻倍',
+    '提示：Agent 会先生成Plan，再逐项执行；思考模式：默认=普遍场景；中等=写作时会自查修整；加强=正常思考前提下加入额外的索引，适用复杂剧情。越高耗费token越多，甚至翻倍。中等和加强对模型能力有极高要求，慎重使用',
     'Note: Agent generates TODO then executes step-by-step with live progress; prose is capped to ≤4000 chars (for review cost), usually costs more chars; Mode: None=consult shown only; Normal=inject consult checklist; Strong=refresh RAG before each segment + checklist (slower, steadier).'
   )
   sec.appendChild(agentBox)
@@ -6177,7 +6311,14 @@ async function openImportExistingDialog(ctx) {
     const maxN = 80
     const lines = []
     for (let i = 0; i < files.length && i < maxN; i++) {
-      lines.push('- ' + fsBaseName(files[i]))
+      if (fromChapDir) {
+        const abs = normFsPath(files[i] || '')
+        const root = normFsPath(chapDir).replace(/\/+$/, '')
+        const rel = abs.startsWith(root + '/') ? abs.slice(root.length).replace(/^\/+/, '') : fsBaseName(abs)
+        lines.push('- ' + rel)
+      } else {
+        lines.push('- ' + fsBaseName(files[i]))
+      }
     }
     if (!lines.length) return ''
     return t('范围：', 'Scope: ') + scope + '\n' + lines.join('\n')
@@ -7187,6 +7328,39 @@ export function activate(context) {
           }
         },
         { type: 'divider' },
+        {
+          label: t('新开一卷（创建卷目录+第一章）', 'Start new volume (folder + chapter 1)'),
+          onClick: async () => {
+            try {
+              const cfg = await loadCfg(context)
+              const inf = await computeNextVolumeChapterPath(context, cfg)
+              if (!inf) throw new Error(t('未发现项目：请先在“小说→项目管理”选择项目，或打开项目内文件。', 'No project: select one in Project Manager or open a file under the project.'))
+              const ok = await openConfirmDialog(context, {
+                title: t('新开一卷', 'Create new volume'),
+                message:
+                  t('将在章节目录创建卷目录：\n', 'Will create volume folder under chapters:\n') +
+                  String(inf.chapDir || '') +
+                  '\n\n' +
+                  t('并创建第一章文件：\n', 'And create chapter 1 file:\n') +
+                  String(inf.chapPath || '') +
+                  '\n\n' +
+                  t('创建并打开它？', 'Create and open it?'),
+              })
+              if (!ok) return
+              const title = `# 第${inf.volZh}卷 第一章`
+              await writeTextAny(context, inf.chapPath, title + '\n\n')
+              try {
+                if (typeof context.openFileByPath === 'function') {
+                  await context.openFileByPath(inf.chapPath)
+                }
+              } catch {}
+              context.ui.notice(t('已新开：', 'Created: ') + `第${inf.volZh}卷/第一章`, 'ok', 2000)
+              context.ui.notice(t('提示：后续“开始下一章”会在当前卷目录内递增。', 'Tip: Start next chapter will increment within current volume.'), 'ok', 2600)
+            } catch (e) {
+              context.ui.notice(t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
+            }
+          }
+        },
         {
           label: t('开始下一章（新建章节文件）', 'Start next chapter (new file)'),
           onClick: async () => {
