@@ -46,6 +46,14 @@ const DEFAULT_CFG = {
   constraints: {
     // 全局硬约束：每次请求都会作为 input.constraints 传给后端，进入 system
     global: ''
+  },
+  agent: {
+    // Agent（Plan/TODO）模式：把一次写作拆成多轮执行，提高上限与一致性（代价：更耗字符/更慢）
+    enabled: false,
+    // 写作字数目标（总字数）：为了审阅成本，最大只允许到 4000
+    targetChars: 3000,
+    // 自动审计默认关闭（让用户自己决定要不要花预算）
+    audit: false
   }
 }
 
@@ -1498,6 +1506,12 @@ function ensureDialogStyle() {
 .ain-muted{color:#9ca3af;font-size:12px}
 .ain-ok{color:#bbf7d0}
 .ain-err{color:#fecaca}
+.ain-todo{background:#0b0f19;border:1px dashed #243041;border-radius:8px;padding:10px}
+.ain-todo-item{display:flex;gap:8px;align-items:flex-start;margin:6px 0}
+.ain-todo-st{width:18px;flex:0 0 18px;font-weight:700;line-height:18px}
+.ain-todo-title{flex:1;min-width:0}
+.ain-todo-title .ain-muted{margin-left:6px}
+.ain-todo-log{white-space:pre-wrap;background:#0b0f19;border:1px solid #243041;border-radius:8px;padding:10px;margin-top:8px;max-height:240px;overflow:auto}
 .ain-minibar{position:fixed;z-index:1000000;background:#0f172a;border:1px solid #1f2937;color:#e6e6e6;border-radius:999px;box-shadow:0 10px 28px rgba(0,0,0,.45);padding:0 8px;display:flex;align-items:center;gap:8px;height:var(--ain-bar-h,24px);line-height:var(--ain-bar-h,24px);user-select:none}
 .ain-minibar .ain-minititle{font-size:12px;font-weight:700;max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:grab}
 .ain-minibar .ain-minititle:active{cursor:grabbing}
@@ -1954,6 +1968,85 @@ async function openSettingsDialog(ctx) {
     applyCtxPreset(v)
   }
 
+  const secAgent = document.createElement('div')
+  secAgent.className = 'ain-card'
+  secAgent.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${t('Agent（Plan 模式）', 'Agent (Plan mode)')}</div>`
+
+  const agentLine = document.createElement('label')
+  agentLine.style.display = 'flex'
+  agentLine.style.gap = '8px'
+  agentLine.style.alignItems = 'center'
+  agentLine.style.marginTop = '6px'
+  const cbAgent = document.createElement('input')
+  cbAgent.type = 'checkbox'
+  cbAgent.checked = !!(cfg.agent && cfg.agent.enabled)
+  agentLine.appendChild(cbAgent)
+  agentLine.appendChild(document.createTextNode(t('启用 Agent：先生成 TODO，再逐项执行', 'Enable Agent: generate TODO then execute step-by-step')))
+  secAgent.appendChild(agentLine)
+
+  const rowAgent = document.createElement('div')
+  rowAgent.className = 'ain-row'
+  const agentTarget0 = (() => {
+    try {
+      const a = cfg && cfg.agent ? cfg.agent : {}
+      const v = a && (a.targetChars != null ? a.targetChars : (a.target_chars != null ? a.target_chars : null))
+      const n = parseInt(String(v == null ? '' : v), 10)
+      if (n === 1000 || n === 2000 || n === 3000 || n === 4000) return n
+    } catch {}
+    // 兼容旧配置：chunkCount -> targetChars
+    try {
+      const a = cfg && cfg.agent ? cfg.agent : {}
+      const c = parseInt(String(a && a.chunkCount != null ? a.chunkCount : ''), 10)
+      if (Number.isFinite(c)) {
+        if (c <= 1) return 1000
+        if (c === 2) return 2000
+        if (c === 3) return 3000
+        return 4000
+      }
+    } catch {}
+    return 3000
+  })()
+
+  const selAgentTarget = mkSelect(
+    t('写作字数（Agent）', 'Target chars (Agent)'),
+    [
+      { value: '1000', label: t('≈ 1000 字', '≈ 1000 chars') },
+      { value: '2000', label: t('≈ 2000 字', '≈ 2000 chars') },
+      { value: '3000', label: t('≈ 3000 字', '≈ 3000 chars') },
+      { value: '4000', label: t('≈ 4000 字（上限）', '≈ 4000 chars (max)') },
+    ],
+    String(agentTarget0)
+  )
+
+  const auditWrap = document.createElement('div')
+  const auditLab = document.createElement('div')
+  auditLab.className = 'ain-lab'
+  auditLab.textContent = t('一致性审计', 'Consistency audit')
+  const auditLine = document.createElement('label')
+  auditLine.style.display = 'flex'
+  auditLine.style.gap = '8px'
+  auditLine.style.alignItems = 'center'
+  const cbAudit = document.createElement('input')
+  cbAudit.type = 'checkbox'
+  cbAudit.checked = !!(cfg.agent && cfg.agent.audit)
+  auditLine.appendChild(cbAudit)
+  auditLine.appendChild(document.createTextNode(t('写完后自动审计（更耗字符）', 'Audit after writing (costs more)')))
+  auditWrap.appendChild(auditLab)
+  auditWrap.appendChild(auditLine)
+
+  rowAgent.appendChild(selAgentTarget.wrap)
+  rowAgent.appendChild(auditWrap)
+  secAgent.appendChild(rowAgent)
+
+  const hintAgent = document.createElement('div')
+  hintAgent.className = 'ain-muted'
+  hintAgent.style.marginTop = '6px'
+  hintAgent.textContent = t(
+    '提示：Agent 会先生成 TODO，再逐项执行；写作会按你选择的字数目标控制在 ≤4000 字（为了审阅成本），但会更耗字符余额、也更慢。',
+    'Note: Agent generates TODO then executes step-by-step; writing is capped to ≤4000 chars (for review cost), but it usually costs more chars and is slower.'
+  )
+  secAgent.appendChild(hintAgent)
+
   const secEmb = document.createElement('div')
   secEmb.className = 'ain-card'
   secEmb.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${t('Embedding', 'Embedding')}</div>`
@@ -2021,6 +2114,11 @@ async function openSettingsDialog(ctx) {
         constraints: {
           global: safeText(hard.ta.value).trim()
         },
+        agent: {
+          enabled: !!cbAgent.checked,
+          targetChars: parseInt(String(selAgentTarget.sel.value || '3000'), 10) || 3000,
+          audit: !!cbAudit.checked
+        },
       }
       cfg = await saveCfg(ctx, patch)
       ctx.ui.notice(t('已保存', 'Saved'), 'ok', 1400)
@@ -2033,6 +2131,7 @@ async function openSettingsDialog(ctx) {
   body.appendChild(secBackend)
   body.appendChild(secUp)
   body.appendChild(secCtx)
+  body.appendChild(secAgent)
   body.appendChild(secEmb)
   body.appendChild(secRecharge)
   body.appendChild(secSave)
@@ -2673,6 +2772,54 @@ async function openWriteWithChoiceDialog(ctx) {
   )
   sec.appendChild(extra.wrap)
 
+  const a0 = _ainAgentGetCfg(cfg)
+  const agentBox = document.createElement('div')
+  agentBox.style.marginTop = '8px'
+  agentBox.style.display = 'flex'
+  agentBox.style.flexWrap = 'wrap'
+  agentBox.style.gap = '10px'
+  agentBox.style.alignItems = 'center'
+
+  const agentLine = document.createElement('label')
+  agentLine.style.display = 'flex'
+  agentLine.style.gap = '8px'
+  agentLine.style.alignItems = 'center'
+  const cbAgent = document.createElement('input')
+  cbAgent.type = 'checkbox'
+  cbAgent.checked = !!a0.enabled
+  agentLine.appendChild(cbAgent)
+  agentLine.appendChild(document.createTextNode(t('Agent（Plan/TODO 多轮写作）', 'Agent (Plan/TODO multi-round writing)')))
+  agentBox.appendChild(agentLine)
+
+  const selAgentTarget = document.createElement('select')
+  selAgentTarget.className = 'ain-in ain-select'
+  selAgentTarget.style.width = '180px'
+  ;[1000, 2000, 3000, 4000].forEach((n) => {
+    const op = document.createElement('option')
+    op.value = String(n)
+    op.textContent = t('≈ ', '≈ ') + String(n) + t(' 字', ' chars') + (n === 4000 ? t('（上限）', ' (max)') : '')
+    selAgentTarget.appendChild(op)
+  })
+  try { selAgentTarget.value = String(a0.targetChars || 3000) } catch {}
+  agentBox.appendChild(selAgentTarget)
+
+  const auditLine = document.createElement('label')
+  auditLine.style.display = 'flex'
+  auditLine.style.gap = '8px'
+  auditLine.style.alignItems = 'center'
+  const cbAudit = document.createElement('input')
+  cbAudit.type = 'checkbox'
+  cbAudit.checked = !!a0.audit
+  auditLine.appendChild(cbAudit)
+  auditLine.appendChild(document.createTextNode(t('自动审计（更耗字符）', 'Auto audit (costs more)')))
+  agentBox.appendChild(auditLine)
+
+  const agentHint = document.createElement('div')
+  agentHint.className = 'ain-muted'
+  agentHint.textContent = t('提示：Agent 会先生成 TODO，再逐项执行，并在窗口实时更新进度；正文会按字数目标控制在 ≤4000 字（为了审阅成本），通常更耗字符余额。', 'Note: Agent generates TODO then executes step-by-step with live progress; prose is capped to ≤4000 chars (for review cost), usually costs more chars.')
+  sec.appendChild(agentBox)
+  sec.appendChild(agentHint)
+
   const row = mkBtnRow()
   const btnOptions = document.createElement('button')
   btnOptions.className = 'ain-btn'
@@ -2735,6 +2882,19 @@ async function openWriteWithChoiceDialog(ctx) {
   sec.appendChild(selRow)
   sec.appendChild(selHint)
 
+  const agentProgress = document.createElement('div')
+  agentProgress.className = 'ain-card'
+  agentProgress.style.display = 'none'
+  agentProgress.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${t('Agent 进度', 'Agent progress')}</div>`
+  const agentTodo = document.createElement('div')
+  agentTodo.className = 'ain-todo'
+  const agentLog = document.createElement('div')
+  agentLog.className = 'ain-todo-log'
+  agentLog.textContent = t('等待开始。', 'Waiting.')
+  agentProgress.appendChild(agentTodo)
+  agentProgress.appendChild(agentLog)
+  sec.appendChild(agentProgress)
+
   const out = document.createElement('div')
   out.className = 'ain-out'
   out.style.marginTop = '10px'
@@ -2761,6 +2921,37 @@ async function openWriteWithChoiceDialog(ctx) {
   let selectedIdx = 0
   let lastText = ''
   let lastDraftId = ''
+
+  function renderAgentProgress(items, logs) {
+    try { agentProgress.style.display = '' } catch {}
+    try {
+      agentTodo.innerHTML = ''
+      const arr = Array.isArray(items) ? items : []
+      for (let i = 0; i < arr.length; i++) {
+        const it = arr[i] || {}
+        const row = document.createElement('div')
+        row.className = 'ain-todo-item'
+        const st = document.createElement('div')
+        st.className = 'ain-todo-st'
+        st.textContent = _ainAgentStatusSymbol(it.status)
+        const ttl = document.createElement('div')
+        ttl.className = 'ain-todo-title'
+        ttl.textContent = safeText(it.title || '')
+        const meta = document.createElement('span')
+        meta.className = 'ain-muted'
+        meta.textContent = safeText(it.type || '')
+        ttl.appendChild(meta)
+        row.appendChild(st)
+        row.appendChild(ttl)
+        agentTodo.appendChild(row)
+      }
+    } catch {}
+    try {
+      const lines = Array.isArray(logs) ? logs : []
+      agentLog.textContent = lines.join('\n')
+      agentLog.scrollTop = agentLog.scrollHeight
+    } catch {}
+  }
 
   function ensureInstruction(v, fallback) {
     const s = safeText(v).trim()
@@ -2912,6 +3103,37 @@ async function openWriteWithChoiceDialog(ctx) {
     lastText = ''
     lastDraftId = ''
     try {
+      const agentEnabled = !!cbAgent.checked
+      if (agentEnabled) {
+        const targetChars = parseInt(String(selAgentTarget.value || '3000'), 10) || 3000
+        const chunkCount = _ainAgentDeriveChunkCount(targetChars)
+        const wantAudit = !!cbAudit.checked
+        try { agentProgress.style.display = '' } catch {}
+        try { agentLog.textContent = t('Agent 执行中…', 'Agent running...') } catch {}
+
+        out.textContent = t('Agent 执行中…（多轮）', 'Agent running... (multi-round)')
+        const res = await agentRunPlan(ctx, cfg, {
+          instruction,
+          choice: chosen,
+          constraints: constraints || '',
+          prev,
+          progress,
+          bible,
+          rag: rag || null,
+          targetChars,
+          chunkCount,
+          audit: wantAudit
+        }, { render: renderAgentProgress })
+
+        lastText = safeText(res && res.text).trim()
+        if (!lastText) throw new Error(t('Agent 未返回正文', 'Agent returned empty text'))
+        out.textContent = lastText
+        btnAppend.disabled = false
+        btnAppendDraft.disabled = false
+        ctx.ui.notice(t('Agent 已完成（未写入文档）', 'Agent done (not inserted)'), 'ok', 1800)
+        return
+      }
+
       const r = await apiFetch(ctx, cfg, 'ai/proxy/chat/', {
         mode: 'novel',
         action: 'write',
@@ -2972,6 +3194,37 @@ async function openWriteWithChoiceDialog(ctx) {
     lastDraftId = ''
 
     try {
+      const agentEnabled = !!cbAgent.checked
+      if (agentEnabled) {
+        const targetChars = parseInt(String(selAgentTarget.value || '3000'), 10) || 3000
+        const chunkCount = _ainAgentDeriveChunkCount(targetChars)
+        const wantAudit = !!cbAudit.checked
+        try { agentProgress.style.display = '' } catch {}
+        try { agentLog.textContent = t('Agent 执行中…', 'Agent running...') } catch {}
+
+        out.textContent = t('Agent 执行中…（多轮，不走候选）', 'Agent running... (multi-round, no options)')
+        const res = await agentRunPlan(ctx, cfg, {
+          instruction,
+          choice: makeDirectChoice(instruction),
+          constraints: constraints || '',
+          prev,
+          progress,
+          bible,
+          rag: rag || null,
+          targetChars,
+          chunkCount,
+          audit: wantAudit
+        }, { render: renderAgentProgress })
+
+        lastText = safeText(res && res.text).trim()
+        if (!lastText) throw new Error(t('Agent 未返回正文', 'Agent returned empty text'))
+        out.textContent = lastText
+        btnAppend.disabled = false
+        btnAppendDraft.disabled = false
+        ctx.ui.notice(t('Agent 已完成（未写入文档）', 'Agent done (not inserted)'), 'ok', 1800)
+        return
+      }
+
       const r = await apiFetch(ctx, cfg, 'ai/proxy/chat/', {
         mode: 'novel',
         action: 'write',
@@ -3119,6 +3372,420 @@ async function callNovel(ctx, action, instructionOverride, constraintsOverride) 
     }
   })
   return { json, instruction }
+}
+
+function _ainAgentGetCfg(cfg) {
+  const a = (cfg && cfg.agent && typeof cfg.agent === 'object') ? cfg.agent : {}
+
+  function normTarget(v, fallback) {
+    const n = parseInt(String(v == null ? '' : v), 10)
+    if (n === 1000 || n === 2000 || n === 3000 || n === 4000) return n
+    const fb = parseInt(String(fallback == null ? '' : fallback), 10)
+    return (fb === 1000 || fb === 2000 || fb === 3000 || fb === 4000) ? fb : 3000
+  }
+
+  // 新配置：targetChars；旧配置：chunkCount（做个粗暴映射，避免“升级后全变默认值”）
+  let targetChars = normTarget(a.targetChars != null ? a.targetChars : (a.target_chars != null ? a.target_chars : null), 3000)
+  if (!(targetChars === 1000 || targetChars === 2000 || targetChars === 3000 || targetChars === 4000)) {
+    targetChars = 3000
+  }
+  if (!(a.targetChars != null || a.target_chars != null) && a.chunkCount != null) {
+    const c = parseInt(String(a.chunkCount), 10)
+    if (Number.isFinite(c)) {
+      if (c <= 1) targetChars = 1000
+      else if (c === 2) targetChars = 2000
+      else if (c === 3) targetChars = 3000
+      else targetChars = 4000
+    }
+  }
+
+  return {
+    enabled: !!a.enabled,
+    targetChars: targetChars,
+    audit: !!a.audit,
+  }
+}
+
+function _ainAgentDeriveChunkCount(targetChars) {
+  const t0 = parseInt(String(targetChars == null ? '' : targetChars), 10)
+  const t = (t0 === 1000 || t0 === 2000 || t0 === 3000 || t0 === 4000) ? t0 : 3000
+  // 目标字数越大，分段越多；但最多 3 段（避免把上下文挤爆，反而更容易断裂）
+  if (t <= 1200) return 1
+  if (t <= 2400) return 2
+  return 3
+}
+
+function _ainAgentStatusSymbol(st) {
+  const s = String(st || '')
+  if (s === 'running') return '▶'
+  if (s === 'done') return '✓'
+  if (s === 'error') return '✗'
+  if (s === 'skipped') return '—'
+  return '□'
+}
+
+function tryParseAgentPlanDataFromText(text) {
+  let t0 = safeText(text).trim()
+  if (!t0) return null
+
+  const m = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(t0)
+  if (m && m[1]) t0 = safeText(m[1]).trim()
+  t0 = t0.replace(/^\uFEFF/, '').trim()
+
+  try {
+    const v = JSON.parse(t0)
+    if (Array.isArray(v)) return v
+  } catch {}
+
+  const a = t0.indexOf('[')
+  const b = t0.lastIndexOf(']')
+  if (a >= 0 && b > a) {
+    try {
+      const v = JSON.parse(t0.slice(a, b + 1))
+      if (Array.isArray(v)) return v
+    } catch {}
+  }
+
+  // 文本兜底：把每行当作 title
+  const lines = t0.split(/\r?\n/).map((x) => safeText(x).trim()).filter(Boolean)
+  if (!lines.length) return null
+  const out = []
+  for (let i = 0; i < lines.length && i < 14; i++) {
+    const line = lines[i]
+    const mm = /^(?:\d+\s*[\.\)、)]|[-*•])\s*(.+)$/.exec(line)
+    const title = safeText(mm && mm[1] ? mm[1] : line).trim()
+    if (!title) continue
+    out.push({ title, type: 'note', instruction: '' })
+  }
+  return out.length ? out : null
+}
+
+function _ainAgentNormalizePlanItem(raw, idx) {
+  const it = (raw && typeof raw === 'object') ? raw : {}
+  const id = safeText(it.id || '').trim()
+  const title = safeText(it.title || it.name || '').trim() || (t('步骤', 'Step') + ' ' + String((idx | 0) + 1))
+  const typeRaw = safeText(it.type || it.kind || it.t || '').trim().toLowerCase()
+  const allow = { rag: 1, consult: 1, write: 1, audit: 1, final: 1, note: 1 }
+  const type = allow[typeRaw] ? typeRaw : 'note'
+  const instruction = safeText(it.instruction || it.prompt || it.task || '').trim()
+  const ragQuery = safeText(it.rag_query || it.ragQuery || it.query || '').trim()
+  return { id, title, type, instruction, rag_query: ragQuery, status: 'pending', error: '' }
+}
+
+function buildFallbackAgentPlan(baseInstruction, targetChars, chunkCount, wantAudit) {
+  const ins = safeText(baseInstruction).trim()
+  const t0 = parseInt(String(targetChars == null ? '' : targetChars), 10)
+  const t = (t0 === 1000 || t0 === 2000 || t0 === 3000 || t0 === 4000) ? t0 : 3000
+  const n = _clampInt(chunkCount != null ? chunkCount : _ainAgentDeriveChunkCount(t), 1, 3)
+  const perChunk = Math.max(600, Math.floor(t / n))
+  const plan = []
+  plan.push({
+    id: 'blueprint',
+    title: t('写作蓝图', 'Blueprint'),
+    type: 'consult',
+    instruction: [
+      '任务：为“下一章续写”给出写作蓝图（不是正文）。',
+      '请输出要点清单：本章目标/关键冲突/必出人物/必回收伏笔/禁写雷区/节奏与视角。',
+      '要求：条目化，尽量一行一条，避免长段落。',
+    ].join('\n')
+  })
+  plan.push({
+    id: 'rag',
+    title: t('补充检索', 'RAG'),
+    type: 'rag',
+    rag_query: ins || t('检索与本章相关的设定/人物/伏笔', 'Retrieve related canon/characters/foreshadowing'),
+    instruction: ''
+  })
+  for (let i = 0; i < n; i++) {
+    plan.push({
+      id: 'w' + String(i + 1),
+      title: t('分段写作 ', 'Write ') + String(i + 1) + '/' + String(n),
+      type: 'write',
+      instruction: [
+        ins,
+        '',
+        `写作目标：本章总字数≈${t}（上限 4000）。本段建议≈${perChunk} 字。`,
+        `现在写第 ${i + 1}/${n} 段正文：承接前文，避免重复；保持叙事视角与风格一致；段尾自然收束但不要总结。`
+      ].filter(Boolean).join('\n')
+    })
+  }
+  if (wantAudit) {
+    plan.push({
+      id: 'audit',
+      title: t('一致性审计', 'Audit'),
+      type: 'audit',
+      instruction: '任务：对合并后的正文做一致性审计（进度脉络/故事圣经/硬约束），列出冲突点与修复建议。'
+    })
+  }
+  plan.push({
+    id: 'final',
+    title: t('交付', 'Deliver'),
+    type: 'final',
+    instruction: t('交付说明（不要写正文）', 'Delivery note (no prose)')
+  })
+  return plan.map((x, i) => _ainAgentNormalizePlanItem(x, i))
+}
+
+function _ainAgentValidatePlan(items, chunkCount, wantAudit) {
+  const arr = Array.isArray(items) ? items : []
+  const w = arr.filter((x) => x && x.type === 'write').length
+  const hasConsult = arr.some((x) => x && x.type === 'consult')
+  const hasFinal = arr.some((x) => x && x.type === 'final')
+  if (!hasConsult || !hasFinal) return false
+  if (w !== _clampInt(chunkCount, 1, 3)) return false
+  if (wantAudit && !arr.some((x) => x && x.type === 'audit')) return false
+  return true
+}
+
+async function agentBuildPlan(ctx, cfg, base) {
+  const t0 = parseInt(String(base && base.targetChars != null ? base.targetChars : ''), 10)
+  const targetChars = (t0 === 1000 || t0 === 2000 || t0 === 3000 || t0 === 4000) ? t0 : 3000
+  const chunkCount = _clampInt(base && base.chunkCount != null ? base.chunkCount : _ainAgentDeriveChunkCount(targetChars), 1, 3)
+  const wantAudit = !!(base && base.audit)
+
+  try {
+    const resp = await apiFetch(ctx, cfg, 'ai/proxy/chat/', {
+      mode: 'novel',
+      action: 'plan',
+      upstream: {
+        baseUrl: cfg.upstream.baseUrl,
+        apiKey: cfg.upstream.apiKey,
+        model: cfg.upstream.model
+      },
+      input: {
+        instruction: safeText(base && base.instruction).trim(),
+        progress: safeText(base && base.progress),
+        bible: base && base.bible != null ? base.bible : '',
+        prev: safeText(base && base.prev),
+        choice: base && base.choice != null ? base.choice : undefined,
+        constraints: safeText(base && base.constraints).trim() || undefined,
+        rag: base && base.rag ? base.rag : undefined,
+        agent: { chunk_count: chunkCount, target_chars: targetChars, include_audit: wantAudit }
+      }
+    })
+    let raw = Array.isArray(resp && resp.data) ? resp.data : null
+    if (!raw && resp && resp.text) raw = tryParseAgentPlanDataFromText(resp.text)
+    const norm = Array.isArray(raw) ? raw.map((x, i) => _ainAgentNormalizePlanItem(x, i)) : null
+    if (norm && _ainAgentValidatePlan(norm, chunkCount, wantAudit)) return norm
+  } catch (e) {
+    if (!isActionNotSupportedError(e)) throw e
+  }
+
+  // 旧后端不支持 plan：用本地兜底计划
+  return buildFallbackAgentPlan(base && base.instruction, targetChars, chunkCount, wantAudit)
+}
+
+async function agentRunPlan(ctx, cfg, base, ui) {
+  const render = ui && typeof ui.render === 'function' ? ui.render : null
+  const logBox = ui && typeof ui.log === 'function' ? ui.log : null
+
+  const logs = []
+  function pushLog(s) {
+    const line = safeText(s).trimEnd()
+    if (!line) return
+    logs.push(line)
+    if (logs.length > 200) logs.shift()
+    if (logBox) {
+      try { logBox(logs) } catch {}
+    }
+  }
+
+  const t0 = parseInt(String(base && base.targetChars != null ? base.targetChars : ''), 10)
+  const targetChars = (t0 === 1000 || t0 === 2000 || t0 === 3000 || t0 === 4000) ? t0 : 3000
+  const chunkCount = _clampInt(base && base.chunkCount != null ? base.chunkCount : _ainAgentDeriveChunkCount(targetChars), 1, 3)
+  const wantAudit = !!(base && base.audit)
+
+  let items = await agentBuildPlan(ctx, cfg, { ...base, targetChars, chunkCount, audit: wantAudit })
+  if (!Array.isArray(items) || !items.length) items = buildFallbackAgentPlan(base && base.instruction, targetChars, chunkCount, wantAudit)
+
+  if (render) {
+    try { render(items, logs) } catch {}
+  }
+
+  let rag = base && base.rag ? base.rag : null
+  let draft = ''
+  let auditText = ''
+
+  function sliceNiceEnd(text, maxChars) {
+    const s = String(text || '')
+    const m = Math.max(0, maxChars | 0)
+    if (!m || s.length <= m) return s
+    const min = Math.max(0, m - 140)
+    for (let i = m; i > min; i--) {
+      const ch = s[i - 1]
+      if (_ainDiffIsBreakChar(ch)) return s.slice(0, i).trimEnd()
+    }
+    return s.slice(0, m).trimEnd()
+  }
+
+  function curPrev() {
+    const basePrev = safeText(base && base.prev)
+    const merged = (basePrev.trim() ? (basePrev.trimEnd() + '\n\n') : '') + draft.trim()
+    const lim = (cfg && cfg.ctx && cfg.ctx.maxPrevChars) ? (cfg.ctx.maxPrevChars | 0) : 8000
+    return sliceTail(merged, lim)
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]
+    if (!it || !it.type) continue
+    it.status = 'running'
+    it.error = ''
+    if (render) {
+      try { render(items, logs) } catch {}
+    }
+
+    const started = Date.now()
+    try {
+      if (it.type === 'rag') {
+        const q = safeText(it.rag_query || it.instruction || '').trim()
+        if (!q) throw new Error(t('rag_query 为空', 'Empty rag_query'))
+        const ragCfg = cfg && cfg.rag ? cfg.rag : {}
+        if (ragCfg.enabled === false) {
+          it.status = 'skipped'
+          pushLog(t('跳过检索：RAG 已关闭', 'Skip RAG: disabled'))
+        } else {
+          rag = await rag_get_hits(ctx, cfg, q + '\n\n' + sliceTail(curPrev(), 1800))
+          const n = Array.isArray(rag) ? rag.length : 0
+          pushLog(t('检索命中：', 'RAG hits: ') + String(n))
+          it.status = 'done'
+        }
+      } else if (it.type === 'consult') {
+        const question = safeText(it.instruction).trim() || t('给出写作建议', 'Give advice')
+        pushLog(t('咨询：', 'Consult: ') + question.split(/\r?\n/)[0].slice(0, 80))
+        const resp = await apiFetchConsultWithJob(ctx, cfg, {
+          upstream: {
+            baseUrl: cfg.upstream.baseUrl,
+            apiKey: cfg.upstream.apiKey,
+            model: cfg.upstream.model
+          },
+          input: {
+            async: true,
+            mode: 'job',
+            question,
+            progress: safeText(base && base.progress),
+            bible: base && base.bible != null ? base.bible : '',
+            prev: curPrev(),
+            constraints: safeText(base && base.constraints).trim(),
+            rag: rag || undefined
+          }
+        }, {
+          onTick: ({ waitMs }) => {
+            const s = Math.max(0, Math.round(Number(waitMs || 0) / 1000))
+            if (render) {
+              try { render(items, logs.concat([t('咨询中… 已等待 ', 'Consulting... waited ') + s + 's'])) } catch {}
+            }
+          }
+        })
+        const txt = safeText(resp && resp.text).trim()
+        if (txt) pushLog(txt.replace(/\n{3,}/g, '\n\n').slice(0, 1800) + (txt.length > 1800 ? '\n…' : ''))
+        it.status = 'done'
+      } else if (it.type === 'write') {
+        if (draft.trim().length >= targetChars) {
+          it.status = 'skipped'
+          pushLog(t('跳过写作：已达到字数目标', 'Skip write: target reached'))
+          continue
+        }
+        const instruction = safeText(it.instruction).trim() || safeText(base && base.instruction).trim()
+        if (!instruction) throw new Error(t('instruction 为空', 'Empty instruction'))
+        const prev = curPrev()
+        const progress = safeText(base && base.progress)
+        const bible = base && base.bible != null ? base.bible : ''
+        const constraints = safeText(base && base.constraints).trim()
+
+        const rest = Math.max(0, targetChars - draft.trim().length)
+        const perChunk = Math.max(600, Math.floor(targetChars / chunkCount))
+        const wantLen = Math.max(300, Math.min(perChunk, rest || perChunk))
+        const ins2 = [
+          instruction,
+          '',
+          `长度目标：本章总字数≈${targetChars}（上限 4000）；本段尽量控制在 ≈${wantLen} 字（允许 ±15%），避免超长。`
+        ].filter(Boolean).join('\n')
+
+        const r = await apiFetch(ctx, cfg, 'ai/proxy/chat/', {
+          mode: 'novel',
+          action: 'write',
+          upstream: {
+            baseUrl: cfg.upstream.baseUrl,
+            apiKey: cfg.upstream.apiKey,
+            model: cfg.upstream.model
+          },
+          input: {
+            instruction: ins2,
+            progress,
+            bible,
+            prev,
+            choice: base && base.choice != null ? base.choice : undefined,
+            constraints: constraints || undefined,
+            rag: rag || undefined
+          }
+        })
+        const piece = safeText(r && r.text).trim()
+        if (!piece) throw new Error(t('后端未返回正文', 'Backend returned empty text'))
+        draft = draft ? (draft.trimEnd() + '\n\n' + piece) : piece
+        if (draft.length > targetChars) {
+          draft = sliceNiceEnd(draft, targetChars)
+        }
+        it.status = 'done'
+        pushLog(t('写作完成：追加 ', 'Written: +') + String(piece.length) + t(' 字符', ' chars'))
+      } else if (it.type === 'audit') {
+        if (!draft.trim()) {
+          it.status = 'skipped'
+          pushLog(t('跳过审计：正文为空', 'Skip audit: empty draft'))
+        } else {
+          pushLog(t('审计中…', 'Auditing...'))
+          const resp = await apiFetchChatWithJob(ctx, cfg, {
+            mode: 'novel',
+            action: 'audit',
+            upstream: {
+              baseUrl: cfg.upstream.baseUrl,
+              apiKey: cfg.upstream.apiKey,
+              model: cfg.upstream.model
+            },
+            input: {
+              async: true,
+              mode: 'job',
+              text: draft,
+              progress: safeText(base && base.progress),
+              bible: base && base.bible != null ? base.bible : '',
+              prev: curPrev(),
+              constraints: safeText(base && base.constraints).trim() || undefined,
+              rag: rag || undefined
+            }
+          }, {
+            onTick: ({ waitMs }) => {
+              const s = Math.max(0, Math.round(Number(waitMs || 0) / 1000))
+              if (render) {
+                try { render(items, logs.concat([t('审计中… 已等待 ', 'Auditing... waited ') + s + 's'])) } catch {}
+              }
+            }
+          })
+          auditText = safeText(resp && resp.text).trim()
+          if (auditText) pushLog(auditText.replace(/\n{3,}/g, '\n\n').slice(0, 1800) + (auditText.length > 1800 ? '\n…' : ''))
+          it.status = 'done'
+        }
+      } else if (it.type === 'final') {
+        it.status = 'done'
+        pushLog(t('完成', 'Done'))
+      } else {
+        it.status = 'skipped'
+      }
+    } catch (e) {
+      const msg = e && e.message ? String(e.message) : String(e)
+      it.status = 'error'
+      it.error = msg
+      pushLog(t('步骤失败：', 'Step failed: ') + msg)
+      // 写作类出错就直接停；其它步骤尽量不中断
+      if (it.type === 'write') break
+    } finally {
+      const ms = Math.max(0, Date.now() - started)
+      pushLog(t('耗时 ', 'Took ') + String(ms) + 'ms')
+      if (render) {
+        try { render(items, logs) } catch {}
+      }
+    }
+  }
+
+  return { text: draft.trim(), auditText, items, logs }
 }
 
 function setBusy(btn, busy) {
@@ -3537,6 +4204,100 @@ async function openBootstrapDialog(ctx) {
   rowBtn.appendChild(btnAppend)
   sec.appendChild(rowBtn)
 
+  const a0 = _ainAgentGetCfg(cfg)
+  const agentBox = document.createElement('div')
+  agentBox.style.marginTop = '10px'
+  agentBox.style.display = 'flex'
+  agentBox.style.flexWrap = 'wrap'
+  agentBox.style.gap = '10px'
+  agentBox.style.alignItems = 'center'
+
+  const agentLine = document.createElement('label')
+  agentLine.style.display = 'flex'
+  agentLine.style.gap = '8px'
+  agentLine.style.alignItems = 'center'
+  const cbAgent = document.createElement('input')
+  cbAgent.type = 'checkbox'
+  cbAgent.checked = !!a0.enabled
+  agentLine.appendChild(cbAgent)
+  agentLine.appendChild(document.createTextNode(t('Agent（Plan/TODO 多轮写作）', 'Agent (Plan/TODO multi-round writing)')))
+  agentBox.appendChild(agentLine)
+
+  const selAgentTarget = document.createElement('select')
+  selAgentTarget.className = 'ain-in ain-select'
+  selAgentTarget.style.width = '180px'
+  ;[1000, 2000, 3000, 4000].forEach((n) => {
+    const op = document.createElement('option')
+    op.value = String(n)
+    op.textContent = t('≈ ', '≈ ') + String(n) + t(' 字', ' chars') + (n === 4000 ? t('（上限）', ' (max)') : '')
+    selAgentTarget.appendChild(op)
+  })
+  try { selAgentTarget.value = String(a0.targetChars || 3000) } catch {}
+  agentBox.appendChild(selAgentTarget)
+
+  const auditLine = document.createElement('label')
+  auditLine.style.display = 'flex'
+  auditLine.style.gap = '8px'
+  auditLine.style.alignItems = 'center'
+  const cbAudit = document.createElement('input')
+  cbAudit.type = 'checkbox'
+  cbAudit.checked = !!a0.audit
+  auditLine.appendChild(cbAudit)
+  auditLine.appendChild(document.createTextNode(t('自动审计（更耗字符）', 'Auto audit (costs more)')))
+  agentBox.appendChild(auditLine)
+
+  const agentHint = document.createElement('div')
+  agentHint.className = 'ain-muted'
+  agentHint.style.marginTop = '6px'
+  agentHint.textContent = t('提示：Agent 会先生成 TODO，再逐项执行，并实时显示进度；正文会按字数目标控制在 ≤4000 字（为了审阅成本），通常更耗字符余额。', 'Note: Agent generates TODO then executes step-by-step with live progress; prose is capped to ≤4000 chars (for review cost), usually costs more chars.')
+
+  const agentProgress = document.createElement('div')
+  agentProgress.className = 'ain-card'
+  agentProgress.style.display = 'none'
+  agentProgress.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${t('Agent 进度', 'Agent progress')}</div>`
+  const agentTodo = document.createElement('div')
+  agentTodo.className = 'ain-todo'
+  const agentLog = document.createElement('div')
+  agentLog.className = 'ain-todo-log'
+  agentLog.textContent = t('等待开始。', 'Waiting.')
+  agentProgress.appendChild(agentTodo)
+  agentProgress.appendChild(agentLog)
+
+  function renderAgentProgress(items, logs) {
+    try { agentProgress.style.display = '' } catch {}
+    try {
+      agentTodo.innerHTML = ''
+      const arr = Array.isArray(items) ? items : []
+      for (let i = 0; i < arr.length; i++) {
+        const it = arr[i] || {}
+        const row = document.createElement('div')
+        row.className = 'ain-todo-item'
+        const st = document.createElement('div')
+        st.className = 'ain-todo-st'
+        st.textContent = _ainAgentStatusSymbol(it.status)
+        const ttl = document.createElement('div')
+        ttl.className = 'ain-todo-title'
+        ttl.textContent = safeText(it.title || '')
+        const meta = document.createElement('span')
+        meta.className = 'ain-muted'
+        meta.textContent = safeText(it.type || '')
+        ttl.appendChild(meta)
+        row.appendChild(st)
+        row.appendChild(ttl)
+        agentTodo.appendChild(row)
+      }
+    } catch {}
+    try {
+      const lines = Array.isArray(logs) ? logs : []
+      agentLog.textContent = lines.join('\n')
+      agentLog.scrollTop = agentLog.scrollHeight
+    } catch {}
+  }
+
+  sec.appendChild(agentBox)
+  sec.appendChild(agentHint)
+  sec.appendChild(agentProgress)
+
   const out = document.createElement('div')
   out.className = 'ain-out'
   out.style.marginTop = '10px'
@@ -3734,17 +4495,46 @@ async function openBootstrapDialog(ctx) {
       })
       const arr = Array.isArray(opt && opt.data) ? opt.data : null
       const chosen = (arr && arr.length) ? arr[0] : { title: '自动', one_line: '自动走向', conflict: '', characters: [], foreshadow: '', risks: '' }
-      const first = await apiFetch(ctx, cfg, 'ai/proxy/chat/', {
-        mode: 'novel',
-        action: 'write',
-        upstream: {
-          baseUrl: cfg.upstream.baseUrl,
-          apiKey: cfg.upstream.apiKey,
-          model: cfg.upstream.model
-        },
-        input: { instruction: promptIdea, progress: '', bible: '', prev: '', choice: chosen, constraints: constraints || undefined }
-      })
-      lastChapter = safeText(first && first.text).trim()
+
+      const agentEnabled = !!cbAgent.checked
+      if (agentEnabled) {
+        const targetChars = parseInt(String(selAgentTarget.value || '3000'), 10) || 3000
+        const chunkCount = _ainAgentDeriveChunkCount(targetChars)
+        const wantAudit = !!cbAudit.checked
+        try { agentProgress.style.display = '' } catch {}
+        try { agentLog.textContent = t('Agent 执行中…', 'Agent running...') } catch {}
+        out.textContent = t('Agent 执行中…（多轮）', 'Agent running... (multi-round)')
+
+        let rag = null
+        try { rag = await rag_get_hits(ctx, cfg, promptIdea) } catch {}
+
+        const res = await agentRunPlan(ctx, cfg, {
+          instruction: promptIdea,
+          choice: chosen,
+          constraints: constraints || '',
+          prev: '',
+          progress: '',
+          bible: '',
+          rag: rag || null,
+          targetChars,
+          chunkCount,
+          audit: wantAudit
+        }, { render: renderAgentProgress })
+
+        lastChapter = safeText(res && res.text).trim()
+      } else {
+        const first = await apiFetch(ctx, cfg, 'ai/proxy/chat/', {
+          mode: 'novel',
+          action: 'write',
+          upstream: {
+            baseUrl: cfg.upstream.baseUrl,
+            apiKey: cfg.upstream.apiKey,
+            model: cfg.upstream.model
+          },
+          input: { instruction: promptIdea, progress: '', bible: '', prev: '', choice: chosen, constraints: constraints || undefined }
+        })
+        lastChapter = safeText(first && first.text).trim()
+      }
       if (!lastChapter) throw new Error(t('后端未返回正文', 'Backend returned empty text'))
       out.textContent = lastChapter
       btnAppend.disabled = false
