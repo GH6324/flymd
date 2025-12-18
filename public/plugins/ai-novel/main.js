@@ -55,6 +55,8 @@ const DEFAULT_CFG = {
     enabled: false,
     // 写作字数目标（总字数）：为了审阅成本，最大只允许到 4000
     targetChars: 3000,
+    // 强思考：每段写作前重新检索（更慢但更稳）
+    strongThinking: false,
     // 自动审计默认关闭（让用户自己决定要不要花预算）
     audit: false
   }
@@ -2064,9 +2066,26 @@ async function openSettingsDialog(ctx) {
   auditWrap.appendChild(auditLab)
   auditWrap.appendChild(auditLine)
 
+  const thinkWrap = document.createElement('div')
+  const thinkLab = document.createElement('div')
+  thinkLab.className = 'ain-lab'
+  thinkLab.textContent = t('强思考模式', 'Strong thinking')
+  const thinkLine = document.createElement('label')
+  thinkLine.style.display = 'flex'
+  thinkLine.style.gap = '8px'
+  thinkLine.style.alignItems = 'center'
+  const cbStrongThink = document.createElement('input')
+  cbStrongThink.type = 'checkbox'
+  cbStrongThink.checked = !!(cfg.agent && cfg.agent.strongThinking)
+  thinkLine.appendChild(cbStrongThink)
+  thinkLine.appendChild(document.createTextNode(t('启用强思考模式：每段写作前刷新检索（更慢）', 'Enable strong thinking: refresh RAG before each segment (slower)')))
+  thinkWrap.appendChild(thinkLab)
+  thinkWrap.appendChild(thinkLine)
+
   rowAgent.appendChild(selAgentTarget.wrap)
   rowAgent.appendChild(auditWrap)
   secAgent.appendChild(rowAgent)
+  secAgent.appendChild(thinkWrap)
 
   const hintAgent = document.createElement('div')
   hintAgent.className = 'ain-muted'
@@ -2147,6 +2166,7 @@ async function openSettingsDialog(ctx) {
         agent: {
           enabled: !!cbAgent.checked,
           targetChars: parseInt(String(selAgentTarget.sel.value || '3000'), 10) || 3000,
+          strongThinking: !!cbStrongThink.checked,
           audit: !!cbAudit.checked
         },
       }
@@ -2844,9 +2864,20 @@ async function openWriteWithChoiceDialog(ctx) {
   auditLine.appendChild(document.createTextNode(t('自动审计（更耗字符）', 'Auto audit (costs more)')))
   agentBox.appendChild(auditLine)
 
+  const strongLine = document.createElement('label')
+  strongLine.style.display = 'flex'
+  strongLine.style.gap = '8px'
+  strongLine.style.alignItems = 'center'
+  const cbStrongThink = document.createElement('input')
+  cbStrongThink.type = 'checkbox'
+  cbStrongThink.checked = !!a0.strongThinking
+  strongLine.appendChild(cbStrongThink)
+  strongLine.appendChild(document.createTextNode(t('强思考模式', 'Strong thinking mode')))
+  agentBox.appendChild(strongLine)
+
   const agentHint = document.createElement('div')
   agentHint.className = 'ain-muted'
-  agentHint.textContent = t('提示：Agent 会先生成 TODO，再逐项执行，并在窗口实时更新进度；正文会按字数目标控制在 ≤4000 字（为了审阅成本），通常更耗字符余额。', 'Note: Agent generates TODO then executes step-by-step with live progress; prose is capped to ≤4000 chars (for review cost), usually costs more chars.')
+  agentHint.textContent = t('提示：Agent 会先生成 TODO，再逐项执行，并在窗口实时更新进度；正文会按字数目标控制在 ≤4000 字（为了审阅成本），通常更耗字符余额；强思考模式会在每段写作前刷新检索（更慢但更稳）。', 'Note: Agent generates TODO then executes step-by-step with live progress; prose is capped to ≤4000 chars (for review cost), usually costs more chars; strong thinking refreshes RAG before each segment (slower but steadier).')
   sec.appendChild(agentBox)
   sec.appendChild(agentHint)
 
@@ -3150,6 +3181,7 @@ async function openWriteWithChoiceDialog(ctx) {
           progress,
           bible,
           rag: rag || null,
+          strongThinking: !!cbStrongThink.checked,
           targetChars,
           chunkCount,
           audit: wantAudit
@@ -3241,6 +3273,7 @@ async function openWriteWithChoiceDialog(ctx) {
           progress,
           bible,
           rag: rag || null,
+          strongThinking: !!cbStrongThink.checked,
           targetChars,
           chunkCount,
           audit: wantAudit
@@ -3432,6 +3465,7 @@ function _ainAgentGetCfg(cfg) {
   return {
     enabled: !!a.enabled,
     targetChars: targetChars,
+    strongThinking: !!(a.strongThinking || a.strong_thinking),
     audit: !!a.audit,
   }
 }
@@ -3572,6 +3606,7 @@ async function agentBuildPlan(ctx, cfg, base) {
   const targetChars = (t0 === 1000 || t0 === 2000 || t0 === 3000 || t0 === 4000) ? t0 : 3000
   const chunkCount = _clampInt(base && base.chunkCount != null ? base.chunkCount : _ainAgentDeriveChunkCount(targetChars), 1, 3)
   const wantAudit = !!(base && base.audit)
+  const strongThinking = !!(base && base.strongThinking)
 
   try {
     const resp = await apiFetch(ctx, cfg, 'ai/proxy/chat/', {
@@ -3590,7 +3625,7 @@ async function agentBuildPlan(ctx, cfg, base) {
         choice: base && base.choice != null ? base.choice : undefined,
         constraints: safeText(base && base.constraints).trim() || undefined,
         rag: base && base.rag ? base.rag : undefined,
-        agent: { chunk_count: chunkCount, target_chars: targetChars, include_audit: wantAudit }
+        agent: { chunk_count: chunkCount, target_chars: targetChars, include_audit: wantAudit, strong_thinking: strongThinking }
       }
     })
     let raw = Array.isArray(resp && resp.data) ? resp.data : null
@@ -3624,9 +3659,42 @@ async function agentRunPlan(ctx, cfg, base, ui) {
   const targetChars = (t0 === 1000 || t0 === 2000 || t0 === 3000 || t0 === 4000) ? t0 : 3000
   const chunkCount = _clampInt(base && base.chunkCount != null ? base.chunkCount : _ainAgentDeriveChunkCount(targetChars), 1, 3)
   const wantAudit = !!(base && base.audit)
+  const strongThinking = !!(base && base.strongThinking)
 
   let items = await agentBuildPlan(ctx, cfg, { ...base, targetChars, chunkCount, audit: wantAudit })
   if (!Array.isArray(items) || !items.length) items = buildFallbackAgentPlan(base && base.instruction, targetChars, chunkCount, wantAudit)
+
+  // 强思考模式：每段写作前都插入一个 rag（刷新命中片段，更稳但更慢）
+  if (strongThinking) {
+    const writeTotal = items.filter((x) => x && x.type === 'write').length || chunkCount
+    const expanded = []
+    let segNo = 0
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]
+      if (it && it.type === 'write') {
+        segNo++
+        const prev = expanded.length ? expanded[expanded.length - 1] : null
+        if (!(prev && prev.type === 'rag')) {
+          const baseQ = safeText(base && base.instruction).trim()
+          const q = [
+            baseQ || t('检索相关设定/人物/伏笔', 'Retrieve related canon/characters/foreshadowing'),
+            `强思考：写第 ${segNo}/${writeTotal} 段前，检索相关设定/人物当前状态/伏笔/时间线冲突。`
+          ].filter(Boolean).join('\n')
+          expanded.push({
+            id: 'st-rag-' + String(segNo),
+            title: t('强思考检索 ', 'Strong RAG ') + String(segNo) + '/' + String(writeTotal),
+            type: 'rag',
+            instruction: '',
+            rag_query: q,
+            status: 'pending',
+            error: ''
+          })
+        }
+      }
+      expanded.push(it)
+    }
+    items = expanded
+  }
 
   if (render) {
     try { render(items, logs) } catch {}
@@ -3667,6 +3735,12 @@ async function agentRunPlan(ctx, cfg, base, ui) {
     const started = Date.now()
     try {
       if (it.type === 'rag') {
+        // 强思考插入的 rag：如果已经达到字数目标就别再浪费时间检索了
+        if (strongThinking && /^st-rag-/.test(String(it.id || '')) && draft.trim().length >= targetChars) {
+          it.status = 'skipped'
+          pushLog(t('跳过强思考检索：已达到字数目标', 'Skip strong RAG: target reached'))
+          continue
+        }
         const q = safeText(it.rag_query || it.instruction || '').trim()
         if (!q) throw new Error(t('rag_query 为空', 'Empty rag_query'))
         const ragCfg = cfg && cfg.rag ? cfg.rag : {}
@@ -4276,10 +4350,21 @@ async function openBootstrapDialog(ctx) {
   auditLine.appendChild(document.createTextNode(t('自动审计（更耗字符）', 'Auto audit (costs more)')))
   agentBox.appendChild(auditLine)
 
+  const strongLine = document.createElement('label')
+  strongLine.style.display = 'flex'
+  strongLine.style.gap = '8px'
+  strongLine.style.alignItems = 'center'
+  const cbStrongThink = document.createElement('input')
+  cbStrongThink.type = 'checkbox'
+  cbStrongThink.checked = !!a0.strongThinking
+  strongLine.appendChild(cbStrongThink)
+  strongLine.appendChild(document.createTextNode(t('强思考模式', 'Strong thinking mode')))
+  agentBox.appendChild(strongLine)
+
   const agentHint = document.createElement('div')
   agentHint.className = 'ain-muted'
   agentHint.style.marginTop = '6px'
-  agentHint.textContent = t('提示：Agent 会先生成 TODO，再逐项执行，并实时显示进度；正文会按字数目标控制在 ≤4000 字（为了审阅成本），通常更耗字符余额。', 'Note: Agent generates TODO then executes step-by-step with live progress; prose is capped to ≤4000 chars (for review cost), usually costs more chars.')
+  agentHint.textContent = t('提示：Agent 会先生成 TODO，再逐项执行，并实时显示进度；正文会按字数目标控制在 ≤4000 字（为了审阅成本），通常更耗字符余额；强思考模式会在每段写作前刷新检索（更慢但更稳）。', 'Note: Agent generates TODO then executes step-by-step with live progress; prose is capped to ≤4000 chars (for review cost), usually costs more chars; strong thinking refreshes RAG before each segment (slower but steadier).')
 
   const agentProgress = document.createElement('div')
   agentProgress.className = 'ain-card'
@@ -4546,6 +4631,7 @@ async function openBootstrapDialog(ctx) {
           progress: '',
           bible: '',
           rag: rag || null,
+          strongThinking: !!cbStrongThink.checked,
           targetChars,
           chunkCount,
           audit: wantAudit
