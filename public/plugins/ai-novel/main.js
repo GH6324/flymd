@@ -20,9 +20,7 @@ const DEFAULT_CFG = {
   upstream: {
     baseUrl: '',
     apiKey: '',
-    model: 'deepseek-chat',
-    // 可选：仅用于 Agent 的 plan/TODO 生成；为空则沿用 model
-    planModel: ''
+    model: 'deepseek-chat'
   },
   // 可选：仅用于 Agent 的 plan/TODO 生成；任一字段为空则自动沿用 upstream 对应字段
   planUpstream: {
@@ -116,6 +114,14 @@ async function loadCfg(ctx) {
         out.rag = { ...DEFAULT_CFG.rag, ...rr }
         out.constraints = { ...DEFAULT_CFG.constraints, ...rcon }
         out.agent = { ...DEFAULT_CFG.agent, ...ra }
+      } catch {}
+      // 兼容旧配置：upstream.planModel -> planUpstream.model
+      try {
+        const legacyPlanModel = safeText(out && out.upstream && out.upstream.planModel).trim()
+        const curPlanModel = safeText(out && out.planUpstream && out.planUpstream.model).trim()
+        if (!curPlanModel && legacyPlanModel) {
+          out.planUpstream = { ...(out.planUpstream || {}), model: legacyPlanModel }
+        }
       } catch {}
       // 后端地址强制内置（不在 UI 暴露）
       out.backendBaseUrl = DEFAULT_CFG.backendBaseUrl
@@ -2590,15 +2596,6 @@ async function openSettingsDialog(ctx) {
   rowAgent.appendChild(selThinkingMode.wrap)
   secAgent.appendChild(rowAgent)
 
-  const rowPlanModel = document.createElement('div')
-  rowPlanModel.className = 'ain-row'
-  const inpPlanModel = mkInput(
-    t('Plan 模型（可空=沿用 chat 模型）', 'Plan model (optional, empty = chat model)'),
-    cfg.upstream && cfg.upstream.planModel ? cfg.upstream.planModel : ''
-  )
-  rowPlanModel.appendChild(inpPlanModel.wrap)
-  secAgent.appendChild(rowPlanModel)
-
   const rowPlanUp1 = document.createElement('div')
   rowPlanUp1.className = 'ain-row'
   const pu = (cfg && cfg.planUpstream && typeof cfg.planUpstream === 'object') ? cfg.planUpstream : {}
@@ -2610,7 +2607,7 @@ async function openSettingsDialog(ctx) {
 
   const rowPlanUp2 = document.createElement('div')
   rowPlanUp2.className = 'ain-row'
-  const inpPlanUpModel = mkInput(t('Plan 模型（上游配置）', 'Plan model (upstream override)'), pu.model || '')
+  const inpPlanUpModel = mkInput(t('Plan 模型', 'Plan model'), pu.model || '')
   rowPlanUp2.appendChild(inpPlanUpModel.wrap)
   secAgent.appendChild(rowPlanUp2)
 
@@ -2654,7 +2651,6 @@ async function openSettingsDialog(ctx) {
           baseUrl: inpUpBase.inp.value,
           apiKey: inpUpKey.inp.value,
           model: inpUpModel.inp.value,
-          planModel: inpPlanModel.inp.value
         },
         planUpstream: {
           baseUrl: inpPlanUpBase.inp.value,
@@ -3841,6 +3837,24 @@ async function openWriteWithChoiceDialog(ctx) {
   modeLine.appendChild(selThinkingMode)
   agentBox.appendChild(modeLine)
 
+  const planModelLine = document.createElement('label')
+  planModelLine.style.display = 'flex'
+  planModelLine.style.gap = '8px'
+  planModelLine.style.alignItems = 'center'
+  const inpPlanModel = document.createElement('input')
+  inpPlanModel.className = 'ain-in'
+  inpPlanModel.style.width = '260px'
+  inpPlanModel.placeholder = t('可空：沿用 chat 模型', 'Optional: use chat model')
+  try {
+    const pu = (cfg && cfg.planUpstream && typeof cfg.planUpstream === 'object') ? cfg.planUpstream : {}
+    inpPlanModel.value = safeText(pu && pu.model ? pu.model : '').trim()
+  } catch {
+    inpPlanModel.value = ''
+  }
+  planModelLine.appendChild(document.createTextNode(t('Plan 模型：', 'Plan model: ')))
+  planModelLine.appendChild(inpPlanModel)
+  agentBox.appendChild(planModelLine)
+
   function _choiceAgentSyncTargetOptions() {
     const max = _ainAgentMaxTargetCharsByMode(selThinkingMode.value)
     try {
@@ -4168,7 +4182,10 @@ async function openWriteWithChoiceDialog(ctx) {
         // 记住用户选择（但不强行改动“是否默认启用 Agent”）
         try {
           const curEnabled = !!(cfg && cfg.agent && cfg.agent.enabled)
-          cfg = await saveCfg(ctx, { agent: { enabled: curEnabled, targetChars, thinkingMode, audit: wantAudit } })
+          cfg = await saveCfg(ctx, {
+            agent: { enabled: curEnabled, targetChars, thinkingMode, audit: wantAudit },
+            planUpstream: { model: safeText(inpPlanModel && inpPlanModel.value ? inpPlanModel.value : '').trim() }
+          })
         } catch {}
         try { agentProgress.style.display = '' } catch {}
         try { agentLog.textContent = t('Agent 执行中…', 'Agent running...') } catch {}
@@ -4276,7 +4293,10 @@ async function openWriteWithChoiceDialog(ctx) {
         // 记住用户选择（但不强行改动“是否默认启用 Agent”）
         try {
           const curEnabled = !!(cfg && cfg.agent && cfg.agent.enabled)
-          cfg = await saveCfg(ctx, { agent: { enabled: curEnabled, targetChars, thinkingMode, audit: wantAudit } })
+          cfg = await saveCfg(ctx, {
+            agent: { enabled: curEnabled, targetChars, thinkingMode, audit: wantAudit },
+            planUpstream: { model: safeText(inpPlanModel && inpPlanModel.value ? inpPlanModel.value : '').trim() }
+          })
         } catch {}
         try { agentProgress.style.display = '' } catch {}
         try { agentLog.textContent = t('Agent 执行中…', 'Agent running...') } catch {}
