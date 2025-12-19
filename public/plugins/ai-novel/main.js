@@ -3298,7 +3298,6 @@ async function openNextOptionsDialog(ctx) {
       appendToDoc(ctx, lastText)
       ctx.ui.notice(t('已追加到文末', 'Appended'), 'ok', 1600)
       progress_auto_update_after_accept(ctx, lastText, '下一章续写追加到文末')
-      char_state_auto_update_after_accept(ctx, lastText, '下一章续写追加到文末')
     } catch (e) {
       ctx.ui.notice(t('追加失败：', 'Append failed: ') + (e && e.message ? e.message : String(e)), 'err', 2400)
     }
@@ -3449,6 +3448,8 @@ async function openWriteWithChoiceDialog(ctx) {
   castStateTitle.className = 'ain-muted'
   castStateTitle.style.marginTop = '6px'
   castStateTitle.textContent = t('最近快照（来自 06_人物状态.md）：', 'Latest snapshot (from 06_人物状态.md):')
+  // 不展示“快照原文”，避免占空间；下方的“人物列表”足够用
+  castStateTitle.style.display = 'none'
   castCard.appendChild(castStateTitle)
 
   const castStateOut = document.createElement('div')
@@ -3456,6 +3457,7 @@ async function openWriteWithChoiceDialog(ctx) {
   castStateOut.style.minHeight = '90px'
   castStateOut.style.marginTop = '6px'
   castStateOut.textContent = t('（未发现快照）', '(no snapshot found)')
+  castStateOut.style.display = 'none'
   castCard.appendChild(castStateOut)
 
   const castRawTitle = document.createElement('div')
@@ -4249,7 +4251,6 @@ async function openWriteWithChoiceDialog(ctx) {
       appendToDoc(ctx, lastText)
       ctx.ui.notice(t('已追加到文末', 'Appended'), 'ok', 1600)
       progress_auto_update_after_accept(ctx, lastText, '续写正文追加到文末')
-      char_state_auto_update_after_accept(ctx, lastText, '续写正文追加到文末')
     } catch (e) {
       ctx.ui.notice(t('追加失败：', 'Append failed: ') + (e && e.message ? e.message : String(e)), 'err', 2400)
     }
@@ -5467,6 +5468,131 @@ async function char_state_auto_update_after_accept(ctx, deltaText, reason) {
   } catch {}
 }
 
+async function char_state_try_update_from_prev_chapter(ctx, cfg, reason) {
+  // 约定：在“开始下一章/新开一卷”创建并打开新章节后调用；
+  // 这样“上一章”才会被正确识别（尤其是新开卷的第一章要回退到上一卷最后一章）。
+  try {
+    const ragCfg = cfg && cfg.rag ? cfg.rag : {}
+    if (ragCfg.autoUpdateCharState === false) return { ok: true, updated: false, skipped: true, why: 'disabled' }
+    if (!cfg || !cfg.token) return { ok: true, updated: false, skipped: true, why: 'no_token' }
+    if (!cfg.upstream || !cfg.upstream.baseUrl || !cfg.upstream.model) return { ok: true, updated: false, skipped: true, why: 'no_upstream' }
+
+    const lim = (cfg && cfg.ctx && cfg.ctx.maxUpdateSourceChars) ? (cfg.ctx.maxUpdateSourceChars | 0) : 20000
+    const prev = await getPrevChapterTextForExtract(ctx, cfg, lim)
+    if (!prev || !safeText(prev.text).trim()) return { ok: true, updated: false, skipped: true, why: 'no_prev' }
+
+    const existing = await getCharStateBlockForUpdate(ctx, cfg)
+    const res = await char_state_extract_from_text(ctx, cfg, { text: safeText(prev.text), path: safeText(prev.path), existing })
+
+    const ts = _fmtLocalTs()
+    const title = (res.ok ? '快照 ' : '解析失败 ') + ts + (reason ? ('（' + String(reason) + '）') : '') + (prev.path ? (' - ' + fsBaseName(prev.path)) : '')
+
+    if (res.ok) {
+      const md = char_state_format_snapshot_md(res.data)
+      await char_state_append_block(ctx, cfg, md, title)
+      return { ok: true, updated: true, parseOk: true, error: '' }
+    }
+
+    const rawShort = sliceHeadTail(safeText(res.raw).trim(), 12000, 0.6)
+    const failBlock = [
+      t('> 解析失败：', '> Parse failed: ') + safeText(res.error || ''),
+      t('> 以下为 AI 原文（可手动整理为条目）：', '> Raw AI output (you can manually format it):'),
+      '```text',
+      rawShort,
+      '```'
+    ].join('\n')
+    await char_state_append_block(ctx, cfg, failBlock, title)
+    return { ok: true, updated: true, parseOk: false, error: safeText(res.error || '') }
+  } catch (e) {
+    return { ok: false, updated: false, skipped: false, why: 'exception', error: (e && e.message ? e.message : String(e)) }
+  }
+}
+
+async function novel_create_next_chapter(ctx) {
+  const cfg = await loadCfg(ctx)
+  const inf = await computeNextChapterPath(ctx, cfg)
+  if (!inf) throw new Error(t('未发现项目：请先在“小说→项目管理”选择项目，或打开项目内文件。', 'No project: select one in Project Manager or open a file under the project.'))
+  const ok = await openConfirmDialog(ctx, {
+    title: t('新建下一章', 'Create next chapter'),
+    message:
+      t('将在章节目录创建文件：\n', 'Will create file under chapters:\n') +
+      String(inf.chapPath || '') +
+      '\n\n' +
+      t('创建并打开它？', 'Create and open it?'),
+  })
+  if (!ok) return null
+  const title = `# 第${inf.chapZh}章`
+  await writeTextAny(ctx, inf.chapPath, title + '\n\n')
+  let opened = false
+  try {
+    if (typeof ctx.openFileByPath === 'function') {
+      await ctx.openFileByPath(inf.chapPath)
+      opened = true
+    }
+  } catch {}
+
+  // 自动更新人物状态：只在“开始下一章”时更新，避免草稿小片段导致信息丢失
+  if (opened) {
+    try { ctx.ui.notice(t('人物状态更新中…', 'Updating character states...'), 'ok', 1200) } catch {}
+    const r = await char_state_try_update_from_prev_chapter(ctx, cfg, t('开始下一章', 'Start next chapter'))
+    if (r && r.updated) {
+      if (r.parseOk) {
+        try { ctx.ui.notice(t('人物状态已更新（写入 06_人物状态.md）', 'Character states updated (written to 06_人物状态.md)'), 'ok', 2000) } catch {}
+      } else {
+        try { ctx.ui.notice(t('人物状态更新失败：已把 AI 原文写入 06_人物状态.md（请手动整理）', 'Character state update failed: raw output saved to 06_人物状态.md'), 'err', 2600) } catch {}
+      }
+    }
+  }
+
+  ctx.ui.notice(t('已创建并打开：', 'Created: ') + String(fsBaseName(inf.chapPath)), 'ok', 2000)
+  ctx.ui.notice(t('提示：打开该章节后再用“续写正文”并追加，就会写入该章节文件。', 'Tip: open this chapter then use Write and append; it will go into this file.'), 'ok', 2600)
+  return inf
+}
+
+async function novel_create_next_volume(ctx) {
+  const cfg = await loadCfg(ctx)
+  const inf = await computeNextVolumeChapterPath(ctx, cfg)
+  if (!inf) throw new Error(t('未发现项目：请先在“小说→项目管理”选择项目，或打开项目内文件。', 'No project: select one in Project Manager or open a file under the project.'))
+  const ok = await openConfirmDialog(ctx, {
+    title: t('新开一卷', 'Create new volume'),
+    message:
+      t('将在章节目录创建卷目录：\n', 'Will create volume folder under chapters:\n') +
+      String(inf.chapDir || '') +
+      '\n\n' +
+      t('并创建第一章文件：\n', 'And create chapter 1 file:\n') +
+      String(inf.chapPath || '') +
+      '\n\n' +
+      t('创建并打开它？', 'Create and open it?'),
+  })
+  if (!ok) return null
+  const title = `# 第${inf.volZh}卷 第一章`
+  await writeTextAny(ctx, inf.chapPath, title + '\n\n')
+  let opened = false
+  try {
+    if (typeof ctx.openFileByPath === 'function') {
+      await ctx.openFileByPath(inf.chapPath)
+      opened = true
+    }
+  } catch {}
+
+  // 新开卷后：同样用“上一卷最后一章”自动更新人物状态
+  if (opened) {
+    try { ctx.ui.notice(t('人物状态更新中…', 'Updating character states...'), 'ok', 1200) } catch {}
+    const r = await char_state_try_update_from_prev_chapter(ctx, cfg, t('新开一卷', 'Start new volume'))
+    if (r && r.updated) {
+      if (r.parseOk) {
+        try { ctx.ui.notice(t('人物状态已更新（写入 06_人物状态.md）', 'Character states updated (written to 06_人物状态.md)'), 'ok', 2000) } catch {}
+      } else {
+        try { ctx.ui.notice(t('人物状态更新失败：已把 AI 原文写入 06_人物状态.md（请手动整理）', 'Character state update failed: raw output saved to 06_人物状态.md'), 'err', 2600) } catch {}
+      }
+    }
+  }
+
+  ctx.ui.notice(t('已新开：', 'Created: ') + `第${inf.volZh}卷/第一章`, 'ok', 2000)
+  ctx.ui.notice(t('提示：后续“开始下一章”会在当前卷目录内递增。', 'Tip: Start next chapter will increment within current volume.'), 'ok', 2600)
+  return inf
+}
+
 async function openBootstrapDialog(ctx) {
   let cfg = await loadCfg(ctx)
   if (!cfg.token) throw new Error(t('请先登录后端', 'Please login first'))
@@ -5973,7 +6099,6 @@ async function openBootstrapDialog(ctx) {
     // 项目已落盘：后台构建 RAG 索引 + 自动更新进度脉络（失败不影响主流程）
     try { rag_build_or_update_index(ctx, cfg).catch(() => {}) } catch {}
     try { progress_auto_update_after_accept(ctx, lastChapter, '创建项目写入第一章') } catch {}
-    try { char_state_auto_update_after_accept(ctx, lastChapter, '创建项目写入第一章') } catch {}
   
     try {
       if (typeof ctx.openFileByPath === 'function') {
@@ -7775,7 +7900,6 @@ async function openDraftReviewDialog(ctx, opts) {
       ctx.setEditorValue(replaced)
       // 定稿后再更新进度（避免反复改稿污染进度脉络）
       try { progress_auto_update_after_accept(ctx, nextText, '草稿定稿覆盖写入') } catch {}
-      try { char_state_auto_update_after_accept(ctx, nextText, '草稿定稿覆盖写入') } catch {}
       ctx.ui.notice(t('已覆盖草稿块', 'Draft overwritten'), 'ok', 1800)
     } catch (e) {
       ctx.ui.notice(t('覆盖失败：', 'Overwrite failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
@@ -8002,6 +8126,10 @@ export function activate(context) {
               onClick: () => { void openWriteWithChoiceDialog(context) }
             },
             {
+              label: t('新建下章', 'Create next chapter'),
+              onClick: () => { void novel_create_next_chapter(context).catch((e) => context.ui.notice(t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)) }
+            },
+            {
               label: t('审阅草稿', 'Review draft'),
               onClick: () => { void openLastDraftReviewFromEditor(context).catch((e) => context.ui.notice(t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)) }
             },
@@ -8071,30 +8199,7 @@ export function activate(context) {
           label: t('新开一卷（创建卷目录+第一章）', 'Start new volume (folder + chapter 1)'),
           onClick: async () => {
             try {
-              const cfg = await loadCfg(context)
-              const inf = await computeNextVolumeChapterPath(context, cfg)
-              if (!inf) throw new Error(t('未发现项目：请先在“小说→项目管理”选择项目，或打开项目内文件。', 'No project: select one in Project Manager or open a file under the project.'))
-              const ok = await openConfirmDialog(context, {
-                title: t('新开一卷', 'Create new volume'),
-                message:
-                  t('将在章节目录创建卷目录：\n', 'Will create volume folder under chapters:\n') +
-                  String(inf.chapDir || '') +
-                  '\n\n' +
-                  t('并创建第一章文件：\n', 'And create chapter 1 file:\n') +
-                  String(inf.chapPath || '') +
-                  '\n\n' +
-                  t('创建并打开它？', 'Create and open it?'),
-              })
-              if (!ok) return
-              const title = `# 第${inf.volZh}卷 第一章`
-              await writeTextAny(context, inf.chapPath, title + '\n\n')
-              try {
-                if (typeof context.openFileByPath === 'function') {
-                  await context.openFileByPath(inf.chapPath)
-                }
-              } catch {}
-              context.ui.notice(t('已新开：', 'Created: ') + `第${inf.volZh}卷/第一章`, 'ok', 2000)
-              context.ui.notice(t('提示：后续“开始下一章”会在当前卷目录内递增。', 'Tip: Start next chapter will increment within current volume.'), 'ok', 2600)
+              await novel_create_next_volume(context)
             } catch (e) {
               context.ui.notice(t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
             }
@@ -8104,27 +8209,7 @@ export function activate(context) {
           label: t('开始下一章（新建章节文件）', 'Start next chapter (new file)'),
           onClick: async () => {
             try {
-              const cfg = await loadCfg(context)
-              const inf = await computeNextChapterPath(context, cfg)
-              if (!inf) throw new Error(t('未发现项目：请先在“小说→项目管理”选择项目，或打开项目内文件。', 'No project: select one in Project Manager or open a file under the project.'))
-              const ok = await openConfirmDialog(context, {
-                title: t('新建下一章', 'Create next chapter'),
-                message:
-                  t('将在章节目录创建文件：\n', 'Will create file under chapters:\n') +
-                  String(inf.chapPath || '') +
-                  '\n\n' +
-                  t('创建并打开它？', 'Create and open it?'),
-              })
-              if (!ok) return
-              const title = `# 第${inf.chapZh}章`
-              await writeTextAny(context, inf.chapPath, title + '\n\n')
-              try {
-                if (typeof context.openFileByPath === 'function') {
-                  await context.openFileByPath(inf.chapPath)
-                }
-              } catch {}
-              context.ui.notice(t('已创建并打开：', 'Created: ') + String(fsBaseName(inf.chapPath)), 'ok', 2000)
-              context.ui.notice(t('提示：打开该章节后再用“续写正文”并追加，就会写入第二章文件。', 'Tip: open this chapter then use Write and append; it will go into this file.'), 'ok', 2600)
+              await novel_create_next_chapter(context)
             } catch (e) {
               context.ui.notice(t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
             }
