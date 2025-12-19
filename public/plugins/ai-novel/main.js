@@ -49,6 +49,8 @@ const DEFAULT_CFG = {
     maxChars: 2400,
     chunkSize: 900,
     chunkOverlap: 160,
+    // 仅建议 macOS 遇到 forbidden path 时开启：把索引落到 AppLocalData（插件数据目录），避免 Documents 等路径被 fs scope 拦截。
+    indexInAppLocalData: false,
     // 自动更新进度脉络：仅在“用户确认追加正文到文档/创建项目写入章节”后触发（避免生成但未采用也写进度）
     autoUpdateProgress: true
   },
@@ -1324,11 +1326,47 @@ async function writeFileBinaryAny(ctx, absPath, bytes) {
   throw new Error(t('当前环境不支持二进制写文件', 'Binary write is not supported in this environment'))
 }
 
-async function rag_load_index(ctx, projectAbs) {
+async function rag_get_index_paths(ctx, cfg, projectAbs) {
+  const projectAbsNorm = normFsPath(projectAbs)
+  const projectMetaPath = joinFsPath(projectAbsNorm, AIN_RAG_META_FILE)
+  const projectVecPath = joinFsPath(projectAbsNorm, AIN_RAG_VEC_FILE)
+  const legacyPath = joinFsPath(projectAbsNorm, '.ainovel/rag_index.json')
+
+  const useApp = !!(cfg && cfg.rag && cfg.rag.indexInAppLocalData)
+  if (useApp && ctx && typeof ctx.getPluginDataDir === 'function') {
+    try {
+      const base = normFsPath(await ctx.getPluginDataDir())
+      if (base) {
+        const key = await sha256Hex('ainovel:rag:' + projectAbsNorm)
+        const dir = joinFsPath(base, 'ai-novel/rag/' + key)
+        return {
+          mode: 'appLocalData',
+          metaPath: joinFsPath(dir, 'rag_meta.json'),
+          vecPath: joinFsPath(dir, 'rag_vectors.f32'),
+          legacyPath,
+          projectMetaPath,
+          projectVecPath,
+        }
+      }
+    } catch {}
+  }
+
+  return {
+    mode: 'project',
+    metaPath: projectMetaPath,
+    vecPath: projectVecPath,
+    legacyPath,
+    projectMetaPath,
+    projectVecPath,
+  }
+}
+
+async function rag_load_index(ctx, cfg, projectAbs) {
   // 索引落盘：meta.json（文本）+ vectors.f32（二进制）。避免 JSON 存向量导致索引膨胀/解析卡死。
-  const metaPath = joinFsPath(projectAbs, AIN_RAG_META_FILE)
-  const vecPath = joinFsPath(projectAbs, AIN_RAG_VEC_FILE)
-  const legacyPath = joinFsPath(projectAbs, '.ainovel/rag_index.json')
+  const paths = await rag_get_index_paths(ctx, cfg, projectAbs)
+  const metaPath = paths.metaPath
+  const vecPath = paths.vecPath
+  const legacyPath = paths.legacyPath
 
   async function tryMigrateLegacy() {
     // 兼容旧版：.ainovel/rag_index.json（内含 embedding 数组）。迁移为 meta+f32。
@@ -1377,15 +1415,15 @@ async function rag_load_index(ctx, projectAbs) {
         files: (legacy.files && typeof legacy.files === 'object') ? legacy.files : {},
         chunks: outChunks
       }
-      await rag_save_index(ctx, projectAbs, meta, flat)
+      await rag_save_index(ctx, cfg, projectAbs, meta, flat)
       return { meta, vectors: flat }
     } catch {
       return false
     }
   }
 
-  try {
-    const raw = await readTextAny(ctx, metaPath)
+  async function tryLoadAt(metaPath2, vecPath2) {
+    const raw = await readTextAny(ctx, metaPath2)
     const meta = JSON.parse(String(raw || '{}'))
     if (!meta || typeof meta !== 'object') return null
     if ((meta.schema_version | 0) !== AIN_RAG_SCHEMA_VERSION) return null
@@ -1393,7 +1431,7 @@ async function rag_load_index(ctx, projectAbs) {
     const dims = meta.dims | 0
     if (dims < 0) return null
 
-    const bytes = await readFileBinaryAny(ctx, vecPath)
+    const bytes = await readFileBinaryAny(ctx, vecPath2)
     const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
     if (ab.byteLength % 4 !== 0) return null
     const vectors = new Float32Array(ab)
@@ -1402,21 +1440,35 @@ async function rag_load_index(ctx, projectAbs) {
     if (!vectors.length || vectors.length % dims !== 0) return null
 
     return { meta, vectors }
-  } catch {
-    // 如果新索引不存在，尝试从旧 JSON 索引迁移一次
-    try {
-      const migrated = await tryMigrateLegacy()
-      if (!migrated) return null
-      return migrated
-    } catch {
-      return null
+  }
+
+  try {
+    const loaded = await tryLoadAt(metaPath, vecPath)
+    if (loaded) return loaded
+  } catch {}
+
+  // 开启“落到 AppLocalData”后，为了兼容旧用户：如果 AppLocalData 没有索引，再尝试从项目目录读取一次。
+  try {
+    if (paths.mode === 'appLocalData') {
+      const loaded2 = await tryLoadAt(paths.projectMetaPath, paths.projectVecPath)
+      if (loaded2) return loaded2
     }
+  } catch {}
+
+  // 如果新索引不存在，尝试从旧 JSON 索引迁移一次
+  try {
+    const migrated = await tryMigrateLegacy()
+    if (!migrated) return null
+    return migrated
+  } catch {
+    return null
   }
 }
 
-async function rag_save_index(ctx, projectAbs, meta, vectors) {
-  const metaPath = joinFsPath(projectAbs, AIN_RAG_META_FILE)
-  const vecPath = joinFsPath(projectAbs, AIN_RAG_VEC_FILE)
+async function rag_save_index(ctx, cfg, projectAbs, meta, vectors) {
+  const paths = await rag_get_index_paths(ctx, cfg, projectAbs)
+  const metaPath = paths.metaPath
+  const vecPath = paths.vecPath
 
   // 先写 meta，确保父目录存在（write_text_file_any 会 create_dir_all）
   await writeTextAny(ctx, metaPath, JSON.stringify(meta || {}, null, 2))
@@ -1532,7 +1584,7 @@ async function rag_build_or_update_index(ctx, cfg, opts) {
 
   // 读取旧索引（F32），尽量复用未变化文件的向量，减少 embedding 请求。
   let oldLoaded = null
-  try { oldLoaded = await rag_load_index(ctx, projectAbs) } catch { oldLoaded = null }
+  try { oldLoaded = await rag_load_index(ctx, cfg, projectAbs) } catch { oldLoaded = null }
   let oldMeta = oldLoaded && oldLoaded.meta && typeof oldLoaded.meta === 'object' ? oldLoaded.meta : null
   let oldVectors = oldLoaded && oldLoaded.vectors instanceof Float32Array ? oldLoaded.vectors : null
 
@@ -1637,7 +1689,7 @@ async function rag_build_or_update_index(ctx, cfg, opts) {
       files: nextFiles,
       chunks: []
     }
-    await rag_save_index(ctx, projectAbs, meta0, new Float32Array())
+    await rag_save_index(ctx, cfg, projectAbs, meta0, new Float32Array())
     return { projectAbs, index: meta0, vectors: new Float32Array() }
   }
 
@@ -1669,7 +1721,7 @@ async function rag_build_or_update_index(ctx, cfg, opts) {
         files: nextFiles,
         chunks: []
       }
-      await rag_save_index(ctx, projectAbs, meta0, new Float32Array())
+      await rag_save_index(ctx, cfg, projectAbs, meta0, new Float32Array())
       return { projectAbs, index: meta0, vectors: new Float32Array() }
     }
 
@@ -1753,7 +1805,7 @@ async function rag_build_or_update_index(ctx, cfg, opts) {
     chunks: outChunks
   }
 
-  await rag_save_index(ctx, projectAbs, meta, flat)
+  await rag_save_index(ctx, cfg, projectAbs, meta, flat)
   return { projectAbs, index: meta, vectors: flat }
 }
 
@@ -1769,7 +1821,7 @@ async function rag_get_hits(ctx, cfg, queryText, opts) {
   const projectAbs = inf.projectAbs
   const isVoyage = rag_is_voyage_base_url(emb.baseUrl)
 
-  let loaded = await rag_load_index(ctx, projectAbs)
+  let loaded = await rag_load_index(ctx, cfg, projectAbs)
   let meta = loaded && loaded.meta ? loaded.meta : null
   let vectors = loaded && loaded.vectors ? loaded.vectors : null
 
@@ -2638,6 +2690,29 @@ async function openSettingsDialog(ctx) {
   rowEmb2.appendChild(inpEmbModel.wrap)
   secEmb.appendChild(rowEmb2)
 
+  const ragIdxLine = document.createElement('label')
+  ragIdxLine.style.display = 'flex'
+  ragIdxLine.style.gap = '8px'
+  ragIdxLine.style.alignItems = 'center'
+  ragIdxLine.style.marginTop = '10px'
+  const cbRagIndexInApp = document.createElement('input')
+  cbRagIndexInApp.type = 'checkbox'
+  cbRagIndexInApp.checked = !!(cfg.rag && cfg.rag.indexInAppLocalData)
+  ragIdxLine.appendChild(cbRagIndexInApp)
+  ragIdxLine.appendChild(document.createTextNode(
+    t('RAG 索引改写到 AppLocalData（仅建议 mac 遇 forbidden path 后开启）', 'Write RAG index to AppLocalData (recommended only if mac hits forbidden path)')
+  ))
+  secEmb.appendChild(ragIdxLine)
+
+  const ragIdxHint = document.createElement('div')
+  ragIdxHint.className = 'ain-muted'
+  ragIdxHint.style.marginTop = '6px'
+  ragIdxHint.textContent = t(
+    '说明：开启后，索引文件不再落在项目目录的 .ainovel/ 下，而是写到应用数据目录（按“项目路径”隔离）。备份项目目录时不会包含索引文件。',
+    'Note: when enabled, index files are stored in app data (scoped per project path), not under project .ainovel/. Project folder backups won’t include the index files.'
+  )
+  secEmb.appendChild(ragIdxHint)
+
   const secSave = document.createElement('div')
   secSave.className = 'ain-card'
   const btnSave = document.createElement('button')
@@ -2661,6 +2736,9 @@ async function openSettingsDialog(ctx) {
           baseUrl: inpEmbBase.inp.value,
           apiKey: inpEmbKey.inp.value,
           model: inpEmbModel.inp.value
+        },
+        rag: {
+          indexInAppLocalData: !!cbRagIndexInApp.checked
         },
         ctx: {
           modelContextChars: _clampInt(inpWindow.inp.value, 8000, 10000000),
@@ -7813,17 +7891,21 @@ async function openRagIndexDialog(ctx) {
       out.textContent = t('无法推断当前项目：请先在“项目管理”选择小说项目，或打开项目内任意文件。', 'Cannot infer project: select one in Project Manager, or open a file under the project folder.')
       return
     }
-    const loaded = await rag_load_index(ctx, inf.projectAbs)
+    const loaded = await rag_load_index(ctx, cfg, inf.projectAbs)
     const meta = loaded && loaded.meta ? loaded.meta : null
     const n = meta && Array.isArray(meta.chunks) ? meta.chunks.length : 0
     const dims = meta && Number.isFinite(meta.dims) ? (meta.dims | 0) : 0
+    const paths = await rag_get_index_paths(ctx, cfg, inf.projectAbs)
     out.textContent =
       t('当前项目：', 'Project: ') + inf.projectRel +
       '\n' + t('索引块数：', 'Chunks: ') + n +
       '\n' + t('维度：', 'Dims: ') + dims +
+      (paths && paths.mode === 'appLocalData'
+        ? ('\n' + t('索引位置：AppLocalData（插件数据目录）', 'Index location: AppLocalData (plugin data dir)'))
+        : '') +
       '\n' + t('索引文件：', 'Index files: ') +
-      '\n- ' + joinFsPath(inf.projectAbs, AIN_RAG_META_FILE) +
-      '\n- ' + joinFsPath(inf.projectAbs, AIN_RAG_VEC_FILE) +
+      '\n- ' + paths.metaPath +
+      '\n- ' + paths.vecPath +
       '\n' + t('embedding：', 'embedding: ') + String(cfg.embedding.baseUrl) + ' / ' + String(cfg.embedding.model)
   }
 
@@ -7855,7 +7937,8 @@ async function openRagIndexDialog(ctx) {
       cfg = await loadCfg(ctx)
       const inf = await inferProjectDir(ctx, cfg)
       if (!inf) throw new Error(t('无法推断当前项目', 'Cannot infer project'))
-      const p = joinFsPath(inf.projectAbs, AIN_RAG_META_FILE)
+      const paths = await rag_get_index_paths(ctx, cfg, inf.projectAbs)
+      const p = paths && paths.metaPath ? paths.metaPath : joinFsPath(inf.projectAbs, AIN_RAG_META_FILE)
       if (typeof ctx.openFileByPath === 'function') {
         await ctx.openFileByPath(p)
       } else {
