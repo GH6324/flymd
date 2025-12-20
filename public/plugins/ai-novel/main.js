@@ -7429,15 +7429,36 @@ async function openBootstrapDialog(ctx) {
     ctx.ui.notice(t('已创建项目并打开第一章', 'Project created, chapter opened'), 'ok', 2000)
   }
 
-  btnGen.onclick = () => { doGenerate().catch(() => {}) }
+  btnGen.onclick = () => {
+    doGenerate().catch((e) => {
+      const msg = e && e.message ? String(e.message) : String(e)
+      try { out.textContent = t('失败：', 'Failed: ') + msg } catch {}
+      try { ctx.ui.notice(t('失败：', 'Failed: ') + msg, 'err', 2600) } catch {}
+      try { console.error('[ai-novel] bootstrap generate failed:', e) } catch {}
+    })
+  }
   btnAppend.onclick = () => {
     doCreateProject().catch((e) => {
       ctx.ui.notice(t('创建失败：', 'Create failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
     })
   }
-  btnGenMeta.onclick = () => { doGenMeta().catch(() => {}) }
+  btnGenMeta.onclick = () => {
+    doGenMeta().catch((e) => {
+      const msg = e && e.message ? String(e.message) : String(e)
+      try { out.textContent = t('失败：', 'Failed: ') + msg } catch {}
+      try { ctx.ui.notice(t('失败：', 'Failed: ') + msg, 'err', 2600) } catch {}
+      try { console.error('[ai-novel] bootstrap meta failed:', e) } catch {}
+    })
+  }
   renderQuestions()
-  btnContinue.onclick = () => { doGenMeta().catch(() => {}) }
+  btnContinue.onclick = () => {
+    doGenMeta().catch((e) => {
+      const msg = e && e.message ? String(e.message) : String(e)
+      try { out.textContent = t('失败：', 'Failed: ') + msg } catch {}
+      try { ctx.ui.notice(t('失败：', 'Failed: ') + msg, 'err', 2600) } catch {}
+      try { console.error('[ai-novel] bootstrap meta (continue) failed:', e) } catch {}
+    })
+  }
 }
 
 async function openConsultDialog(ctx) {
