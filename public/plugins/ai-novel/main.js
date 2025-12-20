@@ -308,9 +308,23 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, n))
 }
 
+async function sleepWithAbort(ms, control) {
+  const total = Math.max(0, ms | 0)
+  if (!total) return
+  const step = 220
+  let left = total
+  while (left > 0) {
+    if (control && control.aborted) throw new Error(t('已终止本次任务', 'Task aborted'))
+    const chunk = Math.min(step, left)
+    await sleep(chunk)
+    left -= chunk
+  }
+}
+
 async function apiFetchConsultWithJob(ctx, cfg, body, opt) {
   const onTick = opt && typeof opt.onTick === 'function' ? opt.onTick : null
   const timeoutMs = opt && opt.timeoutMs ? Number(opt.timeoutMs) : 190000
+  const control = opt && opt.control && typeof opt.control === 'object' ? opt.control : null
 
   const b = body && typeof body === 'object' ? body : {}
   const input = (b.input && typeof b.input === 'object') ? b.input : {}
@@ -324,6 +338,7 @@ async function apiFetchConsultWithJob(ctx, cfg, body, opt) {
   let waitMs = 0
   let netFail = 0
   for (;;) {
+    if (control && control.aborted) throw new Error(t('已终止本次任务', 'Task aborted'))
     waitMs = Date.now() - start
     if (waitMs > timeoutMs) {
       throw new Error(t('咨询超时：任务仍未完成，请稍后重试或换模型', 'Consult timeout: job still pending, please retry or switch model'))
@@ -333,7 +348,7 @@ async function apiFetchConsultWithJob(ctx, cfg, body, opt) {
       try { onTick({ jobId, waitMs }) } catch {}
     }
 
-    await sleep(netFail > 0 ? Math.min(5000, 1200 + netFail * 500) : 1000)
+    await sleepWithAbort(netFail > 0 ? Math.min(5000, 1200 + netFail * 500) : 1000, control)
     let st = null
     try {
       st = await apiGet(ctx, cfg, 'ai/proxy/consult/status/?id=' + encodeURIComponent(String(jobId)))
@@ -360,6 +375,7 @@ async function apiFetchConsultWithJob(ctx, cfg, body, opt) {
 async function apiFetchChatWithJob(ctx, cfg, body, opt) {
   const onTick = opt && typeof opt.onTick === 'function' ? opt.onTick : null
   const timeoutMs = opt && opt.timeoutMs ? Number(opt.timeoutMs) : 190000
+  const control = opt && opt.control && typeof opt.control === 'object' ? opt.control : null
 
   const b = body && typeof body === 'object' ? body : {}
   const action = safeText(b.action).trim().toLowerCase()
@@ -380,6 +396,7 @@ async function apiFetchChatWithJob(ctx, cfg, body, opt) {
   let waitMs = 0
   let netFail = 0
   for (;;) {
+    if (control && control.aborted) throw new Error(t('已终止本次任务', 'Task aborted'))
     waitMs = Date.now() - start
     if (waitMs > timeoutMs) {
       throw new Error(timeoutMsg())
@@ -389,7 +406,7 @@ async function apiFetchChatWithJob(ctx, cfg, body, opt) {
       try { onTick({ jobId, waitMs }) } catch {}
     }
 
-    await sleep(netFail > 0 ? Math.min(5000, 1200 + netFail * 500) : 1000)
+    await sleepWithAbort(netFail > 0 ? Math.min(5000, 1200 + netFail * 500) : 1000, control)
     let st = null
     try {
       st = await apiGet(ctx, cfg, 'ai/proxy/chat/status/?id=' + encodeURIComponent(String(jobId)))
@@ -3474,7 +3491,7 @@ async function openNextOptionsDialog(ctx) {
     cfg = await loadCfg(ctx)
     const instruction = safeText(inp.ta.value).trim()
     const localConstraints = safeText(extra.ta.value).trim()
-    const constraints = await mergeConstraintsWithCharState(ctx, cfg, localConstraints)
+    const constraints = _ainAppendWritingStyleHintToConstraints(await mergeConstraintsWithCharState(ctx, cfg, localConstraints))
     if (!instruction) {
       ctx.ui.notice(t('请先写一句“指令/目标”', 'Please provide instruction/goal'), 'err', 1800)
       return
@@ -4117,6 +4134,25 @@ async function openWriteWithChoiceDialog(ctx) {
   agentLog.textContent = t('等待开始。', 'Waiting.')
   agentProgress.appendChild(agentTodo)
   agentProgress.appendChild(agentLog)
+
+  const agentCtrlRow = mkBtnRow()
+  agentCtrlRow.style.marginTop = '8px'
+  const btnAgentAbort = document.createElement('button')
+  btnAgentAbort.className = 'ain-btn gray'
+  btnAgentAbort.textContent = t('终止本次任务', 'Abort task')
+  btnAgentAbort.disabled = true
+  const btnAgentRetry = document.createElement('button')
+  btnAgentRetry.className = 'ain-btn gray'
+  btnAgentRetry.textContent = t('重试', 'Retry')
+  btnAgentRetry.style.display = 'none'
+  const btnAgentSkip = document.createElement('button')
+  btnAgentSkip.className = 'ain-btn gray'
+  btnAgentSkip.textContent = t('跳过该步骤', 'Skip step')
+  btnAgentSkip.style.display = 'none'
+  agentCtrlRow.appendChild(btnAgentAbort)
+  agentCtrlRow.appendChild(btnAgentRetry)
+  agentCtrlRow.appendChild(btnAgentSkip)
+  agentProgress.appendChild(agentCtrlRow)
   sec.appendChild(agentProgress)
 
   const out = document.createElement('div')
@@ -4149,6 +4185,17 @@ async function openWriteWithChoiceDialog(ctx) {
   let selectedIdx = 0
   let lastText = ''
   let lastDraftId = ''
+  let agentControl = null
+
+  function _syncAgentCtrlUiPaused(meta) {
+    btnAgentRetry.style.display = ''
+    btnAgentSkip.style.display = (meta && meta.type === 'write') ? 'none' : ''
+  }
+
+  function _syncAgentCtrlUiRunning() {
+    btnAgentRetry.style.display = 'none'
+    btnAgentSkip.style.display = 'none'
+  }
 
   function renderAgentProgress(items, logs) {
     try { agentProgress.style.display = '' } catch {}
@@ -4178,6 +4225,26 @@ async function openWriteWithChoiceDialog(ctx) {
       const lines = Array.isArray(logs) ? logs : []
       agentLog.textContent = lines.join('\n')
       agentLog.scrollTop = agentLog.scrollHeight
+    } catch {}
+  }
+
+  btnAgentAbort.onclick = () => {
+    try {
+      if (!agentControl || typeof agentControl.abort !== 'function') return
+      agentControl.abort()
+      ctx.ui.notice(t('已发出终止请求', 'Abort requested'), 'ok', 1200)
+    } catch {}
+  }
+  btnAgentRetry.onclick = () => {
+    try {
+      if (!agentControl || typeof agentControl.resume !== 'function') return
+      agentControl.resume('retry')
+    } catch {}
+  }
+  btnAgentSkip.onclick = () => {
+    try {
+      if (!agentControl || typeof agentControl.resume !== 'function') return
+      agentControl.resume('skip')
     } catch {}
   }
 
@@ -4315,7 +4382,7 @@ async function openWriteWithChoiceDialog(ctx) {
     cfg = await loadCfg(ctx)
     const instruction = ensureInstruction(getInstructionText(), t('按选中走向续写本章', 'Write with the selected option'))
     const localConstraints = getLocalConstraintsText()
-    const constraints = await mergeConstraintsWithCharState(ctx, cfg, localConstraints)
+    const constraints = _ainAppendWritingStyleHintToConstraints(await mergeConstraintsWithCharState(ctx, cfg, localConstraints))
 
     const prev = await getPrevTextForRequest(ctx, cfg)
     const progress = await getProgressDocText(ctx, cfg)
@@ -4356,6 +4423,18 @@ async function openWriteWithChoiceDialog(ctx) {
         try { agentProgress.style.display = '' } catch {}
         try { agentLog.textContent = t('Agent 执行中…', 'Agent running...') } catch {}
 
+        try {
+          if (agentControl && typeof agentControl.abort === 'function') agentControl.abort()
+        } catch {}
+        agentControl = _ainCreateAgentRunControl()
+        agentControl.onEvent = (ev, meta) => {
+          if (ev === 'paused') _syncAgentCtrlUiPaused(meta)
+          else _syncAgentCtrlUiRunning()
+          if (ev === 'abort') btnAgentAbort.disabled = true
+        }
+        btnAgentAbort.disabled = false
+        _syncAgentCtrlUiRunning()
+
         out.textContent = t('Agent 执行中…（多轮）', 'Agent running... (multi-round)')
         const res = await agentRunPlan(ctx, cfg, {
           instruction,
@@ -4369,11 +4448,23 @@ async function openWriteWithChoiceDialog(ctx) {
           targetChars,
           chunkCount,
           audit: wantAudit
-        }, { render: renderAgentProgress })
+        }, { render: renderAgentProgress, control: agentControl })
 
+        const aborted = !!(agentControl && agentControl.aborted)
         lastText = safeText(res && res.text).trim()
+        out.textContent = lastText || (aborted ? t('已终止（无输出）', 'Aborted (no output)') : '')
+        btnAgentAbort.disabled = true
+        _syncAgentCtrlUiRunning()
+        agentControl = null
+
+        if (aborted) {
+          btnAppend.disabled = !lastText
+          btnAppendDraft.disabled = !lastText
+          ctx.ui.notice(t('Agent 已终止（未写入文档）', 'Agent aborted (not inserted)'), 'ok', 1800)
+          return
+        }
+
         if (!lastText) throw new Error(t('Agent 未返回正文', 'Agent returned empty text'))
-        out.textContent = lastText
         btnAppend.disabled = false
         btnAppendDraft.disabled = false
         ctx.ui.notice(t('Agent 已完成（未写入文档）', 'Agent done (not inserted)'), 'ok', 1800)
@@ -4414,6 +4505,9 @@ async function openWriteWithChoiceDialog(ctx) {
     } finally {
       setBusy(btnWrite, false)
       setBusy(btnWriteDirect, false)
+      try { btnAgentAbort.disabled = true } catch {}
+      try { _syncAgentCtrlUiRunning() } catch {}
+      agentControl = null
     }
   }
 
@@ -4421,7 +4515,7 @@ async function openWriteWithChoiceDialog(ctx) {
     cfg = await loadCfg(ctx)
     const instruction = getInstructionText()
     const localConstraints = getLocalConstraintsText()
-    const constraints = await mergeConstraintsWithCharState(ctx, cfg, localConstraints)
+    const constraints = _ainAppendWritingStyleHintToConstraints(await mergeConstraintsWithCharState(ctx, cfg, localConstraints))
     if (!instruction) {
       ctx.ui.notice(t('请先写清楚“本章目标/要求”', 'Please provide instruction/goal'), 'err', 2000)
       return
@@ -4467,6 +4561,18 @@ async function openWriteWithChoiceDialog(ctx) {
         try { agentProgress.style.display = '' } catch {}
         try { agentLog.textContent = t('Agent 执行中…', 'Agent running...') } catch {}
 
+        try {
+          if (agentControl && typeof agentControl.abort === 'function') agentControl.abort()
+        } catch {}
+        agentControl = _ainCreateAgentRunControl()
+        agentControl.onEvent = (ev, meta) => {
+          if (ev === 'paused') _syncAgentCtrlUiPaused(meta)
+          else _syncAgentCtrlUiRunning()
+          if (ev === 'abort') btnAgentAbort.disabled = true
+        }
+        btnAgentAbort.disabled = false
+        _syncAgentCtrlUiRunning()
+
         out.textContent = t('Agent 执行中…（多轮，不走候选）', 'Agent running... (multi-round, no options)')
         const res = await agentRunPlan(ctx, cfg, {
           instruction,
@@ -4480,11 +4586,23 @@ async function openWriteWithChoiceDialog(ctx) {
           targetChars,
           chunkCount,
           audit: wantAudit
-        }, { render: renderAgentProgress })
+        }, { render: renderAgentProgress, control: agentControl })
 
+        const aborted = !!(agentControl && agentControl.aborted)
         lastText = safeText(res && res.text).trim()
+        out.textContent = lastText || (aborted ? t('已终止（无输出）', 'Aborted (no output)') : '')
+        btnAgentAbort.disabled = true
+        _syncAgentCtrlUiRunning()
+        agentControl = null
+
+        if (aborted) {
+          btnAppend.disabled = !lastText
+          btnAppendDraft.disabled = !lastText
+          ctx.ui.notice(t('Agent 已终止（未写入文档）', 'Agent aborted (not inserted)'), 'ok', 1800)
+          return
+        }
+
         if (!lastText) throw new Error(t('Agent 未返回正文', 'Agent returned empty text'))
-        out.textContent = lastText
         btnAppend.disabled = false
         btnAppendDraft.disabled = false
         ctx.ui.notice(t('Agent 已完成（未写入文档）', 'Agent done (not inserted)'), 'ok', 1800)
@@ -4525,6 +4643,9 @@ async function openWriteWithChoiceDialog(ctx) {
     } finally {
       setBusy(btnWriteDirect, false)
       setBusy(btnWrite, false)
+      try { btnAgentAbort.disabled = true } catch {}
+      try { _syncAgentCtrlUiRunning() } catch {}
+      agentControl = null
     }
   }
 
@@ -5149,9 +5270,59 @@ async function agentBuildPlan(ctx, cfg, base) {
   return fb
 }
 
+function _ainCreateAgentRunControl() {
+  const c = {
+    aborted: false,
+    paused: null,
+    _resolve: null,
+    onEvent: null,
+    abort: null,
+    wait: null,
+    resume: null,
+  }
+
+  c.abort = () => {
+    c.aborted = true
+    if (typeof c.onEvent === 'function') {
+      try { c.onEvent('abort', {}) } catch {}
+    }
+    if (c._resolve) {
+      const r = c._resolve
+      c._resolve = null
+      try { r('abort') } catch {}
+    }
+  }
+
+  c.wait = async (meta) => {
+    if (c.aborted) return 'abort'
+    c.paused = meta && typeof meta === 'object' ? meta : {}
+    if (typeof c.onEvent === 'function') {
+      try { c.onEvent('paused', c.paused) } catch {}
+    }
+    return await new Promise((resolve) => {
+      c._resolve = (action) => {
+        c._resolve = null
+        c.paused = null
+        if (typeof c.onEvent === 'function') {
+          try { c.onEvent('resume', { action: safeText(action) }) } catch {}
+        }
+        resolve(safeText(action) || 'retry')
+      }
+    })
+  }
+
+  c.resume = (action) => {
+    if (!c._resolve) return
+    try { c._resolve(safeText(action) || 'retry') } catch {}
+  }
+
+  return c
+}
+
 async function agentRunPlan(ctx, cfg, base, ui) {
   const render = ui && typeof ui.render === 'function' ? ui.render : null
   const logBox = ui && typeof ui.log === 'function' ? ui.log : null
+  const control = ui && ui.control && typeof ui.control === 'object' ? ui.control : null
 
   const logs = []
   function pushLog(s) {
@@ -5300,6 +5471,10 @@ async function agentRunPlan(ctx, cfg, base, ui) {
   for (let i = 0; i < items.length; i++) {
     const it = items[i]
     if (!it || !it.type) continue
+    if (control && control.aborted) {
+      pushLog(t('已终止本次任务', 'Task aborted'))
+      break
+    }
     it.status = 'running'
     it.error = ''
     if (render) {
@@ -5361,6 +5536,7 @@ async function agentRunPlan(ctx, cfg, base, ui) {
             rag: rag || undefined
           }
         }, {
+          control,
           onTick: ({ waitMs }) => {
             const s = Math.max(0, Math.round(Number(waitMs || 0) / 1000))
             if (render) {
@@ -5438,6 +5614,7 @@ async function agentRunPlan(ctx, cfg, base, ui) {
             agent: { segmented: true, seg_no: writeNo, seg_total: writeTotal, prev_tail_chars: prev.length }
           }
         }, {
+          control,
           onTick: ({ waitMs }) => {
             const s = Math.max(0, Math.round(Number(waitMs || 0) / 1000))
             if (render) {
@@ -5482,6 +5659,7 @@ async function agentRunPlan(ctx, cfg, base, ui) {
               rag: rag || undefined
             }
           }, {
+            control,
             onTick: ({ waitMs }) => {
               const s = Math.max(0, Math.round(Number(waitMs || 0) / 1000))
               if (render) {
@@ -5504,7 +5682,45 @@ async function agentRunPlan(ctx, cfg, base, ui) {
       it.status = 'error'
       it.error = msg
       pushLog(t('步骤失败：', 'Step failed: ') + msg)
-      // 写作类出错就直接停；其它步骤尽量不中断
+
+      if (control && control.aborted) {
+        it.status = 'skipped'
+        it.error = ''
+        pushLog(t('已终止本次任务', 'Task aborted'))
+        break
+      }
+
+      if (control && typeof control.wait === 'function') {
+        pushLog(t('已暂停：请在界面选择“重试/跳过/终止”。', 'Paused: choose retry/skip/abort in UI.'))
+        const action = safeText(await control.wait({
+          index: i,
+          type: safeText(it.type),
+          title: safeText(it.title),
+          error: msg
+        })).trim().toLowerCase()
+
+        if (action === 'retry' || action === 'replay' || action === 'again') {
+          it.status = 'pending'
+          it.error = ''
+          pushLog(t('用户选择：重试该步骤', 'User chose: retry this step'))
+          i--
+          continue
+        }
+
+        if (action === 'skip' && it.type !== 'write') {
+          it.status = 'skipped'
+          it.error = ''
+          pushLog(t('用户选择：跳过该步骤', 'User chose: skip this step'))
+          continue
+        }
+
+        pushLog(t('用户选择：终止本次任务', 'User chose: abort task'))
+        it.status = 'skipped'
+        it.error = ''
+        break
+      }
+
+      // 兼容旧行为：写作类出错就直接停；其它步骤尽量不中断
       if (it.type === 'write') break
     } finally {
       const ms = Math.max(0, Date.now() - started)
@@ -5525,6 +5741,31 @@ function setBusy(btn, busy) {
 
 function safeText(v) {
   return v == null ? '' : String(v)
+}
+
+function _ainWritingStyleHumanHintBlock() {
+  // 统一的“去 AI 味”写作约束：续写/修订都复用，避免到处复制导致口径漂移。
+  return [
+    '【写作风格要求：避免明显 AI 味】',
+    '请避免使用以下或其他具有明显 AI 写作特征的表达：',
+    '- 过度使用排比句和对称结构',
+    '- 刻意堆砌华丽辞藻',
+    '- 宏大叙事',
+    '- 滥用形容词',
+    '',
+    '可以做：',
+    '- 减少形容词/叠词的使用',
+    '- 适当添加感官细节：视觉/听觉/味觉/触觉/嗅觉',
+    '- Show, Don’t Tell：不要直接写“他很生气”，而要用可观察动作/细节表现（例如：他把玻璃杯顿在桌上，水溅到了手背上）。',
+    '- 镜头写作：像一台摄像机一样，只描写角色看到了什么、听到了什么、做了什么动作；绝对不要直接描写角色心理活动（如“他感到悲伤”），用细节替代（如“他夹烟的手指微微颤抖”）。'
+  ].join('\n')
+}
+
+function _ainAppendWritingStyleHintToConstraints(constraintsText) {
+  const base = safeText(constraintsText).trim()
+  if (/写作风格要求：避免明显\s*AI\s*味/u.test(base)) return base
+  const hint = _ainWritingStyleHumanHintBlock()
+  return base ? (base + '\n\n' + hint) : hint
 }
 
 function _safeInt(v, fallback) {
@@ -6734,6 +6975,37 @@ async function openBootstrapDialog(ctx) {
   let lastChapter = ''
   let projectTitle = ''
   let lastQuestions = []
+  let agentControl = null
+
+  function _syncAgentCtrlUiPaused(meta) {
+    btnAgentRetry.style.display = ''
+    btnAgentSkip.style.display = (meta && meta.type === 'write') ? 'none' : ''
+  }
+
+  function _syncAgentCtrlUiRunning() {
+    btnAgentRetry.style.display = 'none'
+    btnAgentSkip.style.display = 'none'
+  }
+
+  btnAgentAbort.onclick = () => {
+    try {
+      if (!agentControl || typeof agentControl.abort !== 'function') return
+      agentControl.abort()
+      ctx.ui.notice(t('已发出终止请求', 'Abort requested'), 'ok', 1200)
+    } catch {}
+  }
+  btnAgentRetry.onclick = () => {
+    try {
+      if (!agentControl || typeof agentControl.resume !== 'function') return
+      agentControl.resume('retry')
+    } catch {}
+  }
+  btnAgentSkip.onclick = () => {
+    try {
+      if (!agentControl || typeof agentControl.resume !== 'function') return
+      agentControl.resume('skip')
+    } catch {}
+  }
 
   function renderQuestions() {
     const arr = Array.isArray(lastQuestions) ? lastQuestions : []
@@ -6907,6 +7179,19 @@ async function openBootstrapDialog(ctx) {
         } catch {}
         try { agentProgress.style.display = '' } catch {}
         try { agentLog.textContent = t('Agent 执行中…', 'Agent running...') } catch {}
+
+        try {
+          if (agentControl && typeof agentControl.abort === 'function') agentControl.abort()
+        } catch {}
+        agentControl = _ainCreateAgentRunControl()
+        agentControl.onEvent = (ev, meta) => {
+          if (ev === 'paused') _syncAgentCtrlUiPaused(meta)
+          else _syncAgentCtrlUiRunning()
+          if (ev === 'abort') btnAgentAbort.disabled = true
+        }
+        btnAgentAbort.disabled = false
+        _syncAgentCtrlUiRunning()
+
         out.textContent = t('Agent 执行中…（多轮）', 'Agent running... (multi-round)')
 
         let rag = null
@@ -6924,9 +7209,20 @@ async function openBootstrapDialog(ctx) {
           targetChars,
           chunkCount,
           audit: wantAudit
-        }, { render: renderAgentProgress })
+        }, { render: renderAgentProgress, control: agentControl })
 
+        const aborted = !!(agentControl && agentControl.aborted)
         lastChapter = safeText(res && res.text).trim()
+        out.textContent = lastChapter || (aborted ? t('已终止（无输出）', 'Aborted (no output)') : '')
+        btnAgentAbort.disabled = true
+        _syncAgentCtrlUiRunning()
+        agentControl = null
+
+        if (aborted) {
+          btnAppend.disabled = !lastChapter
+          ctx.ui.notice(t('Agent 已终止（未写入文档）', 'Agent aborted (not inserted)'), 'ok', 1800)
+          return
+        }
       } else {
         const first = await apiFetchChatWithJob(ctx, cfg, {
           mode: 'novel',
@@ -6953,6 +7249,9 @@ async function openBootstrapDialog(ctx) {
       out.textContent = t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e))
     } finally {
       setBusy(btnGen, false)
+      try { btnAgentAbort.disabled = true } catch {}
+      try { _syncAgentCtrlUiRunning() } catch {}
+      agentControl = null
     }
   }
 
@@ -8527,7 +8826,7 @@ async function callNovelRevise(ctx, cfg, baseText, instruction, localConstraints
   const prev = await getPrevTextForRevise(ctx, cfg, text)
   const progress = await getProgressDocText(ctx, cfg)
   const bible = await getBibleDocText(ctx, cfg)
-  const constraints = await mergeConstraintsWithCharState(ctx, cfg, localConstraints)
+  const constraints = _ainAppendWritingStyleHintToConstraints(await mergeConstraintsWithCharState(ctx, cfg, localConstraints))
 
   let rag = null
   try {
