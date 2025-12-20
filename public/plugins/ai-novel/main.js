@@ -5744,26 +5744,13 @@ function safeText(v) {
 }
 
 function _ainWritingStyleHumanHintBlock() {
-  // 统一的“去 AI 味”写作约束：续写/修订都复用，避免到处复制导致口径漂移。
-  return [
-    '【写作风格要求：避免明显 AI 味】',
-    '请避免使用以下或其他具有明显 AI 写作特征的表达：',
-    '- 过度使用排比句和对称结构',
-    '- 刻意堆砌华丽辞藻',
-    '- 宏大叙事',
-    '- 滥用形容词',
-    '',
-    '可以做：',
-    '- 减少形容词/叠词的使用',
-    '- 适当添加感官细节：视觉/听觉/味觉/触觉/嗅觉',
-    '- Show, Don’t Tell：不要直接写“他很生气”，而要用可观察动作/细节表现（例如：他把玻璃杯顿在桌上，水溅到了手背上）。',
-    '- 镜头写作：像一台摄像机一样，只描写角色看到了什么、听到了什么、做了什么动作；绝对不要直接描写角色心理活动（如“他感到悲伤”），用细节替代（如“他夹烟的手指微微颤抖”）。'
-  ].join('\n')
+  // 统一的写作风格约束：续写/修订都复用，避免到处复制导致口径漂移。
+  return '请完全采用‘冰山理论’（Iceberg Theory）写作：只通过客观的动作、环境细节和对话来推动剧情，禁止任何直接的心理描写、形容词堆砌和情感总结。请像电影镜头一样展示画面（Show, don\'t tell）。'
 }
 
 function _ainAppendWritingStyleHintToConstraints(constraintsText) {
   const base = safeText(constraintsText).trim()
-  if (/写作风格要求：避免明显\s*AI\s*味/u.test(base)) return base
+  if (/写作风格要求：避免明显\s*AI\s*味|冰山理论|Iceberg\s*Theory|Show,\s*don'?t\s*tell/u.test(base)) return base
   const hint = _ainWritingStyleHumanHintBlock()
   return base ? (base + '\n\n' + hint) : hint
 }
