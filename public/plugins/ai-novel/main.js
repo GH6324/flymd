@@ -9147,6 +9147,242 @@ async function openRagIndexDialog(ctx) {
   await refresh()
 }
 
+function _ainCountChars(text) {
+  // 统计口径：去掉所有空白字符后的长度（包含中文/英文/数字/标点/Markdown 符号）
+  return safeText(text).replace(/\s+/g, '').length
+}
+
+function _ainPickDocHeading(text) {
+  try {
+    const s = safeText(text).replace(/\r\n/g, '\n')
+    const lines = s.split('\n')
+    for (let i = 0; i < Math.min(30, lines.length); i++) {
+      const line = String(lines[i] || '').trim()
+      if (!line) continue
+      const m = /^#\s+(.+)$/.exec(line)
+      if (m && m[1]) return String(m[1]).trim()
+      break
+    }
+  } catch {}
+  return ''
+}
+
+function _ainStemName(fileName) {
+  const bn = String(fileName || '').trim()
+  const i = bn.lastIndexOf('.')
+  return i > 0 ? bn.slice(0, i) : bn
+}
+
+async function openWordCountDialog(ctx) {
+  let cfg = await loadCfg(ctx)
+  const { body } = createDialogShell(t('字数统计', 'Word count'))
+
+  const sec = document.createElement('div')
+  sec.className = 'ain-card'
+  sec.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${t('章节字数（按卷汇总）', 'Chapter word count (by volume)')}</div>`
+
+  const hint = document.createElement('div')
+  hint.className = 'ain-muted'
+  hint.textContent = t('统计口径：去掉空白字符后的长度。仅统计 03_章节 下的章节文件。', 'Counting: non-whitespace length. Only counts chapter files under 03_章节.')
+  sec.appendChild(hint)
+
+  const row = mkBtnRow()
+  const btnRefresh = document.createElement('button')
+  btnRefresh.className = 'ain-btn'
+  btnRefresh.textContent = t('刷新', 'Refresh')
+  row.appendChild(btnRefresh)
+  sec.appendChild(row)
+
+  const out = document.createElement('div')
+  out.className = 'ain-out'
+  out.style.marginTop = '10px'
+  out.textContent = t('准备就绪。', 'Ready.')
+  sec.appendChild(out)
+
+  const tableWrap = document.createElement('div')
+  tableWrap.className = 'ain-table-wrap'
+  tableWrap.style.marginTop = '10px'
+  const table = document.createElement('table')
+  table.className = 'ain-table'
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>${t('卷/章节', 'Volume / Chapter')}</th>
+        <th class="num">${t('字数', 'Chars')}</th>
+        <th>${t('文件', 'File')}</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `
+  tableWrap.appendChild(table)
+  sec.appendChild(tableWrap)
+
+  body.appendChild(sec)
+
+  async function calcAll() {
+    cfg = await loadCfg(ctx)
+    const inf = await inferProjectDir(ctx, cfg)
+    if (!inf) throw new Error(t('无法推断当前项目：请先在“项目管理”选择项目，或打开项目内任意文件。', 'Cannot infer project: select one or open a file under it.'))
+
+    const chapRoot = joinFsPath(inf.projectAbs, '03_章节')
+    const filesAll = await listMarkdownFilesAny(ctx, chapRoot)
+    const root = normFsPath(chapRoot).replace(/\/+$/, '')
+
+    // 只统计章节文件：03_章节 下的 md
+    const files = (filesAll || [])
+      .map((p) => normFsPath(p))
+      .filter((p) => p && p.startsWith(root + '/') && /\.md$/i.test(p))
+
+    // 按卷分组：03_章节/卷XX_*/xxx.md；无卷则归到“未分卷”
+    const vols = new Map() // volKey -> { key,name,order,chapters:[] }
+    function ensureVol(volKey, name, order) {
+      let v = vols.get(volKey)
+      if (!v) {
+        v = { key: volKey, name: name || volKey, order: order | 0, chapters: [], chars: 0 }
+        vols.set(volKey, v)
+      }
+      return v
+    }
+
+    const projectRoot = normFsPath(inf.projectAbs).replace(/\/+$/, '')
+    for (let i = 0; i < files.length; i++) {
+      const abs = files[i]
+      const rel = abs.slice(projectRoot.length).replace(/^\/+/, '')
+      const relFromChap = abs.slice(root.length).replace(/^\/+/, '')
+      const parts = relFromChap.split('/').filter(Boolean)
+      const first = parts[0] || ''
+      let volKey = ''
+      let volName = ''
+      let volOrder = 0
+      let chapFile = ''
+      if (parseVolumeNoFromDirName(first) > 0) {
+        volKey = first
+        volName = first
+        volOrder = parseVolumeNoFromDirName(first)
+        chapFile = parts[parts.length - 1] || ''
+      } else {
+        volKey = '__root__'
+        volName = t('未分卷', 'No volume')
+        volOrder = 0
+        chapFile = parts[parts.length - 1] || ''
+      }
+      const v = ensureVol(volKey, volName, volOrder)
+      const bn = fsBaseName(abs)
+      const m = /^(\d{3,})_/.exec(bn)
+      const chapNo = m && m[1] ? parseInt(m[1], 10) : 0
+      v.chapters.push({ abs, rel, file: chapFile || bn, chapNo: Number.isFinite(chapNo) ? chapNo : 0, chars: 0, title: '' })
+    }
+
+    // 排序：卷号升序；卷内章节号升序
+    const volArr = Array.from(vols.values()).sort((a, b) => {
+      const av = a.order | 0
+      const bv = b.order | 0
+      if (av !== bv) return av - bv
+      return String(a.name || '').localeCompare(String(b.name || ''))
+    })
+    for (let i = 0; i < volArr.length; i++) {
+      volArr[i].chapters.sort((a, b) => {
+        const ac = a.chapNo | 0
+        const bc = b.chapNo | 0
+        if (ac !== bc) return ac - bc
+        return String(a.file || '').localeCompare(String(b.file || ''))
+      })
+    }
+
+    const chaptersAll = []
+    for (let i = 0; i < volArr.length; i++) {
+      for (let j = 0; j < volArr[i].chapters.length; j++) chaptersAll.push({ vol: volArr[i], chap: volArr[i].chapters[j] })
+    }
+
+    const total = chaptersAll.length
+    let done = 0
+    const concurrency = 4
+    let idx = 0
+
+    async function worker() {
+      while (idx < total) {
+        const cur = idx
+        idx++
+        const item = chaptersAll[cur]
+        let txt = ''
+        try { txt = await readTextAny(ctx, item.chap.abs) } catch { txt = '' }
+        item.chap.chars = _ainCountChars(txt)
+        item.chap.title = _ainPickDocHeading(txt)
+        done++
+        if (done === total || done % 10 === 0) {
+          out.textContent = t('统计中… 已处理 ', 'Counting... done ') + String(done) + '/' + String(total)
+        }
+      }
+    }
+
+    out.textContent = t('统计中…', 'Counting...')
+    const ws = []
+    for (let i = 0; i < concurrency; i++) ws.push(worker())
+    await Promise.all(ws)
+
+    let grand = 0
+    for (let i = 0; i < volArr.length; i++) {
+      let sum = 0
+      for (let j = 0; j < volArr[i].chapters.length; j++) sum += (volArr[i].chapters[j].chars | 0)
+      volArr[i].chars = sum
+      grand += sum
+    }
+
+    return { inf, volArr, grand, total }
+  }
+
+  function render(res) {
+    const tbody = table.querySelector('tbody')
+    if (!tbody) return
+    tbody.innerHTML = ''
+
+    out.textContent =
+      t('当前项目：', 'Project: ') + res.inf.projectRel +
+      '\n' + t('章节数：', 'Chapters: ') + String(res.total) +
+      '\n' + t('总字数：', 'Total chars: ') + String(res.grand)
+
+    for (let i = 0; i < res.volArr.length; i++) {
+      const v = res.volArr[i]
+      const trV = document.createElement('tr')
+      trV.innerHTML = `
+        <td style="font-weight:700">${safeText(v.name)}</td>
+        <td class="num" style="font-weight:700">${String(v.chars | 0)}</td>
+        <td class="mono">${safeText(v.key === '__root__' ? '03_章节/' : ('03_章节/' + v.key + '/'))}</td>
+      `
+      tbody.appendChild(trV)
+
+      for (let j = 0; j < v.chapters.length; j++) {
+        const c = v.chapters[j]
+        const showName = safeText(c.title).trim() ? safeText(c.title).trim() : _ainStemName(c.file)
+        const tr = document.createElement('tr')
+        tr.innerHTML = `
+          <td>　- ${safeText(showName)}</td>
+          <td class="num">${String(c.chars | 0)}</td>
+          <td class="mono">${safeText(c.rel)}</td>
+        `
+        tbody.appendChild(tr)
+      }
+    }
+  }
+
+  btnRefresh.onclick = async () => {
+    try {
+      setBusy(btnRefresh, true)
+      const res = await calcAll()
+      render(res)
+      ctx.ui.notice(t('字数统计已刷新', 'Word count refreshed'), 'ok', 1400)
+    } catch (e) {
+      out.textContent = t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e))
+      ctx.ui.notice(t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
+    } finally {
+      setBusy(btnRefresh, false)
+    }
+  }
+
+  // 打开即跑一次（失败不阻塞）
+  try { void btnRefresh.onclick() } catch {}
+}
+
 async function openProgressUpdateDialog(ctx) {
   let cfg = await loadCfg(ctx)
   if (!cfg.token) throw new Error(t('请先登录后端', 'Please login first'))
@@ -9927,6 +10163,16 @@ export function activate(context) {
           onClick: async () => {
             try {
               await openProjectManagerDialog(context)
+            } catch (e) {
+              context.ui.notice(t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
+            }
+          }
+        },
+        {
+          label: t('字数统计', 'Word count'),
+          onClick: async () => {
+            try {
+              await openWordCountDialog(context)
             } catch (e) {
               context.ui.notice(t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
             }
