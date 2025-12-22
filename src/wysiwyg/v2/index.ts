@@ -1100,10 +1100,12 @@ function setupCodeCopyOverlay(host: HTMLElement | null) {
   _codeCopyHost = scrollHost
   const onScroll = () => { scheduleCodeCopyRefresh() }
   _codeCopyScrollHandler = onScroll
-  // 同时绑定到 scrollHost 和其父容器，确保滚动事件被捕获
-  try { scrollHost.addEventListener('scroll', onScroll, { passive: true }) } catch { try { scrollHost.addEventListener('scroll', onScroll) } catch {} }
-  // 额外绑定到 _root，捕获可能的冒泡事件
-  try { if (_root && _root !== scrollHost) _root.addEventListener('scroll', onScroll, { passive: true, capture: true }) } catch {}
+  // 绑定到 scrollHost，滚动事件会自然冒泡
+  try {
+    scrollHost.addEventListener('scroll', onScroll, { passive: true })
+  } catch {
+    try { scrollHost.addEventListener('scroll', onScroll) } catch {}
+  }
   if (typeof ResizeObserver !== 'undefined') {
     try {
       _codeCopyResizeObserver = new ResizeObserver(() => { scheduleCodeCopyRefresh() })

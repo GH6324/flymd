@@ -4615,7 +4615,7 @@ body::-webkit-scrollbar:horizontal,
 .preview::-webkit-scrollbar:vertical,
 #md-wysiwyg-root .scrollView::-webkit-scrollbar:vertical,
 #md-wysiwyg-root::-webkit-scrollbar:vertical {
-  width: 12px;
+  width: 16px;
 }
 /* 侧栏滚动条更细 */
 .library::-webkit-scrollbar:vertical {
@@ -4625,9 +4625,7 @@ body::-webkit-scrollbar:horizontal,
 #md-wysiwyg-root .scrollView::-webkit-scrollbar-thumb,
 #md-wysiwyg-root::-webkit-scrollbar-thumb {
   background: rgba(127,127,127,0.3);
-  border-radius: 6px;
-  border: 3px solid transparent;
-  background-clip: content-box;
+  border-radius: 8px;
   transition: background 0.2s ease;
 }
 .library::-webkit-scrollbar-thumb {
@@ -4638,7 +4636,6 @@ body::-webkit-scrollbar:horizontal,
 #md-wysiwyg-root .scrollView::-webkit-scrollbar-thumb:hover,
 #md-wysiwyg-root::-webkit-scrollbar-thumb:hover {
   background: rgba(127,127,127,0.5);
-  background-clip: content-box;
 }
 .library::-webkit-scrollbar-thumb:hover {
   background: rgba(127,127,127,0.35);
