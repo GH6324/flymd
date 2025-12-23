@@ -4042,6 +4042,7 @@ async function openWriteWithChoiceDialog(ctx) {
     const arr0 = Array.isArray(_castState.items) ? _castState.items : []
     const seen = new Set()
     const rows = []
+    const must = []
     for (let i = 0; i < arr0.length; i++) {
       const it = normCastItem(arr0[i])
       if (!it.name) continue
@@ -4053,13 +4054,110 @@ async function openWriteWithChoiceDialog(ctx) {
       parts.push(t('下一章：', 'Next: ') + (it.appear ? t('出场', 'appear') : t('不出场', 'not appear')))
       if (it.plan) parts.push(t('走向：', 'Arc: ') + it.plan)
       rows.push('- ' + it.name + (parts.length ? ('：' + parts.join('；')) : ''))
+      if (it.appear) must.push(it.name)
     }
     if (!rows.length) return ''
+    const mustLine = must.length ? (t('本章必须出场：', 'Must appear: ') + must.join('、')) : ''
     return [
       t('【人物走向（用户指定）】', '[Character steering (user)]'),
       ...rows,
-      t('规则：勾选“出场”的人物，下一章至少出现一次或有一句话交代；未勾选但写了“走向”的，也需要一句话交代。', 'Rule: If marked appear, the character must show up or be mentioned at least once; if not appear but has an arc, add one-sentence update.')
+      mustLine,
+      t('硬性要求：勾选“出场”的人物，必须在正文叙事中点名出现（对话/行动/旁白交代均可），不允许只在总结/设定里提；缺席视为失败，需要改到满足为止。', 'Hard rule: Characters marked appear must be explicitly present in the prose (dialog/action/narration). Mentioning only in summary/notes is not acceptable; missing means failed and must be revised until satisfied.'),
+      t('若“必须出场”人数过多：每人一句话交代即可，不要硬加长戏。', 'If too many must-appear characters: one sentence each is enough; do not bloat the prose.')
+    ].filter(Boolean).join('\n')
+  }
+
+  function _ainCastGetMustAppearItems() {
+    const arr0 = Array.isArray(_castState.items) ? _castState.items : []
+    const seen = new Set()
+    const out = []
+    for (let i = 0; i < arr0.length; i++) {
+      const it = normCastItem(arr0[i])
+      if (!it.name || !it.appear) continue
+      const key = it.name
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(it)
+    }
+    return out
+  }
+
+  function _ainCastFindMissingMustAppearItems(text) {
+    const t0 = safeText(text)
+    const must = _ainCastGetMustAppearItems()
+    if (!t0 || !must.length) return []
+    const missing = []
+    for (let i = 0; i < must.length; i++) {
+      const it = must[i]
+      const nm = safeText(it && it.name).trim()
+      if (!nm) continue
+      if (t0.indexOf(nm) >= 0) continue
+      missing.push(it)
+    }
+    return missing
+  }
+
+  function _ainCastBuildFixInstruction(missing) {
+    const arr = Array.isArray(missing) ? missing : []
+    const rows = []
+    for (let i = 0; i < arr.length; i++) {
+      const it = normCastItem(arr[i])
+      if (!it.name) continue
+      const parts = []
+      if (it.status) parts.push(t('上一章：', 'Prev: ') + it.status)
+      if (it.plan) parts.push(t('下一章走向：', 'Next arc: ') + it.plan)
+      rows.push('- ' + it.name + (parts.length ? ('（' + parts.join('；') + '）') : ''))
+    }
+    return [
+      t('任务：在不改变剧情主线与整体结构的前提下，补写/改写正文，让下列“必须出场”的人物在本章正文中至少出现一次（对话/行动/旁白交代均可），尽量少改动其它内容。', 'Task: Without changing the main plot/structure, revise the prose so the following must-appear characters are explicitly present at least once (dialog/action/narration), with minimal other changes.'),
+      t('缺席人物：', 'Missing characters:'),
+      ...(rows.length ? rows : [t('- （无）', '- (none)')]),
+      t('硬性要求：不得只在总结/设定里提名字，必须出现在正文叙事中；若实在无法合理出场，至少加一句旁白交代其当前去向/状态。', 'Hard rule: Names must appear in the prose (not only in summary/notes). If a full appearance is impossible, add at least one sentence of narration to explain their current status/whereabouts.'),
+      t('输出：只返回修改后的完整正文。', 'Output: Return the full revised prose only.')
     ].join('\n')
+  }
+
+  async function _ainCastEnsureMustAppearInText(text, localConstraints) {
+    const base = safeText(text).trim()
+    if (!base) return base
+
+    const missing0 = _ainCastFindMissingMustAppearItems(base)
+    if (!missing0.length) return base
+
+    try {
+      const names = missing0.map((x) => safeText(x && x.name).trim()).filter(Boolean)
+      ctx.ui.notice(t('检测到人物未出场，自动补齐中：', 'Some characters missing; auto-fixing: ') + names.join('、'), 'ok', 2400)
+    } catch {}
+
+    const inst = _ainCastBuildFixInstruction(missing0)
+    let fixed = ''
+    try {
+      const r = await callNovelRevise(ctx, cfg, base, inst, localConstraints, null, {
+        timeoutMs: 240000,
+        onTick: ({ waitMs }) => {
+          try {
+            const s = Math.max(0, Math.round(Number(waitMs || 0) / 1000))
+            out.textContent = t('补齐人物出场中… 已等待 ', 'Auto-fixing cast... waited ') + s + 's'
+          } catch {}
+        }
+      })
+      fixed = safeText(r && r.json && r.json.text).trim()
+    } catch (e) {
+      try { ctx.ui.notice(t('自动补齐失败：', 'Auto-fix failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600) } catch {}
+      return base
+    }
+
+    if (!fixed) return base
+
+    const missing1 = _ainCastFindMissingMustAppearItems(fixed)
+    if (missing1.length) {
+      try {
+        const names = missing1.map((x) => safeText(x && x.name).trim()).filter(Boolean)
+        ctx.ui.notice(t('已尝试补齐，但仍缺席：', 'Still missing after auto-fix: ') + names.join('、'), 'err', 3200)
+      } catch {}
+    }
+
+    return fixed
   }
 
   const castCard = document.createElement('div')
@@ -4082,12 +4180,20 @@ async function openWriteWithChoiceDialog(ctx) {
   btnCastAdd.className = 'ain-btn gray'
 
   btnCastAdd.textContent = t('添加人物', 'Add')
+  const btnCastAll = document.createElement('button')
+  btnCastAll.className = 'ain-btn gray'
+  btnCastAll.textContent = t('全选', 'Select all')
+  const btnCastNone = document.createElement('button')
+  btnCastNone.className = 'ain-btn gray'
+  btnCastNone.textContent = t('取消全选', 'Unselect all')
   const btnCastClear = document.createElement('button')
   btnCastClear.className = 'ain-btn gray'
 
   btnCastClear.textContent = t('清空', 'Clear')
   castTools.appendChild(btnCastExtract)
   castTools.appendChild(btnCastAdd)
+  castTools.appendChild(btnCastAll)
+  castTools.appendChild(btnCastNone)
   castTools.appendChild(btnCastClear)
   castCard.appendChild(castTools)
 
@@ -4314,6 +4420,22 @@ async function openWriteWithChoiceDialog(ctx) {
     }
     renderCastList()
   }
+  function _ainCastSetAllAppear(v) {
+    try {
+      const arr = Array.isArray(_castState.items) ? _castState.items.slice(0) : []
+      for (let i = 0; i < arr.length; i++) {
+        const it = normCastItem(arr[i])
+        it.appear = !!v
+        arr[i] = it
+      }
+      _castState.items = arr
+    } catch {
+      _castState.items = []
+    }
+    renderCastList()
+  }
+  btnCastAll.onclick = () => { _ainCastSetAllAppear(true) }
+  btnCastNone.onclick = () => { _ainCastSetAllAppear(false) }
   btnCastClear.onclick = () => {
     _castState.items = []
     renderCastList()
@@ -4821,8 +4943,10 @@ async function openWriteWithChoiceDialog(ctx) {
         }, { render: renderAgentProgress, control: agentControl })
 
         const aborted = !!(agentControl && agentControl.aborted)
-        lastText = safeText(res && res.text).trim()
-        lastText = _ainMaybeTypesetWebNovel(cfg, lastText)
+        let text0 = safeText(res && res.text).trim()
+        text0 = await _ainCastEnsureMustAppearInText(text0, localConstraints)
+        text0 = _ainMaybeTypesetWebNovel(cfg, text0)
+        lastText = text0
         out.textContent = lastText || (aborted ? t('已终止（无输出）', 'Aborted (no output)') : '')
         btnAgentAbort.disabled = true
         _syncAgentCtrlUiRunning()
@@ -4865,9 +4989,11 @@ async function openWriteWithChoiceDialog(ctx) {
           out.textContent = t('续写中…（最多等 3 分钟）已等待 ', 'Writing... (up to 3 minutes) waited ') + s + 's'
         }
       })
-      lastText = safeText(r && r.text).trim()
-      if (!lastText) throw new Error(t('后端未返回正文', 'Backend returned empty text'))
-      lastText = _ainMaybeTypesetWebNovel(cfg, lastText)
+      let text0 = safeText(r && r.text).trim()
+      if (!text0) throw new Error(t('后端未返回正文', 'Backend returned empty text'))
+      text0 = await _ainCastEnsureMustAppearInText(text0, localConstraints)
+      text0 = _ainMaybeTypesetWebNovel(cfg, text0)
+      lastText = text0
       out.textContent = lastText
       btnAppend.disabled = false
       btnAppendDraft.disabled = false
@@ -4961,8 +5087,10 @@ async function openWriteWithChoiceDialog(ctx) {
         }, { render: renderAgentProgress, control: agentControl })
 
         const aborted = !!(agentControl && agentControl.aborted)
-        lastText = safeText(res && res.text).trim()
-        lastText = _ainMaybeTypesetWebNovel(cfg, lastText)
+        let text0 = safeText(res && res.text).trim()
+        text0 = await _ainCastEnsureMustAppearInText(text0, localConstraints)
+        text0 = _ainMaybeTypesetWebNovel(cfg, text0)
+        lastText = text0
         out.textContent = lastText || (aborted ? t('已终止（无输出）', 'Aborted (no output)') : '')
         btnAgentAbort.disabled = true
         _syncAgentCtrlUiRunning()
@@ -5005,9 +5133,11 @@ async function openWriteWithChoiceDialog(ctx) {
           out.textContent = t('续写中…（不走候选）已等待 ', 'Writing... (no options) waited ') + s + 's'
         }
       })
-      lastText = safeText(r && r.text).trim()
-      if (!lastText) throw new Error(t('后端未返回正文', 'Backend returned empty text'))
-      lastText = _ainMaybeTypesetWebNovel(cfg, lastText)
+      let text0 = safeText(r && r.text).trim()
+      if (!text0) throw new Error(t('后端未返回正文', 'Backend returned empty text'))
+      text0 = await _ainCastEnsureMustAppearInText(text0, localConstraints)
+      text0 = _ainMaybeTypesetWebNovel(cfg, text0)
+      lastText = text0
       out.textContent = lastText
       btnAppend.disabled = false
       btnAppendDraft.disabled = false
@@ -9909,7 +10039,7 @@ async function openProgressUpdateDialog(ctx) {
   }
 }
 
-async function callNovelRevise(ctx, cfg, baseText, instruction, localConstraints, history) {
+async function callNovelRevise(ctx, cfg, baseText, instruction, localConstraints, history, opt) {
   if (!cfg || !cfg.token) throw new Error(t('请先登录后端', 'Please login first'))
   if (!cfg.upstream || !cfg.upstream.baseUrl || !cfg.upstream.model) {
     throw new Error(t('请先在设置里填写上游 BaseURL 和模型', 'Please set upstream BaseURL and model in Settings first'))
@@ -9948,7 +10078,11 @@ async function callNovelRevise(ctx, cfg, baseText, instruction, localConstraints
       constraints: constraints || undefined,
       rag: rag || undefined
     }
-  }, { timeoutMs: 240000 })
+  }, {
+    timeoutMs: (opt && typeof opt === 'object' && opt.timeoutMs) ? Number(opt.timeoutMs) : 240000,
+    onTick: (opt && typeof opt === 'object' && typeof opt.onTick === 'function') ? opt.onTick : undefined,
+    control: (opt && typeof opt === 'object' && opt.control && typeof opt.control === 'object') ? opt.control : undefined,
+  })
 
   const ctxMeta = (() => {
     try {
@@ -10601,7 +10735,7 @@ export function activate(context) {
           }
         },
         {
-          label: t('一键开坑（从0开始）', 'Start from zero (auto first chapter)'),
+          label: t('一键开坑', 'Start from zero (auto first chapter)'),
           onClick: async () => {
             try {
               await openBootstrapDialog(context)
@@ -10611,7 +10745,7 @@ export function activate(context) {
           }
         },
         {
-          label: t('导入现有文稿（初始化资料）', 'Import existing writing (init meta)'),
+          label: t('导入现有文稿', 'Import existing writing (init meta)'),
           onClick: async () => {
             try {
               await openImportExistingDialog(context)
@@ -10642,7 +10776,7 @@ export function activate(context) {
           }
         },
         {
-          label: t('开始下一章（新建章节文件）', 'Start next chapter (new file)'),
+          label: t('开始下一章', 'Start next chapter (new file)'),
           onClick: async () => {
             try {
               await novel_create_next_chapter(context)
