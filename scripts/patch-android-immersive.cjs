@@ -58,8 +58,6 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsController
 import android.view.WindowManager
 import app.tauri.TauriActivity
 
@@ -84,18 +82,6 @@ class MainActivity : TauriActivity() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
       window.attributes.layoutInDisplayCutoutMode =
         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-    }
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-      // 让内容绘制到系统栏区域（配合前端 viewport-fit=cover + safe-area）
-      window.setDecorFitsSystemWindows(false)
-      val controller = window.insetsController
-      if (controller != null) {
-        controller.hide(WindowInsets.Type.systemBars())
-        controller.systemBarsBehavior =
-          WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-      }
-      return
     }
 
     @Suppress("DEPRECATION")
