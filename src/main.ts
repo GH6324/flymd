@@ -47,10 +47,11 @@ import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConf
 // 平台适配层（Android 支持）
 import { initPlatformIntegration } from './platform-integration'
 import { ensureAndroidDefaultLibraryRoot } from './platform/androidLibrary'
+import { safListDir, persistSafUriPermission } from './platform/androidSaf'
 import { createImageUploader } from './core/imageUpload'
 import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
 import type { InstallableItem } from './extensions/market'
-import { listDirOnce, type LibEntry } from './core/libraryFs'
+import { isSupportedDoc, listDirOnce, type LibEntry } from './core/libraryFs'
 import { normSep, isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe } from './core/fsSafe'
 import { getLibrarySort, setLibrarySort, type LibSortMode } from './core/librarySort'
 import { searchLibraryFilesByName, type LibrarySearchResult } from './core/librarySearch'
@@ -6064,6 +6065,122 @@ async function pickLibraryRoot(): Promise<string | null> {
   }
 }
 
+// Android：从外置文件夹（SAF）导入为一个“本地库”（避免把 content:// 当成普通路径导致全盘崩溃）
+async function importAndroidSafFolderAsLocalLibrary(): Promise<void> {
+  try {
+    const platform = await (async () => {
+      try { return await invoke<string>('get_platform') } catch { return '' }
+    })()
+    if (platform !== 'android') {
+      alert('仅 Android 可用')
+      return
+    }
+
+    const sel = await open({ directory: true, multiple: false } as any)
+    if (!sel) return
+    const uri = normalizePath(sel)
+    if (!uri || !uri.startsWith('content://')) {
+      alert('请选择外置存储中的文件夹（SAF）')
+      return
+    }
+    try { await persistSafUriPermission(uri) } catch {}
+
+    // 目标：AppLocalData/flymd/library/<name>（新库）
+    const base = (await appLocalDataDir()).replace(/[\\/]+$/, '')
+    const sep = base.includes('\\') ? '\\' : '/'
+    const join = (a: string, b: string) => (a.endsWith(sep) ? a + b : a + sep + b)
+    const libsRoot = join(join(base, 'flymd'), 'library')
+    await mkdir(libsRoot as any, { recursive: true } as any)
+
+    const rawName = await openRenameDialog('导入库', '')
+    const name = (rawName || '').trim() || '导入库'
+    const safeBase =
+      name.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() || ('import-' + Date.now())
+
+    let dirName = safeBase
+    let root = join(libsRoot, dirName)
+    let n = 1
+    while (await exists(root)) {
+      n += 1
+      dirName = `${safeBase}-${n}`
+      root = join(libsRoot, dirName)
+    }
+    await mkdir(root as any, { recursive: true } as any)
+
+    const skipDir = (d: string) => {
+      const s = String(d || '').trim()
+      if (!s) return true
+      if (s === '.' || s === '..') return true
+      if (s === '.git' || s === 'node_modules' || s === '.flymd') return true
+      return false
+    }
+
+    const sanitizeLocalName = (s: string) =>
+      String(s || '')
+        .replace(/[\\/:*?"<>|]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+
+    const uniqueLocalPath = async (dir: string, fileName: string): Promise<string> => {
+      const baseName = sanitizeLocalName(fileName) || 'untitled.md'
+      const m = baseName.match(/^(.*?)(\.[^.]+)?$/)
+      const stem = m?.[1] || baseName
+      const ext = m?.[2] || ''
+      let cur = baseName
+      let i = 1
+      while (await exists(dir + sep + cur)) {
+        i += 1
+        cur = `${stem}-${i}${ext}`
+      }
+      return dir + sep + cur
+    }
+
+    let copied = 0
+    const copyDir = async (fromUri: string, toDir: string, depth = 0): Promise<void> => {
+      if (depth > 32) return
+      const ents = await safListDir(fromUri)
+      for (const it of ents) {
+        const name2 = String(it?.name || '').trim()
+        const p2 = String(it?.path || '').trim()
+        if (!name2 || !p2) continue
+        if (it.isDir) {
+          if (skipDir(name2)) continue
+          const childDirName = sanitizeLocalName(name2)
+          if (!childDirName) continue
+          const nextLocal = toDir + sep + childDirName
+          try { await mkdir(nextLocal as any, { recursive: true } as any) } catch {}
+          // eslint-disable-next-line no-await-in-loop
+          await copyDir(p2, nextLocal, depth + 1)
+          continue
+        }
+        // 只导入“库支持的文档”；pdf 属于二进制，当前不导入（后续需要 bytes 读写）
+        if (!isSupportedDoc(name2) || /\.pdf$/i.test(name2)) continue
+        let text = ''
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          text = await readTextFileAnySafe(p2)
+        } catch {
+          continue
+        }
+        const dst = await uniqueLocalPath(toDir, name2)
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await writeTextFile(dst as any, text, {} as any)
+          copied += 1
+        } catch {}
+      }
+    }
+
+    await copyDir(uri, root, 0)
+    await upsertLibrary({ id: `android-import-${Date.now()}`, name, root })
+
+    try { alert(`导入完成：${copied} 个文件`) } catch {}
+    await refreshLibraryUiAndTree(true)
+  } catch (e) {
+    showError('导入外置文件夹失败', e)
+  }
+}
+
 // 通用重命名帮助函数：弹出对话框并在文件树/当前文档中同步路径
 async function renamePathWithDialog(path: string): Promise<string | null> {
   try {
@@ -6536,6 +6653,9 @@ async function showLibraryMenu() {
   const anchor = document.getElementById('lib-choose') as HTMLButtonElement | null
   if (!anchor) return
   try {
+    const platform = await (async () => {
+      try { return await invoke<string>('get_platform') } catch { return '' }
+    })()
     const libs = await getLibraries()
     const activeId = await getActiveLibraryId()
     const items: TopMenuItemSpec[] = []
@@ -6552,6 +6672,9 @@ async function showLibraryMenu() {
     }
     // 末尾操作项
     items.push({ label: '新增库…', action: async () => { const p = await pickLibraryRoot(); if (p) await refreshLibraryUiAndTree(true) } })
+    if (platform === 'android') {
+      items.push({ label: '从外置文件夹导入…', action: async () => { await importAndroidSafFolderAsLocalLibrary() } })
+    }
     items.push({ label: '重命名当前库…', action: async () => {
       const id = await getActiveLibraryId(); if (!id) return
       const libs2 = await getLibraries()
