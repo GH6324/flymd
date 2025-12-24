@@ -1396,11 +1396,24 @@ function _ainSplitNameAliases(name) {
   const base = s1.replace(/\s*[（(].*?[)）]\s*$/g, '').trim()
   const arr = []
   if (base) arr.push(base)
+  // 常见：中文名中间点（哈维尔·加西亚）=> 哈维尔
+  try {
+    if (base && base.includes('·')) {
+      const p = base.indexOf('·')
+      const first = base.slice(0, p).trim()
+      if (first) arr.push(first)
+    }
+  } catch {}
   // 英文别名也收一下（可选）
   const m = /[（(]\s*([^()（）]{1,40})\s*[)）]\s*$/.exec(s1)
   if (m && m[1]) {
     const a = String(m[1]).trim()
     if (a) arr.push(a)
+    // 英文名取首词（Javier Garcia => Javier），方便与“简称/口语”对齐
+    try {
+      const parts = a.split(/\s+/g).filter(Boolean)
+      if (parts.length >= 2 && parts[0] && parts[0].length <= 16) arr.push(parts[0])
+    } catch {}
   }
   // 去重
   return Array.from(new Set(arr)).filter(Boolean)
@@ -1431,8 +1444,8 @@ function _ainParseNamesFromStyleBlock(mdText) {
   for (let i = 0; i < lines.length; i++) {
     const line = String(lines[i] || '').trim()
     if (!line) continue
-    // 约定：风格卡按人物分节：### 名字
-    const m = /^###\s+(.+)$/.exec(line)
+    // 约定：风格卡按人物分节：### 名字（模型有时会输出 ####/#####，这里做兼容）
+    const m = /^#{3,6}\s+(.+)$/.exec(line)
     if (!m || !m[1]) continue
     const nm0 = String(m[1]).trim()
     out.push(..._ainSplitNameAliases(nm0))
@@ -4734,18 +4747,23 @@ async function openWriteWithChoiceDialog(ctx) {
       const items = _ainCharStateParseItemsFromBlock(stateBlock)
       const stateNames = _ainUniqNames(items.map((x) => safeText(x && x.name))).filter(_ainLikelyPersonName)
 
-      const mainRaw = await getMainCharactersDocRaw(ctx, cfg)
-      const mainNames = new Set(_ainParseNamesFromMainCharsDoc(mainRaw).map(_ainNormName).filter(Boolean))
+      // 本章“出场勾选名单”比全量人物状态更贴近写作需求；有勾选时优先用它做检测基准
+      const uiMust = _getMustAppearNamesInUi()
+      const baseNames = (uiMust && uiMust.length) ? uiMust : stateNames
 
-      const styleRaw = _styleLastBlockFull ? _styleLastBlockFull : safeText(await getStyleDocRaw(ctx, cfg))
-      const styleBlock = _ainStylePickLatestBlock(styleRaw)
-      const styleNames = new Set(_ainParseNamesFromStyleBlock(styleBlock).map(_ainNormName).filter(Boolean))
+      // “是否已写入风格卡”应以整个 08_人物风格.md 为准，而不是只看最新快照块；
+      // 否则用户之前写过的人物，只要最近一次更新没覆盖到，就会被误判为“缺风格”。
+      const styleRawAll = safeText(await getStyleDocRaw(ctx, cfg))
+      const styleNames = new Set(
+        _ainParseNamesFromStyleBlock(styleRawAll)
+          .map(_ainNormName)
+          .filter((x) => x && _ainLikelyPersonName(x))
+      )
 
       const missing = []
-      for (let i = 0; i < stateNames.length; i++) {
-        const nm = stateNames[i]
+      for (let i = 0; i < baseNames.length; i++) {
+        const nm = baseNames[i]
         if (!nm) continue
-        if (mainNames.has(nm)) continue
         if (styleNames.has(nm)) continue
         missing.push(nm)
         if (missing.length >= 20) break
