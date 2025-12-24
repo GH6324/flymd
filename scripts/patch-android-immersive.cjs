@@ -40,79 +40,105 @@ function findMainActivityKotlin(projectRoot) {
 
 function patchMainActivity(filePath) {
   const original = fs.readFileSync(filePath, 'utf8')
-  if (original.includes('flymd:immersive-fullscreen')) {
-    console.log(`[patch-android-immersive] 已打过补丁，跳过: ${filePath}`)
+  // v2：不再重写整个文件（避免破坏模板对 TauriActivity 的导入路径）
+  if (original.includes('flymd:immersive-fullscreen-v2')) {
+    console.log(`[patch-android-immersive] 已打过补丁(v2)，跳过: ${filePath}`)
     return true
   }
 
-  const m = original.match(/^\s*package\s+([a-zA-Z0-9_.]+)\s*$/m)
-  const pkg = m ? m[1] : null
-  if (!pkg) {
-    console.warn(`[patch-android-immersive] 未找到 package 行，跳过: ${filePath}`)
+  let content = original
+
+  const mainClassLine = content.match(/^(\s*class\s+MainActivity\b[^\n]*)$/m)?.[1]
+  if (!mainClassLine) {
+    console.warn(`[patch-android-immersive] 未找到 MainActivity 类声明，跳过: ${filePath}`)
     return false
   }
 
-  const content = `package ${pkg}
+  const classHasBody = mainClassLine.includes('{') || /class\s+MainActivity\b[^{\n]*\{/.test(content)
+  const hasOnCreate = /override\s+fun\s+onCreate\s*\(/.test(content)
+  const hasOnResume = /override\s+fun\s+onResume\s*\(/.test(content)
+  const hasOnWindowFocusChanged = /override\s+fun\s+onWindowFocusChanged\s*\(/.test(content)
 
-import android.graphics.Color
-import android.os.Build
-import android.os.Bundle
-import android.view.View
-import android.view.WindowManager
-import app.tauri.TauriActivity
+  // 0) 如果模板是 `class MainActivity : ...()`（无 class body），先补上 `{ ... }`，避免后续找不到 `}` 插入点
+  if (!classHasBody) {
+    content = content.replace(/^(\s*class\s+MainActivity\b[^\n]*)$/m, (line) => `${line.trimEnd()} {`)
+  }
 
-/**
- * flymd:immersive-fullscreen
- * 沉浸式全屏：隐藏状态栏/导航栏，让 WebView 内容延伸到系统栏区域。
- *
- * 说明：
- * - 不依赖 androidx.core（避免 Kotlin 编译期缺依赖）
- * - Android 会在切后台/旋转/恢复焦点时“复活”系统栏，因此需要在 onResume/onWindowFocusChanged 里重复应用。
- *
- * 参考：
- * - https://github.com/orgs/tauri-apps/discussions/9261
- */
-class MainActivity : TauriActivity() {
-  private fun applyImmersiveFullscreen() {
-    // 透明系统栏（即使被临时拉出，也尽量不挡内容）
-    window.statusBarColor = Color.TRANSPARENT
-    window.navigationBarColor = Color.TRANSPARENT
+  // 1) 尝试在已有的生命周期里插入一次调用（即使没命中，我们也会在缺失时注入 override 兜底）
+  if (!content.includes('flymdApplyImmersiveFullscreen()')) {
+    content = content.replace(
+      /^(\s*)super\.onCreate\([^)]*\)\s*$/m,
+      (line, indent) => `${line}\n${indent}flymdApplyImmersiveFullscreen()`,
+    )
+    content = content.replace(
+      /^(\s*)super\.onResume\(\)\s*$/m,
+      (line, indent) => `${line}\n${indent}flymdApplyImmersiveFullscreen()`,
+    )
+    content = content.replace(
+      /^(\s*)super\.onWindowFocusChanged\(\s*hasFocus\s*\)\s*$/m,
+      (line, indent) => `${line}\n${indent}if (hasFocus) flymdApplyImmersiveFullscreen()`,
+    )
+  }
 
-    // 刘海屏：允许内容延伸到 cutout 区域（短边）
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-      window.attributes.layoutInDisplayCutoutMode =
-        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+  // 2) 在类末尾注入方法与 override（使用全限定名，避免新增 import 触发 Kotlin/Gradle 依赖问题）
+  const block = `
+  // flymd:immersive-fullscreen-v2
+  private fun flymdApplyImmersiveFullscreen() {
+    try {
+      window.statusBarColor = android.graphics.Color.TRANSPARENT
+      window.navigationBarColor = android.graphics.Color.TRANSPARENT
+
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+        window.attributes.layoutInDisplayCutoutMode =
+          android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+      }
+
+      @Suppress("DEPRECATION")
+      window.decorView.systemUiVisibility =
+        android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+          android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+          android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+          android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+          android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+          android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+    } catch (_: Throwable) {
     }
-
-    @Suppress("DEPRECATION")
-    window.decorView.systemUiVisibility =
-      View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-        View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
-        View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-        View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-        View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-        View.SYSTEM_UI_FLAG_FULLSCREEN
   }
 
-  override fun onCreate(savedInstanceState: Bundle?) {
+${hasOnCreate ? '' : `
+  override fun onCreate(savedInstanceState: android.os.Bundle?) {
     super.onCreate(savedInstanceState)
-    applyImmersiveFullscreen()
-  }
+    flymdApplyImmersiveFullscreen()
+  }`}
 
+${hasOnResume ? '' : `
   override fun onResume() {
     super.onResume()
-    applyImmersiveFullscreen()
-  }
+    flymdApplyImmersiveFullscreen()
+  }`}
 
+${hasOnWindowFocusChanged ? '' : `
   override fun onWindowFocusChanged(hasFocus: Boolean) {
     super.onWindowFocusChanged(hasFocus)
-    if (hasFocus) applyImmersiveFullscreen()
-  }
-}
+    if (hasFocus) flymdApplyImmersiveFullscreen()
+  }`}
 `
 
+  if (!classHasBody) {
+    // 我们刚把 MainActivity 从一行 class 补成了 `{`，现在补上内容与结尾 `}`
+    content = `${content.trimEnd()}\n${block}\n}\n`
+  } else {
+    // 简单定位最后一个顶层 '}' 作为 class 结束符插入点（模板 MainActivity 通常只有一个顶层 class）
+    const idx = content.lastIndexOf('}')
+    if (idx < 0) {
+      console.warn(`[patch-android-immersive] 未找到类结束符 '}'，跳过: ${filePath}`)
+      return false
+    }
+    content = content.slice(0, idx) + block + '\n}\n'
+  }
+
   fs.writeFileSync(filePath, content, 'utf8')
-  console.log(`[patch-android-immersive] 已写入补丁: ${filePath}`)
+  console.log(`[patch-android-immersive] 已写入补丁(v2): ${filePath}`)
   return true
 }
 
