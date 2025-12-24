@@ -3,7 +3,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Manager, Emitter, State};
+use tauri::{Manager, State};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use tauri::Emitter;
 // 全局共享：保存通过“打开方式/默认程序”传入且可能早于前端监听的文件路径
 #[derive(Default)]
 struct PendingOpenPath(std::sync::Mutex<Option<String>>);
@@ -148,6 +150,7 @@ fn is_markdown_like_path(path: &std::path::Path) -> bool {
 }
 
 // 统一的“打开方式/默认程序”事件分发：写入 PendingOpenPath，并向前端发送 open-file 事件
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn dispatch_open_file_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, path: &std::path::Path) {
   if !is_supported_doc_path(path) {
     return;
@@ -942,8 +945,11 @@ pub fn run() {
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_store::Builder::default().build())
     .plugin(tauri_plugin_opener::init())
-    .plugin(tauri_plugin_http::init())
-    .plugin(tauri_plugin_window_state::Builder::default().build());
+    .plugin(tauri_plugin_http::init());
+
+  // window-state 插件明确不支持 Android/iOS（crate 内部 cfg 直接禁用），因此移动端必须跳过
+  #[cfg(not(any(target_os = "android", target_os = "ios")))]
+  let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
 
   #[cfg(target_os = "macos")]
   let builder = builder.plugin(init_macos_open_plugin());
@@ -1010,7 +1016,8 @@ pub fn run() {
           dispatch_open_file_event(&app_handle, &p);
         }
       }
-      // 其它初始化逻辑
+      // 其它初始化逻辑（移动端没有 show/focus 概念，且相关 API 不可用）
+      #[cfg(not(any(target_os = "android", target_os = "ios")))]
       if let Some(win) = app.get_webview_window("main") {
         #[cfg(target_os = "windows")]
         {
@@ -1858,6 +1865,7 @@ async fn run_installer(path: String) -> Result<(), String> {
   }
   #[cfg(not(target_os = "windows"))]
   {
+    let _ = path;
     Err("run_installer only supports Windows".into())
   }
 }

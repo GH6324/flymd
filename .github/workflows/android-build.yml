@@ -76,6 +76,9 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      - name: 生成/检查 Tauri 图标
+        run: node scripts/ensure-icons.cjs
+
       - name: 初始化 Tauri Android 项目
         run: |
           npm install -g @tauri-apps/cli
