@@ -986,6 +986,11 @@ pub fn run() {
       android_read_uri,
       android_write_uri,
       android_persist_uri_permission,
+      android_saf_list_dir,
+      android_saf_create_file,
+      android_saf_create_dir,
+      android_saf_delete,
+      android_saf_rename,
       get_cli_args,
       get_platform,
       get_virtual_screen_size,
@@ -1051,6 +1056,15 @@ struct VirtualScreenSize {
   width: u32,
   height: u32,
   monitors: usize,
+}
+
+// Android SAF：目录列举返回值（前端把 content:// 当作 path 使用）
+#[derive(Debug, Serialize)]
+struct AndroidSafDirEntry {
+  name: String,
+  path: String,
+  #[serde(rename = "isDir")]
+  is_dir: bool,
 }
 
 #[tauri::command]
@@ -1959,6 +1973,146 @@ mod android_saf {
     v.l().map_err(|e| format!("getContentResolver 返回类型异常: {e}"))
   }
 
+  fn jstring_to_string<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    s: JObject<'local>,
+  ) -> Result<String, String> {
+    if s.is_null() {
+      return Ok(String::new());
+    }
+    let js: JString = JString::from(s);
+    env
+      .get_string(&js)
+      .map(|v| v.to_string_lossy().to_string())
+      .map_err(|e| format!("get_string 失败: {e}"))
+  }
+
+  fn uri_to_string<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    uri: &JObject<'local>,
+  ) -> Result<String, String> {
+    let v = env
+      .call_method(uri, "toString", "()Ljava/lang/String;", &[])
+      .map_err(|e| format!("Uri.toString 失败: {e}"))?;
+    jstring_to_string(env, v.l().map_err(|e| format!("Uri.toString 返回类型异常: {e}"))?)
+  }
+
+  fn get_uri_authority<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    uri: &JObject<'local>,
+  ) -> Result<String, String> {
+    let v = env
+      .call_method(uri, "getAuthority", "()Ljava/lang/String;", &[])
+      .map_err(|e| format!("Uri.getAuthority 失败: {e}"))?;
+    jstring_to_string(env, v.l().map_err(|e| format!("Uri.getAuthority 返回类型异常: {e}"))?)
+  }
+
+  fn docs_contract_class<'local>(
+    env: &mut jni::JNIEnv<'local>,
+  ) -> Result<jni::objects::JClass<'local>, String> {
+    env
+      .find_class("android/provider/DocumentsContract")
+      .map_err(|e| format!("find_class(DocumentsContract) 失败: {e}"))
+  }
+
+  fn get_tree_doc_id<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    uri: &JObject<'local>,
+  ) -> Result<String, String> {
+    let dc = docs_contract_class(env)?;
+    let v = env
+      .call_static_method(
+        dc,
+        "getTreeDocumentId",
+        "(Landroid/net/Uri;)Ljava/lang/String;",
+        &[JValue::from(uri)],
+      )
+      .map_err(|e| format!("DocumentsContract.getTreeDocumentId 失败: {e}"))?;
+    jstring_to_string(env, v.l().map_err(|e| format!("getTreeDocumentId 返回类型异常: {e}"))?)
+  }
+
+  fn get_doc_id<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    uri: &JObject<'local>,
+  ) -> Result<String, String> {
+    let dc = docs_contract_class(env)?;
+    let v = env
+      .call_static_method(
+        dc,
+        "getDocumentId",
+        "(Landroid/net/Uri;)Ljava/lang/String;",
+        &[JValue::from(uri)],
+      )
+      .map_err(|e| format!("DocumentsContract.getDocumentId 失败: {e}"))?;
+    jstring_to_string(env, v.l().map_err(|e| format!("getDocumentId 返回类型异常: {e}"))?)
+  }
+
+  fn build_tree_uri<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    authority: &str,
+    tree_doc_id: &str,
+  ) -> Result<JObject<'local>, String> {
+    let dc = docs_contract_class(env)?;
+    let j_authority = env
+      .new_string(authority)
+      .map_err(|e| format!("new_string(authority) 失败: {e}"))?;
+    let j_doc_id = env
+      .new_string(tree_doc_id)
+      .map_err(|e| format!("new_string(tree_doc_id) 失败: {e}"))?;
+    let v = env
+      .call_static_method(
+        dc,
+        "buildTreeDocumentUri",
+        "(Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;",
+        &[JValue::from(&j_authority), JValue::from(&j_doc_id)],
+      )
+      .map_err(|e| format!("DocumentsContract.buildTreeDocumentUri 失败: {e}"))?;
+    v.l()
+      .map_err(|e| format!("buildTreeDocumentUri 返回类型异常: {e}"))
+  }
+
+  fn build_doc_uri_using_tree<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    tree_uri: &JObject<'local>,
+    doc_id: &str,
+  ) -> Result<JObject<'local>, String> {
+    let dc = docs_contract_class(env)?;
+    let j_doc_id = env
+      .new_string(doc_id)
+      .map_err(|e| format!("new_string(doc_id) 失败: {e}"))?;
+    let v = env
+      .call_static_method(
+        dc,
+        "buildDocumentUriUsingTree",
+        "(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
+        &[JValue::from(tree_uri), JValue::from(&j_doc_id)],
+      )
+      .map_err(|e| format!("DocumentsContract.buildDocumentUriUsingTree 失败: {e}"))?;
+    v.l()
+      .map_err(|e| format!("buildDocumentUriUsingTree 返回类型异常: {e}"))
+  }
+
+  fn build_children_uri_using_tree<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    tree_uri: &JObject<'local>,
+    doc_id: &str,
+  ) -> Result<JObject<'local>, String> {
+    let dc = docs_contract_class(env)?;
+    let j_doc_id = env
+      .new_string(doc_id)
+      .map_err(|e| format!("new_string(doc_id) 失败: {e}"))?;
+    let v = env
+      .call_static_method(
+        dc,
+        "buildChildDocumentsUriUsingTree",
+        "(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
+        &[JValue::from(tree_uri), JValue::from(&j_doc_id)],
+      )
+      .map_err(|e| format!("DocumentsContract.buildChildDocumentsUriUsingTree 失败: {e}"))?;
+    v.l()
+      .map_err(|e| format!("buildChildDocumentsUriUsingTree 返回类型异常: {e}"))
+  }
+
   pub fn persist_uri_permission(uri: &str) -> Result<(), String> {
     with_env(|env, activity| {
       let uri_obj = parse_uri(env, uri)?;
@@ -2073,6 +2227,254 @@ mod android_saf {
       Ok(())
     })
   }
+
+  pub fn list_dir(uri: &str) -> Result<Vec<crate::AndroidSafDirEntry>, String> {
+    with_env(|env, activity| {
+      let uri_obj = parse_uri(env, uri)?;
+      let resolver = get_content_resolver(env, &activity)?;
+
+      let authority = get_uri_authority(env, &uri_obj)?;
+      let tree_doc_id = get_tree_doc_id(env, &uri_obj)?;
+      // 对于 treeUri：getDocumentId 会抛异常；对 documentUri：可正常返回
+      let doc_id = match get_doc_id(env, &uri_obj) {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+          let _ = env.exception_clear();
+          tree_doc_id.clone()
+        }
+      };
+
+      // 始终用“纯 treeUri + docId”构造 childrenUri，避免不同 provider 的兼容性坑
+      let tree_uri = build_tree_uri(env, &authority, &tree_doc_id)?;
+      let children_uri = build_children_uri_using_tree(env, &tree_uri, &doc_id)?;
+
+      let null_obj = JObject::null();
+      let cursor = env
+        .call_method(
+          &resolver,
+          "query",
+          "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
+          &[
+            JValue::from(&children_uri),
+            JValue::from(&null_obj),
+            JValue::from(&null_obj),
+            JValue::from(&null_obj),
+            JValue::from(&null_obj),
+          ],
+        )
+        .map_err(|e| format!("ContentResolver.query 失败: {e}"))?
+        .l()
+        .map_err(|e| format!("query 返回类型异常: {e}"))?;
+
+      if cursor.is_null() {
+        return Ok(Vec::new());
+      }
+
+      // 用 getColumnIndex 避免构造 projection 数组（JNI 写数组很容易踩坑）
+      let col_doc = env.new_string("document_id").map_err(|e| format!("new_string(document_id) 失败: {e}"))?;
+      let col_name = env.new_string("display_name").map_err(|e| format!("new_string(display_name) 失败: {e}"))?;
+      let col_mime = env.new_string("mime_type").map_err(|e| format!("new_string(mime_type) 失败: {e}"))?;
+
+      let idx_doc = env
+        .call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::from(&col_doc)])
+        .map_err(|e| format!("Cursor.getColumnIndex(document_id) 失败: {e}"))?
+        .i()
+        .map_err(|e| format!("getColumnIndex(document_id) 返回类型异常: {e}"))?;
+      let idx_name = env
+        .call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::from(&col_name)])
+        .map_err(|e| format!("Cursor.getColumnIndex(display_name) 失败: {e}"))?
+        .i()
+        .map_err(|e| format!("getColumnIndex(display_name) 返回类型异常: {e}"))?;
+      let idx_mime = env
+        .call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::from(&col_mime)])
+        .map_err(|e| format!("Cursor.getColumnIndex(mime_type) 失败: {e}"))?
+        .i()
+        .map_err(|e| format!("getColumnIndex(mime_type) 返回类型异常: {e}"))?;
+
+      if idx_doc < 0 || idx_name < 0 || idx_mime < 0 {
+        let _ = env.call_method(&cursor, "close", "()V", &[]);
+        return Err("SAF 列目录失败：Cursor 缺少必要字段（document_id/display_name/mime_type）".into());
+      }
+
+      let mime_dir = "vnd.android.document/directory";
+      let mut out: Vec<crate::AndroidSafDirEntry> = Vec::new();
+
+      loop {
+        let has_next = env
+          .call_method(&cursor, "moveToNext", "()Z", &[])
+          .map_err(|e| format!("Cursor.moveToNext 失败: {e}"))?
+          .z()
+          .map_err(|e| format!("moveToNext 返回类型异常: {e}"))?;
+        if !has_next {
+          break;
+        }
+
+        let doc_id_obj = env
+          .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValue::Int(idx_doc)])
+          .map_err(|e| format!("Cursor.getString(document_id) 失败: {e}"))?
+          .l()
+          .map_err(|e| format!("getString(document_id) 返回类型异常: {e}"))?;
+        let child_doc_id = jstring_to_string(env, doc_id_obj)?;
+        if child_doc_id.is_empty() {
+          continue;
+        }
+
+        let name_obj = env
+          .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValue::Int(idx_name)])
+          .map_err(|e| format!("Cursor.getString(display_name) 失败: {e}"))?
+          .l()
+          .map_err(|e| format!("getString(display_name) 返回类型异常: {e}"))?;
+        let mut name = jstring_to_string(env, name_obj)?;
+        if name.is_empty() {
+          name = child_doc_id.clone();
+        }
+
+        let mime_obj = env
+          .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValue::Int(idx_mime)])
+          .map_err(|e| format!("Cursor.getString(mime_type) 失败: {e}"))?
+          .l()
+          .map_err(|e| format!("getString(mime_type) 返回类型异常: {e}"))?;
+        let mime = jstring_to_string(env, mime_obj)?;
+        let is_dir = mime == mime_dir;
+
+        let child_uri = build_doc_uri_using_tree(env, &tree_uri, &child_doc_id)?;
+        let child_uri_str = uri_to_string(env, &child_uri)?;
+
+        out.push(crate::AndroidSafDirEntry {
+          name,
+          path: child_uri_str,
+          is_dir,
+        });
+      }
+
+      let _ = env.call_method(&cursor, "close", "()V", &[]);
+      Ok(out)
+    })
+  }
+
+  pub fn create_document(parent_dir_uri: &str, display_name: &str, mime_type: &str) -> Result<String, String> {
+    with_env(|env, activity| {
+      let uri_obj = parse_uri(env, parent_dir_uri)?;
+      let resolver = get_content_resolver(env, &activity)?;
+
+      let authority = get_uri_authority(env, &uri_obj)?;
+      let tree_doc_id = get_tree_doc_id(env, &uri_obj)?;
+      let doc_id = match get_doc_id(env, &uri_obj) {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+          let _ = env.exception_clear();
+          tree_doc_id.clone()
+        }
+      };
+      let tree_uri = build_tree_uri(env, &authority, &tree_doc_id)?;
+      let parent_doc_uri = build_doc_uri_using_tree(env, &tree_uri, &doc_id)?;
+
+      let dc = docs_contract_class(env)?;
+      let j_mime = env
+        .new_string(mime_type)
+        .map_err(|e| format!("new_string(mime_type) 失败: {e}"))?;
+      let j_name = env
+        .new_string(display_name)
+        .map_err(|e| format!("new_string(display_name) 失败: {e}"))?;
+
+      let v = env
+        .call_static_method(
+          dc,
+          "createDocument",
+          "(Landroid/content/ContentResolver;Landroid/net/Uri;Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;",
+          &[
+            JValue::from(&resolver),
+            JValue::from(&parent_doc_uri),
+            JValue::from(&j_mime),
+            JValue::from(&j_name),
+          ],
+        )
+        .map_err(|e| format!("DocumentsContract.createDocument 失败: {e}"))?;
+
+      let new_uri = v
+        .l()
+        .map_err(|e| format!("createDocument 返回类型异常: {e}"))?;
+      if new_uri.is_null() {
+        return Err("createDocument 返回 null（可能没有写权限或 provider 不支持）".into());
+      }
+      uri_to_string(env, &new_uri)
+    })
+  }
+
+  pub fn delete_document(uri: &str) -> Result<(), String> {
+    with_env(|env, activity| {
+      let uri_obj = parse_uri(env, uri)?;
+      let resolver = get_content_resolver(env, &activity)?;
+
+      let authority = get_uri_authority(env, &uri_obj)?;
+      let tree_doc_id = get_tree_doc_id(env, &uri_obj)?;
+      let doc_id = match get_doc_id(env, &uri_obj) {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+          let _ = env.exception_clear();
+          tree_doc_id.clone()
+        }
+      };
+      let tree_uri = build_tree_uri(env, &authority, &tree_doc_id)?;
+      let doc_uri = build_doc_uri_using_tree(env, &tree_uri, &doc_id)?;
+
+      let dc = docs_contract_class(env)?;
+      let ok = env
+        .call_static_method(
+          dc,
+          "deleteDocument",
+          "(Landroid/content/ContentResolver;Landroid/net/Uri;)Z",
+          &[JValue::from(&resolver), JValue::from(&doc_uri)],
+        )
+        .map_err(|e| format!("DocumentsContract.deleteDocument 失败: {e}"))?
+        .z()
+        .map_err(|e| format!("deleteDocument 返回类型异常: {e}"))?;
+      if !ok {
+        return Err("deleteDocument 返回 false（可能 provider 不支持删除）".into());
+      }
+      Ok(())
+    })
+  }
+
+  pub fn rename_document(uri: &str, new_name: &str) -> Result<String, String> {
+    with_env(|env, activity| {
+      let uri_obj = parse_uri(env, uri)?;
+      let resolver = get_content_resolver(env, &activity)?;
+
+      let authority = get_uri_authority(env, &uri_obj)?;
+      let tree_doc_id = get_tree_doc_id(env, &uri_obj)?;
+      let doc_id = match get_doc_id(env, &uri_obj) {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+          let _ = env.exception_clear();
+          tree_doc_id.clone()
+        }
+      };
+      let tree_uri = build_tree_uri(env, &authority, &tree_doc_id)?;
+      let doc_uri = build_doc_uri_using_tree(env, &tree_uri, &doc_id)?;
+
+      let dc = docs_contract_class(env)?;
+      let j_new = env
+        .new_string(new_name)
+        .map_err(|e| format!("new_string(new_name) 失败: {e}"))?;
+      let v = env
+        .call_static_method(
+          dc,
+          "renameDocument",
+          "(Landroid/content/ContentResolver;Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
+          &[JValue::from(&resolver), JValue::from(&doc_uri), JValue::from(&j_new)],
+        )
+        .map_err(|e| format!("DocumentsContract.renameDocument 失败: {e}"))?;
+      let new_uri = v
+        .l()
+        .map_err(|e| format!("renameDocument 返回类型异常: {e}"))?;
+      if new_uri.is_null() {
+        // 部分 provider 可能返回 null，语义上仍然当作成功
+        return uri_to_string(env, &doc_uri);
+      }
+      uri_to_string(env, &new_uri)
+    })
+  }
 }
 
 #[tauri::command]
@@ -2157,6 +2559,119 @@ async fn android_persist_uri_permission(uri: String) -> Result<(), String> {
   {
     let _ = uri;
     Err("android_persist_uri_permission only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_saf_list_dir(uri: String) -> Result<Vec<AndroidSafDirEntry>, String> {
+  #[cfg(target_os = "android")]
+  {
+    let u = uri.trim().to_string();
+    if u.is_empty() {
+      return Err("android_saf_list_dir: uri 为空".into());
+    }
+    return tauri::async_runtime::spawn_blocking(move || android_saf::list_dir(&u))
+      .await
+      .map_err(|e| format!("android_saf_list_dir join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = uri;
+    Err("android_saf_list_dir only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_saf_create_file(
+  parent_uri: String,
+  name: String,
+  mime_type: Option<String>,
+) -> Result<String, String> {
+  #[cfg(target_os = "android")]
+  {
+    let p = parent_uri.trim().to_string();
+    let n = name.trim().to_string();
+    if p.is_empty() {
+      return Err("android_saf_create_file: parent_uri 为空".into());
+    }
+    if n.is_empty() {
+      return Err("android_saf_create_file: name 为空".into());
+    }
+    let mt = mime_type.unwrap_or_else(|| "text/markdown".into());
+    return tauri::async_runtime::spawn_blocking(move || android_saf::create_document(&p, &n, &mt))
+      .await
+      .map_err(|e| format!("android_saf_create_file join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = (parent_uri, name, mime_type);
+    Err("android_saf_create_file only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_saf_create_dir(parent_uri: String, name: String) -> Result<String, String> {
+  #[cfg(target_os = "android")]
+  {
+    let p = parent_uri.trim().to_string();
+    let n = name.trim().to_string();
+    if p.is_empty() {
+      return Err("android_saf_create_dir: parent_uri 为空".into());
+    }
+    if n.is_empty() {
+      return Err("android_saf_create_dir: name 为空".into());
+    }
+    let mt = "vnd.android.document/directory".to_string();
+    return tauri::async_runtime::spawn_blocking(move || android_saf::create_document(&p, &n, &mt))
+      .await
+      .map_err(|e| format!("android_saf_create_dir join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = (parent_uri, name);
+    Err("android_saf_create_dir only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_saf_delete(uri: String) -> Result<(), String> {
+  #[cfg(target_os = "android")]
+  {
+    let u = uri.trim().to_string();
+    if u.is_empty() {
+      return Err("android_saf_delete: uri 为空".into());
+    }
+    return tauri::async_runtime::spawn_blocking(move || android_saf::delete_document(&u))
+      .await
+      .map_err(|e| format!("android_saf_delete join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = uri;
+    Err("android_saf_delete only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_saf_rename(uri: String, new_name: String) -> Result<String, String> {
+  #[cfg(target_os = "android")]
+  {
+    let u = uri.trim().to_string();
+    let n = new_name.trim().to_string();
+    if u.is_empty() {
+      return Err("android_saf_rename: uri 为空".into());
+    }
+    if n.is_empty() {
+      return Err("android_saf_rename: new_name 为空".into());
+    }
+    return tauri::async_runtime::spawn_blocking(move || android_saf::rename_document(&u, &n))
+      .await
+      .map_err(|e| format!("android_saf_rename join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = (uri, new_name);
+    Err("android_saf_rename only available on Android".into())
   }
 }
 
