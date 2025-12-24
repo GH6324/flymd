@@ -57,17 +57,18 @@ function patchMainActivity(filePath) {
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import app.tauri.TauriActivity
 
 /**
  * flymd:immersive-fullscreen
  * 沉浸式全屏：隐藏状态栏/导航栏，让 WebView 内容延伸到系统栏区域。
  *
- * 注意：
+ * 说明：
+ * - 不依赖 androidx.core（避免 Kotlin 编译期缺依赖）
  * - Android 会在切后台/旋转/恢复焦点时“复活”系统栏，因此需要在 onResume/onWindowFocusChanged 里重复应用。
  *
  * 参考：
@@ -75,10 +76,7 @@ import app.tauri.TauriActivity
  */
 class MainActivity : TauriActivity() {
   private fun applyImmersiveFullscreen() {
-    // 让内容绘制到系统栏区域（配合前端 viewport-fit=cover + safe-area）
-    WindowCompat.setDecorFitsSystemWindows(window, false)
-
-    // 透明系统栏（即使被临时拉出，也不挡内容）
+    // 透明系统栏（即使被临时拉出，也尽量不挡内容）
     window.statusBarColor = Color.TRANSPARENT
     window.navigationBarColor = Color.TRANSPARENT
 
@@ -88,10 +86,26 @@ class MainActivity : TauriActivity() {
         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
     }
 
-    val controller = WindowInsetsControllerCompat(window, window.decorView)
-    controller.hide(WindowInsetsCompat.Type.systemBars())
-    controller.systemBarsBehavior =
-      WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      // 让内容绘制到系统栏区域（配合前端 viewport-fit=cover + safe-area）
+      window.setDecorFitsSystemWindows(false)
+      val controller = window.insetsController
+      if (controller != null) {
+        controller.hide(WindowInsets.Type.systemBars())
+        controller.systemBarsBehavior =
+          WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+      }
+      return
+    }
+
+    @Suppress("DEPRECATION")
+    window.decorView.systemUiVisibility =
+      View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+        View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+        View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+        View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+        View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+        View.SYSTEM_UI_FLAG_FULLSCREEN
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -137,4 +151,3 @@ function main() {
 }
 
 main()
-
