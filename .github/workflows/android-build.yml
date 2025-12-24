@@ -100,6 +100,14 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
           NDK_HOME: ${{ env.NDK_HOME }}
 
+      - name: 定位 APK 产物 (Debug)
+        if: ${{ steps.buildtype.outputs.type == 'debug' }}
+        run: |
+          echo "=== outputs tree ==="
+          find src-tauri/gen/android/app/build/outputs -maxdepth 6 -type f | sort || true
+          echo "=== apk files ==="
+          find src-tauri/gen/android/app/build/outputs -type f -name "*.apk" | sort || true
+
       - name: 构建 Android APK (Release)
         if: ${{ steps.buildtype.outputs.type == 'release' }}
         run: npx tauri android build --release
@@ -113,12 +121,22 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
+      - name: 定位 APK/AAB 产物 (Release)
+        if: ${{ steps.buildtype.outputs.type == 'release' }}
+        run: |
+          echo "=== outputs tree ==="
+          find src-tauri/gen/android/app/build/outputs -maxdepth 6 -type f | sort || true
+          echo "=== apk files ==="
+          find src-tauri/gen/android/app/build/outputs -type f -name "*.apk" | sort || true
+          echo "=== aab files ==="
+          find src-tauri/gen/android/app/build/outputs -type f -name "*.aab" | sort || true
+
       - name: 上传 APK 产物 (Debug)
         if: ${{ steps.buildtype.outputs.type == 'debug' }}
         uses: actions/upload-artifact@v4
         with:
           name: flymd-android-debug
-          path: src-tauri/gen/android/app/build/outputs/apk/debug/*.apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/debug/*.apk
           if-no-files-found: error
 
       - name: 上传 APK 产物 (Release)
@@ -126,7 +144,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flymd-android-release
-          path: src-tauri/gen/android/app/build/outputs/apk/release/*.apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
           if-no-files-found: error
 
       - name: 上传 AAB 产物 (Release)
@@ -134,7 +152,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flymd-android-bundle
-          path: src-tauri/gen/android/app/build/outputs/bundle/release/*.aab
+          path: src-tauri/gen/android/app/build/outputs/bundle/**/release/*.aab
           if-no-files-found: warn
 
       - name: 创建 Release (仅 Release 构建)
@@ -142,8 +160,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            src-tauri/gen/android/app/build/outputs/apk/release/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/release/*.aab
+            src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/release/*.aab
           draft: true
           generate_release_notes: true
         env:
