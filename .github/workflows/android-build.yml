@@ -88,6 +88,9 @@ jobs:
             npx tauri android init
           fi
 
+      - name: Android 补丁：沉浸式全屏
+        run: node scripts/patch-android-immersive.cjs
+
       - name: 构建前端
         run: npm run build
 
