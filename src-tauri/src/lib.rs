@@ -4,7 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::{Manager, State};
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use tauri::Emitter;
 // 全局共享：保存通过“打开方式/默认程序”传入且可能早于前端监听的文件路径
 #[derive(Default)]
@@ -124,6 +124,7 @@ fn init_startup_log<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 // 判定是否为受支持的文档扩展名（md/markdown/txt/pdf），并确保路径存在
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn is_supported_doc_path(path: &std::path::Path) -> bool {
   use std::path::Path;
   let p: &Path = path;
@@ -150,7 +151,7 @@ fn is_markdown_like_path(path: &std::path::Path) -> bool {
 }
 
 // 统一的“打开方式/默认程序”事件分发：写入 PendingOpenPath，并向前端发送 open-file 事件
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn dispatch_open_file_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, path: &std::path::Path) {
   if !is_supported_doc_path(path) {
     return;
