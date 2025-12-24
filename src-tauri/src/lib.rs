@@ -1794,9 +1794,24 @@ async fn get_pending_open_path(state: State<'_, PendingOpenPath>) -> Result<Opti
 
 #[tauri::command]
 async fn move_to_trash(path: String) -> Result<(), String> {
-  // 使用 trash crate 跨平台移动到回收站
+  // 桌面端：使用 trash crate 跨平台移动到回收站
+  // Android：没有“回收站”语义，退化为永久删除
   tauri::async_runtime::spawn_blocking(move || {
-    trash::delete(path).map_err(|e| format!("move_to_trash error: {e}"))
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    {
+      trash::delete(path).map_err(|e| format!("move_to_trash error: {e}"))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+      use std::fs;
+      use std::path::PathBuf;
+      let p = PathBuf::from(path);
+      if p.is_dir() {
+        fs::remove_dir_all(&p).map_err(|e| format!("move_to_trash fallback remove_dir_all error: {e}"))
+      } else {
+        fs::remove_file(&p).map_err(|e| format!("move_to_trash fallback remove_file error: {e}"))
+      }
+    }
   })
   .await
   .map_err(|e| format!("join error: {e}"))??;

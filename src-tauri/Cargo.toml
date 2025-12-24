@@ -35,8 +35,10 @@ hex = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 aws-config = { version = "1", features = ["rt-tokio", "behavior-version-latest"] }
 aws-sdk-s3 = { version = "1", features = ["rt-tokio"] }
-trash = "3"
 futures-util = "0.3"
+
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
+trash = "3"
 
 [target.'cfg(target_os = "android")'.dependencies]
 # SAF（content://）读写需要 JNI + Android Context
