@@ -140,6 +140,36 @@ const dialogStyles = `
   outline: 2px solid #2563eb;
   outline-offset: 2px;
 }
+
+/* 移动端：别假设 400px 的桌面宽度 */
+body.platform-mobile .custom-dialog-overlay {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+body.platform-mobile .custom-dialog-box {
+  min-width: 0;
+  width: calc(100vw - 32px);
+  max-width: calc(100vw - 32px);
+  padding: 16px;
+  max-height: calc(100vh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow: auto;
+}
+
+@supports (height: 100dvh) {
+  body.platform-mobile .custom-dialog-box {
+    max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  }
+}
+
+body.platform-mobile .custom-dialog-buttons {
+  flex-direction: column-reverse;
+}
+
+body.platform-mobile .custom-dialog-button {
+  width: 100%;
+  min-height: 44px;
+}
 `
 
 // 注入样式到页面

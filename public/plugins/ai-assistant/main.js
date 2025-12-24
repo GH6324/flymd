@@ -292,6 +292,18 @@ async function loadCfg(context) {
     const cfg = { ...DEFAULT_CFG, ...(s || {}) }
     // 兼容旧配置：将 dock: true 转换为 'left'
     if (cfg.dock === true) cfg.dock = 'left'
+
+    // 移动端：默认用底部停靠（左/右停靠很容易被系统状态栏盖住，导致连关闭按钮都点不到）
+    try {
+      if (aiIsMobileUi()) {
+        if (cfg.dock === 'left' || cfg.dock === 'right' || cfg.dock === false) {
+          cfg.dock = 'bottom'
+        }
+        const vh = Number(WIN().innerHeight || 720)
+        const targetH = Math.max(320, Math.min(560, Math.round(vh * 0.55)))
+        cfg.win = { ...(cfg.win || {}), h: targetH, w: Math.min(520, Number((cfg.win && cfg.win.w) || 400) || 400) }
+      }
+    } catch {}
     cfg.freeModel = normalizeFreeModelKey(cfg.freeModel)
     // 知识库配置：确保子对象合并与数值归一化
     try {
@@ -353,6 +365,17 @@ function buildRollingClientToken(now = Date.now()){
 function DOC(){ return (window.__AI_DOC__ || document) }
 function WIN(){ return (window.__AI_WIN__ || window) }
 function el(id) { return DOC().getElementById(id) }
+
+function aiIsMobileUi() {
+  try {
+    const b = DOC().body
+    if (b && b.classList && b.classList.contains('platform-mobile')) return true
+  } catch {}
+  try {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(String(navigator.userAgent || ''))
+  } catch {}
+  return false
+}
 function lastUserMsg() { try { const arr = __AI_SESSION__.messages; for (let i = arr.length - 1; i >= 0; i--) { if (arr[i].role === 'user') return String(arr[i].content || '') } } catch {} return '' }
 function shorten(s, n){ const t = String(s||'').trim(); return t.length>n? (t.slice(0,n)+'…') : t }
 function resolvePluginAsset(rel){
@@ -2177,8 +2200,11 @@ function ensureCss() {
     '#ai-assist-win.dock-left{left:0; top:0; height:100vh; width:400px; border-radius:0; border-left:none; border-top:none; border-bottom:none; box-shadow:none; border-right:1px solid #e5e7eb}',
     '#ai-assist-win.dock-right{right:0; top:0; height:100vh; width:400px; border-radius:0; border-right:none; border-top:none; border-bottom:none; box-shadow:none; border-left:1px solid #e5e7eb}',
     '#ai-assist-win.dock-bottom{left:0; right:0; bottom:0; width:100%; height:320px; border-radius:0; border-bottom:none; box-shadow:none; border-top:1px solid #e5e7eb}',
+    // 移动端：底部面板更像抽屉，并避开手势条
+    'body.platform-mobile #ai-assist-win.dock-bottom{border-radius:14px 14px 0 0; bottom:env(safe-area-inset-bottom)}',
     // 头部与标题
     '#ai-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;cursor:move;background:#fff}',
+    'body.platform-mobile #ai-head{padding:10px 14px;cursor:default}',
     '#ai-title{font-weight:600;color:#111827;font-size:14px}',
     // 主体、工具栏
     '#ai-body{display:flex;flex-direction:column;height:calc(100% - 44px)}',
@@ -2241,7 +2267,9 @@ function ensureCss() {
     // 设置面板（内置模态）
     '#ai-set-overlay{position:absolute;inset:0;background:rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;z-index:100}',
     '#ai-set-dialog{width:520px;max-width:92vw;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.18);overflow:hidden}',
+    'body.platform-mobile #ai-set-dialog{width:calc(100vw - 24px);max-width:none;max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow:auto}',
     '#ai-set-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e5e7eb}',
+    'body.platform-mobile #ai-set-head{position:sticky;top:0;z-index:2}',
     '#ai-set-title{font-weight:600}',
     '#ai-set-body{padding:12px}',
     '.set-row{display:flex;align-items:center;gap:10px;margin:8px 0}',
@@ -3583,8 +3611,11 @@ async function mountWindow(context){
   ensureCss()
   const cfg = await loadCfg(context)
   const el = DOC().createElement('div'); el.id='ai-assist-win';
+  const isMobileUi = aiIsMobileUi()
   const dockWidth = Math.max(MIN_WIDTH, Number((cfg && cfg.win && cfg.win.w) || MIN_WIDTH))
-  const dockHeight = Math.max(300, Number((cfg && cfg.win && cfg.win.h) || 440))
+  const dockHeight = isMobileUi
+    ? Math.max(320, Math.min(560, Math.round(Number(WIN().innerHeight || 720) * 0.55)))
+    : Math.max(300, Number((cfg && cfg.win && cfg.win.h) || 440))
   if (cfg && cfg.dock === 'left') {
     // 左侧停靠：紧挨库侧栏右侧
     el.classList.add('dock-left')
@@ -3610,7 +3641,7 @@ async function mountWindow(context){
     el.classList.add('dock-bottom')
     const bounds = computeWorkspaceBounds()
     el.style.top = 'auto'
-    el.style.bottom = '0px'
+    el.style.bottom = isMobileUi ? 'env(safe-area-inset-bottom)' : '0px'
     el.style.left = bounds.left + 'px'
     el.style.right = bounds.right + 'px'
     el.style.width = 'auto'

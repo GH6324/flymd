@@ -6020,6 +6020,38 @@ async function centerWindow(): Promise<void> {
 
 async function pickLibraryRoot(): Promise<string | null> {
   try {
+    // Android：不再直接让用户选“系统目录作为库”（Scoped Storage + SAF 目录遍历还没全量接入）。
+    // 先用应用私有目录下的子文件夹作为库根目录：能浏览/搜索/编辑，并可用 WebDAV 与桌面共享库。
+    try {
+      const p = await invoke<string>('get_platform')
+      if (p === 'android') {
+        const base = (await appLocalDataDir()).replace(/[\\/]+$/, '')
+        const sep = base.includes('\\') ? '\\' : '/'
+        const join = (a: string, b: string) => (a.endsWith(sep) ? a + b : a + sep + b)
+        const libsRoot = join(join(base, 'flymd'), 'library')
+        await mkdir(libsRoot as any, { recursive: true } as any)
+
+        const rawName = await openRenameDialog('新建库', '')
+        const name = (rawName || '').trim() || '本地库'
+        const safeBase = name
+          .replace(/[\\/:*?"<>|]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim() || ('lib-' + Date.now())
+
+        let dirName = safeBase
+        let root = join(libsRoot, dirName)
+        let n = 1
+        while (await exists(root)) {
+          n += 1
+          dirName = `${safeBase}-${n}`
+          root = join(libsRoot, dirName)
+        }
+        await mkdir(root as any, { recursive: true } as any)
+        await upsertLibrary({ id: `android-${Date.now()}`, name, root })
+        return root
+      }
+    } catch {}
+
     const sel = await open({ directory: true, multiple: false } as any)
     if (!sel) return null
     const p = normalizePath(sel)
@@ -6244,11 +6276,13 @@ type TopMenuItemSpec = { label: string; accel?: string; action: () => void; disa
 let _topMenuDocHandler: ((ev: MouseEvent) => void) | null = null
 function showTopMenu(anchor: HTMLElement, items: TopMenuItemSpec[]) {
   try {
+    const isMobileUi = document.body.classList.contains('platform-mobile')
     let menu = document.getElementById('top-ctx') as HTMLDivElement | null
     if (!menu) {
       menu = document.createElement('div') as HTMLDivElement
       menu.id = 'top-ctx'
-      menu.style.position = 'absolute'
+      // 用 fixed，避免移动端/缩放下绝对定位跑偏
+      menu.style.position = 'fixed'
       menu.style.zIndex = '9999'
       menu.style.background = getComputedStyle(document.documentElement).getPropertyValue('--bg') || '#fff'
       menu.style.color = getComputedStyle(document.documentElement).getPropertyValue('--fg') || '#111'
@@ -6282,7 +6316,8 @@ function showTopMenu(anchor: HTMLElement, items: TopMenuItemSpec[]) {
       row.style.alignItems = 'center'
       row.style.justifyContent = 'space-between'
       row.style.gap = '16px'
-      row.style.padding = '6px 12px'
+      row.style.padding = isMobileUi ? '12px 14px' : '6px 12px'
+      row.style.fontSize = isMobileUi ? '15px' : '13px'
       row.style.cursor = spec.disabled ? 'not-allowed' : 'pointer'
       const l = document.createElement('span')
       l.textContent = spec.label
@@ -6292,8 +6327,11 @@ function showTopMenu(anchor: HTMLElement, items: TopMenuItemSpec[]) {
       row.appendChild(l)
       row.appendChild(r)
       if (!spec.disabled) {
-        row.addEventListener('mouseenter', () => row.style.background = 'rgba(127,127,127,0.12)')
-        row.addEventListener('mouseleave', () => row.style.background = 'transparent')
+        // 移动端没有 hover，别绑无意义事件
+        if (!isMobileUi) {
+          row.addEventListener('mouseenter', () => row.style.background = 'rgba(127,127,127,0.12)')
+          row.addEventListener('mouseleave', () => row.style.background = 'transparent')
+        }
         row.addEventListener('click', () => { try { spec.action() } finally { hide() } })
       } else {
         row.style.opacity = '0.5'
@@ -6302,12 +6340,30 @@ function showTopMenu(anchor: HTMLElement, items: TopMenuItemSpec[]) {
     }
     for (const it of items) menu.appendChild(mkRow(it))
 
-    // 定位：锚点左下
-    const rc = anchor.getBoundingClientRect()
-    const left = Math.max(0, Math.min(rc.left, window.innerWidth - (menu.offsetWidth || 220)))
-    const top = Math.min(window.innerHeight - 10, rc.bottom)
-    menu.style.left = left + 'px'
-    menu.style.top = top + 'px'
+    if (isMobileUi) {
+      // 移动端：底部动作面板，避免被状态栏遮挡
+      menu.style.left = '8px'
+      menu.style.right = '8px'
+      menu.style.bottom = 'calc(env(safe-area-inset-bottom) + 8px)'
+      menu.style.top = 'auto'
+      menu.style.minWidth = 'unset'
+      menu.style.maxHeight = '60vh'
+      menu.style.overflow = 'auto'
+      menu.style.borderRadius = '14px'
+    } else {
+      // 桌面端：锚点左下
+      const rc = anchor.getBoundingClientRect()
+      const left = Math.max(0, Math.min(rc.left, window.innerWidth - (menu.offsetWidth || 220)))
+      const top = Math.min(window.innerHeight - 10, rc.bottom)
+      menu.style.right = 'auto'
+      menu.style.bottom = 'auto'
+      menu.style.left = left + 'px'
+      menu.style.top = top + 'px'
+      menu.style.maxHeight = 'unset'
+      menu.style.overflow = 'visible'
+      menu.style.borderRadius = '8px'
+      menu.style.minWidth = '200px'
+    }
     menu.style.display = 'block'
     // 推迟到当前点击事件冒泡结束后再绑定，以避免本次点击导致立刻关闭
     setTimeout(() => { if (_topMenuDocHandler) document.addEventListener('click', _topMenuDocHandler) }, 0)

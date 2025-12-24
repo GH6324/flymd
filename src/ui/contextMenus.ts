@@ -100,6 +100,7 @@ function renderContextMenuItem(
   idCounter: { value: number },
   dragKey: string = '',
   isBuiltin: boolean = false,
+  flattenSubmenus: boolean = false,
 ): string {
   if (!item) return ''
 
@@ -134,6 +135,14 @@ function renderContextMenuItem(
 
   // 子菜单
   if (item.children && item.children.length > 0) {
+    // 移动端：hover 子菜单基本不可用，直接扁平化为“分组 + 子项”
+    if (flattenSubmenus) {
+      let out = `<div class="context-menu-group">${item.label || ''}</div>`
+      for (const child of item.children) {
+        out += renderContextMenuItem(child, ctx, callbacks, idCounter, '', true, true)
+      }
+      return out
+    }
     const id = `ctx-menu-${idCounter.value++}`
     const icon = item.icon ? `<span class="context-menu-icon">${item.icon}</span>` : ''
     const note = item.note ? `<span class="context-menu-note">${item.note}</span>` : ''
@@ -187,6 +196,7 @@ export async function showContextMenu(
 ): Promise<void> {
   try {
     removeContextMenu()
+    const isMobileUi = document.body.classList.contains('platform-mobile')
 
     // 根据插件菜单可见性过滤右键菜单项
     const visiblePluginItems = opts.pluginItems.filter((item) => {
@@ -244,41 +254,56 @@ export async function showContextMenu(
         idCounter,
         dragKey,
         !!item.isBuiltin,
+        isMobileUi,
       )
     }
 
-    const tipHtml =
-      '<div class="context-menu-tip">按住 Shift 再次右键可打开原生菜单</div>'
+    const tipHtml = isMobileUi
+      ? ''
+      : '<div class="context-menu-tip">按住 Shift 再次右键可打开原生菜单</div>'
     menu.innerHTML = menuHtml + tipHtml
     document.body.appendChild(menu)
     _contextMenuEl = menu
 
-    const rect = menu.getBoundingClientRect()
-    const maxX = window.innerWidth - rect.width - 10
-    const maxY = window.innerHeight - rect.height - 10
-    menu.style.left = Math.min(x, maxX) + 'px'
-    menu.style.top = Math.min(y, maxY) + 'px'
+    if (isMobileUi) {
+      // 移动端：底部弹出（更符合手指触控，也避免被状态栏遮挡）
+      menu.style.left = '8px'
+      menu.style.right = '8px'
+      menu.style.bottom = 'calc(env(safe-area-inset-bottom) + 8px)'
+      menu.style.top = 'auto'
+      menu.style.maxHeight = '60vh'
+      menu.style.overflow = 'auto'
+    } else {
+      const rect = menu.getBoundingClientRect()
+      const maxX = window.innerWidth - rect.width - 10
+      const maxY = window.innerHeight - rect.height - 10
+      menu.style.left = Math.min(x, maxX) + 'px'
+      menu.style.top = Math.min(y, maxY) + 'px'
+    }
 
-    // 子菜单展开方向调整
-    menu.querySelectorAll('.context-menu-item.has-children').forEach((item) => {
-      item.addEventListener('mouseenter', function (this: HTMLElement) {
-        const submenu = this.querySelector(
-          '.context-menu-submenu',
-        ) as HTMLElement
-        if (!submenu) return
-        requestAnimationFrame(() => {
-          const itemRect = this.getBoundingClientRect()
-          const submenuRect = submenu.getBoundingClientRect()
-          const viewportWidth = window.innerWidth
-          const wouldOverflowRight =
-            itemRect.right + submenuRect.width > viewportWidth - 10
-          if (wouldOverflowRight) submenu.classList.add('expand-left')
-          else submenu.classList.remove('expand-left')
+    // 子菜单展开方向调整（移动端已扁平化，跳过）
+    if (!isMobileUi) {
+      menu.querySelectorAll('.context-menu-item.has-children').forEach((item) => {
+        item.addEventListener('mouseenter', function (this: HTMLElement) {
+          const submenu = this.querySelector(
+            '.context-menu-submenu',
+          ) as HTMLElement
+          if (!submenu) return
+          requestAnimationFrame(() => {
+            const itemRect = this.getBoundingClientRect()
+            const submenuRect = submenu.getBoundingClientRect()
+            const viewportWidth = window.innerWidth
+            const wouldOverflowRight =
+              itemRect.right + submenuRect.width > viewportWidth - 10
+            if (wouldOverflowRight) submenu.classList.add('expand-left')
+            else submenu.classList.remove('expand-left')
+          })
         })
       })
-    })
+    }
 
     // ========== 拖拽排序功能（使用鼠标事件实现） ==========
+    if (!isMobileUi) {
     let dragState:
       | { item: HTMLElement; key: string; startY: number; isDragging: boolean }
       | null = null
@@ -422,6 +447,7 @@ export async function showContextMenu(
       menuObserver.observe(menu.parentNode, { childList: true })
     }
     // ========== 拖拽排序功能结束 ==========
+    }
 
     menu.addEventListener('click', (e) => {
       const target = e.target as HTMLElement

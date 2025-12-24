@@ -239,12 +239,137 @@
     display: none !important;
   }
 
-  /* Android MVP：库目录固定为应用私有目录，隐藏“选库/固定/左右切换”这些桌面概念 */
-  body.platform-android #lib-choose,
+  /* Android：隐藏“固定/左右切换”等桌面概念，但保留“选库/新增库”入口 */
   body.platform-android #lib-pin,
   body.platform-android #lib-side {
     display: none !important;
   }
+}
+
+/* ========== 移动端弹窗（图床 / WebDAV 同步等） ========== */
+body.platform-mobile .upl-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  /* 让内容避开刘海/手势条 */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+body.platform-mobile .upl-dialog {
+  width: calc(100vw - 16px) !important;
+  max-width: none !important;
+  /* 先用 vh 兜底；支持 dvh 的再覆盖 */
+  height: calc(100vh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  max-height: none !important;
+  border-radius: 12px !important;
+}
+
+@supports (height: 100dvh) {
+  body.platform-mobile .upl-dialog {
+    height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  }
+}
+
+body.platform-mobile .upl-body {
+  max-height: none !important;
+  /* upl-header 高度约 52px；剩余全部给滚动区域 */
+  height: calc(100% - 52px) !important;
+}
+
+body.platform-mobile .upl-grid {
+  grid-template-columns: 1fr !important;
+  gap: 10px !important;
+}
+
+/* Android WebView 下 display: contents 在 grid 里偶发布局异常：移动端直接改成块级 */
+body.platform-mobile .upl-field {
+  display: block !important;
+}
+
+body.platform-mobile .upl-grid > label,
+body.platform-mobile .upl-grid label {
+  grid-column: 1 / -1 !important;
+  font-weight: 600;
+}
+
+body.platform-mobile .upl-hint {
+  grid-column: 1 / -1 !important;
+  margin: 4px 0 10px 0 !important;
+}
+
+body.platform-mobile .upl-grid .sync-toggles {
+  padding: 10px 12px !important;
+  gap: 10px !important;
+}
+
+body.platform-mobile .sync-toggles .item {
+  width: 100%;
+  justify-content: space-between;
+  white-space: normal;
+}
+
+body.platform-mobile .sync-toggles .lbl {
+  max-width: calc(100% - 60px);
+}
+
+/* ========== 移动端“插入链接/重命名”等小弹窗 ========== */
+body.platform-mobile .link-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+body.platform-mobile .link-dialog {
+  width: calc(100vw - 24px) !important;
+  max-width: none !important;
+  border-radius: 12px !important;
+}
+
+body.platform-mobile .link-field {
+  grid-template-columns: 1fr !important;
+  gap: 6px !important;
+}
+
+body.platform-mobile .link-actions {
+  flex-direction: column-reverse;
+}
+
+body.platform-mobile .link-actions button {
+  width: 100%;
+  min-height: 44px;
+}
+
+/* ========== 移动端通知：避开 FAB + 支持换行 ========== */
+body.platform-mobile .notification-container {
+  left: 8px;
+  right: 8px;
+  bottom: calc(env(safe-area-inset-bottom) + 84px);
+  align-items: stretch;
+}
+
+body.platform-mobile .notification-item {
+  max-width: none;
+  white-space: normal;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+/* ========== 移动端右键菜单（底部动作面板） ========== */
+body.platform-mobile .flymd-context-menu {
+  max-width: none !important;
+  width: auto !important;
+  border-radius: 14px !important;
+  font-size: 15px !important;
+  padding: 8px 0 !important;
+}
+
+body.platform-mobile .context-menu-item {
+  padding: 12px 14px !important;
+}
+
+body.platform-mobile .context-menu-label {
+  white-space: normal !important;
 }
 
 /* ========== 触摸滚动优化 ========== */
