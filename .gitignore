@@ -8,6 +8,7 @@ coverage/
 *.swp
 *.swo
 *.tmp
+.tmp-tauri-src/
 *.bak
 
 # Vite / 打包缓存（部分项目可能出现）

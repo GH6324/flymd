@@ -1751,6 +1751,20 @@ async fn read_text_file_any(path: String) -> Result<String, String> {
   use std::io::Read;
   use std::path::PathBuf;
 
+  // Android：若是 SAF 的 content:// URI，走原生 ContentResolver 读取（否则 std::fs 会直接跪）
+  #[cfg(target_os = "android")]
+  {
+    let p = path.trim().to_string();
+    if p.starts_with("content://") {
+      return tauri::async_runtime::spawn_blocking(move || {
+        let _ = android_saf::persist_uri_permission(&p);
+        android_saf::read_uri_text(&p)
+      })
+        .await
+        .map_err(|e| format!("join error: {e}"))?;
+    }
+  }
+
   let pathbuf = PathBuf::from(path);
   if !pathbuf.exists() {
     return Err("path not found".into());
@@ -1774,6 +1788,20 @@ async fn read_text_file_any(path: String) -> Result<String, String> {
 async fn write_text_file_any(path: String, content: String) -> Result<(), String> {
   use std::fs;
   use std::path::PathBuf;
+
+  // Android：若是 SAF 的 content:// URI，走原生 ContentResolver 写入
+  #[cfg(target_os = "android")]
+  {
+    let p = path.trim().to_string();
+    if p.starts_with("content://") {
+      return tauri::async_runtime::spawn_blocking(move || {
+        let _ = android_saf::persist_uri_permission(&p);
+        android_saf::write_uri_text(&p, &content)
+      })
+        .await
+        .map_err(|e| format!("join error: {e}"))?;
+    }
+  }
 
   let pathbuf = PathBuf::from(path);
   // 后台线程写入，避免阻塞异步执行器

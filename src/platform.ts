@@ -40,58 +40,40 @@ export function isMobile(): boolean {
 export async function openFileDialog(): Promise<FileRef | null> {
   const platform = await getPlatform()
 
-  if (platform === 'android') {
-    try {
-      const uri = await invoke<string>('android_pick_document')
-      // 从 URI 提取文件名（简化处理）
-      const name = uri.split('/').pop() || 'document.md'
-      return { path: uri, name, platform }
-    } catch (e) {
-      console.error('Android pick document failed:', e)
-      return null
-    }
-  } else {
-    // 桌面端
-    const path = await open({
-      multiple: false,
-      filters: [
-        { name: 'Markdown', extensions: ['md', 'markdown', 'txt'] },
-        { name: 'All Files', extensions: ['*'] }
-      ]
-    })
-    if (!path) return null
-    const name = path.split(/[/\\]/).pop() || 'document.md'
-    return { path, name, platform }
+  // 说明：统一使用 plugin-dialog 的 open()。
+  // SAF 权限持久化在读/写阶段由 fsSafe.ts 兜底处理（android_persist_uri_permission）。
+  const sel = await open({
+    multiple: false,
+    filters: [
+      { name: 'Markdown', extensions: ['md', 'markdown', 'txt'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  })
+  if (!sel) return null
+
+  const path = typeof sel === 'string' ? sel : ((sel as any)?.path ?? (sel as any)?.filePath ?? String(sel))
+  const name = path.split(/[/\\]/).pop() || 'document.md'
+  if (platform === 'android' && path.startsWith('content://')) {
+    try { await invoke('android_persist_uri_permission', { uri: path }) } catch {}
   }
+  return { path, name, platform }
 }
 
 // 保存文件对话框（跨平台）
 export async function saveFileDialog(defaultName: string = 'untitled.md'): Promise<FileRef | null> {
   const platform = await getPlatform()
 
-  if (platform === 'android') {
-    try {
-      const uri = await invoke<string>('android_create_document', {
-        filename: defaultName,
-        mimeType: 'text/markdown'
-      })
-      return { path: uri, name: defaultName, platform }
-    } catch (e) {
-      console.error('Android create document failed:', e)
-      return null
-    }
-  } else {
-    // 桌面端
-    const path = await save({
-      defaultPath: defaultName,
-      filters: [
-        { name: 'Markdown', extensions: ['md'] }
-      ]
-    })
-    if (!path) return null
-    const name = path.split(/[/\\]/).pop() || defaultName
-    return { path, name, platform }
+  // 说明：统一使用 plugin-dialog 的 save()。
+  const path = await save({
+    defaultPath: defaultName,
+    filters: [{ name: 'Markdown', extensions: ['md'] }],
+  })
+  if (!path) return null
+  const name = path.split(/[/\\]/).pop() || defaultName
+  if (platform === 'android' && path.startsWith('content://')) {
+    try { await invoke('android_persist_uri_permission', { uri: path }) } catch {}
   }
+  return { path, name, platform }
 }
 
 // 读取文件（跨平台）

@@ -8,8 +8,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "pretauri": "node scripts/ensure-icons.cjs",
     "pretauri:dev": "node scripts/ensure-icons.cjs",
     "pretauri:build": "node scripts/ensure-icons.cjs"
   },
