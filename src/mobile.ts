@@ -47,6 +47,12 @@ function createFAB(): void {
       <button class="fab-item" data-action="save" data-label="保存" aria-label="保存文件">
         💾
       </button>
+      <button class="fab-item" data-action="sync" data-label="立即同步" aria-label="WebDAV 立即同步">
+        🔄
+      </button>
+      <button class="fab-item" data-action="sync-settings" data-label="同步设置" aria-label="打开 WebDAV 设置">
+        ⚙️
+      </button>
       <button class="fab-item" data-action="open" data-label="打开" aria-label="打开文件">
         📂
       </button>

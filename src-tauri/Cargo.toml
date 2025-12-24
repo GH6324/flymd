@@ -6,6 +6,12 @@ authors = ["flymd"]
 edition = "2021"
 rust-version = "1.70"
 
+[lib]
+# Android 构建需要 lib target；桌面端仍通过 bin 启动（src/main.rs -> flymd::run）
+name = "flymd"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -31,6 +37,11 @@ aws-config = { version = "1", features = ["rt-tokio", "behavior-version-latest"]
 aws-sdk-s3 = { version = "1", features = ["rt-tokio"] }
 trash = "3"
 futures-util = "0.3"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# SAF（content://）读写需要 JNI + Android Context
+jni = "0.21.1"
+ndk-context = "0.1.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

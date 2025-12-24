@@ -1,7 +1,13 @@
 name: Android Build
 
 on:
-  # 仅手动触发构建（禁用自动触发）
+  # Android 分支：自动跑 debug 包，避免本地没环境时“改完不知道能不能打包”
+  push:
+    branches: [ android ]
+  pull_request:
+    branches: [ android ]
+
+  # 也允许手动触发（可选 debug/release）
   workflow_dispatch:
     inputs:
       build_type:
@@ -24,6 +30,15 @@ jobs:
     steps:
       - name: Checkout 代码
         uses: actions/checkout@v4
+
+      - name: 确定构建类型
+        id: buildtype
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "type=${{ github.event.inputs.build_type }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=debug" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: 设置 Node.js
         uses: actions/setup-node@v4
@@ -59,18 +74,22 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
 
       - name: 安装依赖
-        run: npm install
+        run: npm ci
 
       - name: 初始化 Tauri Android 项目
         run: |
           npm install -g @tauri-apps/cli
-          npx tauri android init || echo "Android project already initialized"
+          if [ -d "src-tauri/gen/android" ]; then
+            echo "Android project already initialized"
+          else
+            npx tauri android init
+          fi
 
       - name: 构建前端
         run: npm run build
 
       - name: 构建 Android APK (Debug)
-        if: ${{ github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == '' }}
+        if: ${{ steps.buildtype.outputs.type == 'debug' }}
         run: npx tauri android build --debug
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
@@ -78,7 +97,7 @@ jobs:
           NDK_HOME: ${{ env.NDK_HOME }}
 
       - name: 构建 Android APK (Release)
-        if: ${{ github.event.inputs.build_type == 'release' }}
+        if: ${{ steps.buildtype.outputs.type == 'release' }}
         run: npx tauri android build --release
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
@@ -90,7 +109,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
       - name: 上传 APK 产物 (Debug)
-        if: ${{ github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == '' }}
+        if: ${{ steps.buildtype.outputs.type == 'debug' }}
         uses: actions/upload-artifact@v4
         with:
           name: flymd-android-debug
@@ -98,7 +117,7 @@ jobs:
           if-no-files-found: error
 
       - name: 上传 APK 产物 (Release)
-        if: ${{ github.event.inputs.build_type == 'release' }}
+        if: ${{ steps.buildtype.outputs.type == 'release' }}
         uses: actions/upload-artifact@v4
         with:
           name: flymd-android-release
@@ -106,7 +125,7 @@ jobs:
           if-no-files-found: error
 
       - name: 上传 AAB 产物 (Release)
-        if: ${{ github.event.inputs.build_type == 'release' }}
+        if: ${{ steps.buildtype.outputs.type == 'release' }}
         uses: actions/upload-artifact@v4
         with:
           name: flymd-android-bundle
@@ -114,7 +133,7 @@ jobs:
           if-no-files-found: warn
 
       - name: 创建 Release (仅 Release 构建)
-        if: ${{ github.event.inputs.build_type == 'release' && startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ steps.buildtype.outputs.type == 'release' && startsWith(github.ref, 'refs/tags/') }}
         uses: softprops/action-gh-release@v1
         with:
           files: |

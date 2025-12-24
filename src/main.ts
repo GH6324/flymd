@@ -5001,6 +5001,21 @@ try {
     ;(window as any).flymdOpenFile = openFile2
     ;(window as any).flymdNewFile = newFile
     ;(window as any).flymdSaveFile = saveFile
+    // WebDAV：移动端 FAB 需要的快捷入口
+    ;(window as any).flymdWebdavSyncNow = async () => {
+      try {
+        await handleManualSyncFromMenu()
+      } catch (e) {
+        console.error('[WebDAV] 立即同步失败', e)
+      }
+    }
+    ;(window as any).flymdWebdavOpenSettings = () => {
+      try {
+        void openWebdavSyncDialog()
+      } catch (e) {
+        console.error('[WebDAV] 打开设置失败', e)
+      }
+    }
     ;(window as any).flymdRenamePathWithDialog = (path: string) => renamePathWithDialog(path)
     ;(window as any).flymdRenameCurrentFileForTypecho = async (id: string, title: string) => {
       try {

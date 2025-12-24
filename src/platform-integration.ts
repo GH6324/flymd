@@ -48,8 +48,10 @@ function setupFABListeners(): void {
         break
       }
       case 'open': {
-        // MVP：移动端“打开”优先引导到库（外部 SAF 文件导入后续再做）
-        openDrawer()
+        // SAF：调用主程序打开对话框；失败再回退到库抽屉
+        if (!callGlobal('flymdOpenFile')) {
+          openDrawer()
+        }
         break
       }
       case 'new': {
@@ -65,6 +67,14 @@ function setupFABListeners(): void {
         if (!callGlobal('flymdSaveFile')) {
           clickById('btn-save')
         }
+        break
+      }
+      case 'sync': {
+        callGlobal('flymdWebdavSyncNow')
+        break
+      }
+      case 'sync-settings': {
+        callGlobal('flymdWebdavOpenSettings')
         break
       }
       case 'preview': {
@@ -100,4 +110,3 @@ export async function initPlatformIntegration(): Promise<void> {
 
   console.log('[Platform] Running on:', platform)
 }
-

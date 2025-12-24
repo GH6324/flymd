@@ -3,6 +3,10 @@
 import { mkdir, rename, readFile, writeFile, remove } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
 
+function isContentUriPath(p: string): boolean {
+  return typeof p === 'string' && p.startsWith('content://')
+}
+
 // 统一路径分隔符（在当前平台风格下清洗多余分隔符）
 export function normSep(p: string): string {
   return p.replace(/[\\/]+/g, p.includes('\\') ? '\\' : '/')
@@ -77,6 +81,10 @@ export function normalizePath(input: unknown): string {
 
 // 统一读文件兜底：fs 失败则调用后端命令读取
 export async function readTextFileAnySafe(p: string): Promise<string> {
+  if (isContentUriPath(p)) {
+    try { await invoke('android_persist_uri_permission', { uri: p }) } catch {}
+    return await invoke<string>('android_read_uri', { uri: p })
+  }
   try {
     const data = await readFile(p as any)
     return new TextDecoder().decode(data as any)
@@ -91,6 +99,11 @@ export async function readTextFileAnySafe(p: string): Promise<string> {
 
 // 统一写文件兜底：fs 失败则调用后端命令写入
 export async function writeTextFileAnySafe(p: string, content: string): Promise<void> {
+  if (isContentUriPath(p)) {
+    try { await invoke('android_persist_uri_permission', { uri: p }) } catch {}
+    await invoke('android_write_uri', { uri: p, content })
+    return
+  }
   const data = new TextEncoder().encode(content)
   try {
     await writeFile(p as any, data as any)

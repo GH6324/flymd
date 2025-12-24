@@ -144,6 +144,14 @@
   background: #ff9800;
 }
 
+.fab-item[data-action="sync"] {
+  background: #00bcd4;
+}
+
+.fab-item[data-action="sync-settings"] {
+  background: #455a64;
+}
+
 .fab-item[data-action="preview"] {
   background: #9c27b0;
 }
