@@ -2062,10 +2062,13 @@ mod android_saf {
         clear_java_exception(env);
         format!("DocumentsContract.getTreeDocumentId 失败: {e}")
       })?;
-    jstring_to_string(env, v.l().map_err(|e| {
-      clear_java_exception(env);
-      format!("getTreeDocumentId 返回类型异常: {e}")
-    })?)
+    let s_obj = v
+      .l()
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("getTreeDocumentId 返回类型异常: {e}")
+      })?;
+    jstring_to_string(env, s_obj)
   }
 
   fn get_doc_id<'local>(
@@ -2084,10 +2087,13 @@ mod android_saf {
         clear_java_exception(env);
         format!("DocumentsContract.getDocumentId 失败: {e}")
       })?;
-    jstring_to_string(env, v.l().map_err(|e| {
-      clear_java_exception(env);
-      format!("getDocumentId 返回类型异常: {e}")
-    })?)
+    let s_obj = v
+      .l()
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("getDocumentId 返回类型异常: {e}")
+      })?;
+    jstring_to_string(env, s_obj)
   }
 
   fn build_tree_uri<'local>(
