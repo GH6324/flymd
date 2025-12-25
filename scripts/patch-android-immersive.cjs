@@ -344,6 +344,35 @@ ${hasOnActivityResult ? '' : `
   return true
 }
 
+function patchProguardKeepRules(projectRoot) {
+  try {
+    const proguard = path.join(projectRoot, 'src-tauri', 'gen', 'android', 'app', 'proguard-rules.pro')
+    if (!fs.existsSync(proguard)) {
+      console.warn('[patch-android-immersive] 未找到 proguard-rules.pro（可能不启用混淆或模板变更），跳过 keep 规则注入')
+      return false
+    }
+    const s = fs.readFileSync(proguard, 'utf8')
+    if (s.includes('flymd:saf-folder-picker-keep-v1')) {
+      console.log('[patch-android-immersive] Proguard keep 规则已存在，跳过')
+      return true
+    }
+    const block = `
+
+# flymd:saf-folder-picker-keep-v1
+# 说明：release 可能启用 R8/Proguard；flymdPickFolder 仅被 JNI 调用，容易被裁剪/改名导致运行时找不到方法。
+-keepclassmembers class **.MainActivity {
+    public java.lang.String flymdPickFolder(long);
+}
+`
+    fs.writeFileSync(proguard, s.trimEnd() + block + '\n', 'utf8')
+    console.log(`[patch-android-immersive] 已写入 Proguard keep 规则: ${proguard}`)
+    return true
+  } catch (e) {
+    console.warn(`[patch-android-immersive] 写入 Proguard keep 规则失败: ${e?.message || e}`)
+    return false
+  }
+}
+
 function main() {
   const root = process.cwd()
   const files = findMainActivityKotlin(root)
@@ -362,6 +391,9 @@ function main() {
   if (!ok) {
     console.warn('[patch-android-immersive] 未能成功写入任何 MainActivity.kt（构建仍可继续，但不会全屏）')
   }
+
+  // release 兜底：确保 JNI 调用的方法不会被 R8/Proguard 裁剪/改名
+  patchProguardKeepRules(root)
 }
 
 main()
