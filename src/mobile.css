@@ -22,14 +22,14 @@
   /* 编辑器全屏 */
   #editor {
     width: 100% !important;
-    height: calc(100vh - 48px) !important; /* 减去顶部工具栏 */
+    height: calc(100vh - 40px) !important; /* 减去顶部工具栏 */
     font-size: 16px !important; /* iOS 防止自动缩放 */
   }
 
   /* 预览区全屏 */
   #preview {
     width: 100% !important;
-    height: calc(100vh - 48px) !important;
+    height: calc(100vh - 40px) !important;
   }
 
   /* 顶部工具栏按钮加大（触摸友好） */
@@ -130,10 +130,10 @@ body.platform-mobile #mobile-selection-toolbar .mst-btn:active {
 @supports (height: 100dvh) {
   @media (max-width: 768px) {
     #editor {
-      height: calc(100dvh - 48px) !important;
+      height: calc(100dvh - 40px) !important;
     }
     #preview {
-      height: calc(100dvh - 48px) !important;
+      height: calc(100dvh - 40px) !important;
     }
   }
 }
@@ -159,28 +159,34 @@ body.platform-mobile #mobile-selection-toolbar .mst-btn:active {
 
 /* ========== 移动端顶部工具栏精简 ========== */
 @media (max-width: 768px) {
-  /* flymd 顶栏：允许横向滚动，避免菜单被挤没 */
+  /* flymd 顶栏：紧凑布局，分两侧避开中间摄像头 */
   .titlebar {
     /* 让内容避开刘海/摄像头区域（沉浸式全屏时很关键） */
     padding-top: env(safe-area-inset-top) !important;
     padding-left: env(safe-area-inset-left) !important;
     padding-right: env(safe-area-inset-right) !important;
-    height: calc(48px + env(safe-area-inset-top)) !important;
-    min-height: calc(48px + env(safe-area-inset-top)) !important;
+    height: calc(40px + env(safe-area-inset-top)) !important;
+    min-height: calc(40px + env(safe-area-inset-top)) !important;
+    align-items: center !important;
+    justify-content: space-between !important;
   }
 
   .menubar {
-    height: 48px !important;
-    padding: 4px 8px !important;
-    overflow-x: auto;
-    overflow-y: hidden;
-    white-space: nowrap;
+    height: 40px !important;
+    padding: 0 8px !important;
+    flex: 0 0 auto !important;
+    overflow: visible !important;
   }
 
   .menu-item {
-    min-width: 44px !important;
-    min-height: 44px !important;
+    min-width: 40px !important;
+    min-height: 36px !important;
     padding: 0 10px !important;
+  }
+
+  /* 移动端隐藏文件名（让两侧按钮分布） */
+  body.platform-mobile .filename {
+    display: none !important;
   }
 
   /* Android 不需要窗口控制按钮 */
@@ -194,40 +200,41 @@ body.platform-mobile #mobile-selection-toolbar .mst-btn:active {
     display: none !important;
   }
 
-  /* 移动端：顶栏不显示“文件”入口（所有文件操作走右侧“更多”菜单） */
+  /* 移动端：顶栏不显示"文件"入口（所有文件操作走右侧"更多"菜单） */
   body.platform-mobile #btn-open {
     display: none !important;
   }
 
-  /* 移动端：顶栏只保留“库 / 更多 / 语言”，其余入口全部移入“更多” */
+  /* 移动端：顶栏只保留"库 / 插件 / 更多 / 语言"，其余入口全部移入"更多" */
   body.platform-mobile #btn-mode,
   body.platform-mobile #btn-theme,
-  body.platform-mobile #btn-extensions,
   body.platform-mobile #btn-update,
   body.platform-mobile #btn-about {
     display: none !important;
   }
 }
 
-/* ========== 移动端：扩展和语言按钮右移到最右边（避开摄像头） ========== */
+/* ========== 移动端：按钮分两侧布局（避开中间摄像头区域） ========== */
+/* 左侧组：库 + 插件（在 menubar 内） */
+body.platform-mobile #btn-library {
+  order: 1;
+}
+
 body.platform-mobile #btn-extensions {
-  order: 100;
-  margin-left: auto;
+  order: 2;
+}
+
+/* 右侧组：更多 + 语言（在 titlebar 内，menubar 外） */
+body.platform-mobile #btn-mobile-menu {
+  order: 10;
+  padding: 0 10px !important;
+  min-width: 40px !important;
 }
 
 body.platform-mobile #btn-lang {
-  order: 101;
-  /* 语言/更多两个按钮要紧凑些，避免把“扩展”挤到摄像头下面 */
-  padding: 0 8px !important;
+  order: 11;
+  padding: 0 10px !important;
   min-width: 40px !important;
-  margin-right: 4px;
-}
-
-body.platform-mobile #btn-mobile-menu {
-  order: 50;
-  padding: 0 8px !important;
-  min-width: 44px !important;
-  /* 右侧安全区域由 titlebar 的 padding-right 统一处理 */
 }
 
 /* ========== 移动端弹窗（图床 / WebDAV 同步等） ========== */

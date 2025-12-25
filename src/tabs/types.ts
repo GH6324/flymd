@@ -100,8 +100,24 @@ export function createTabFromFile(filePath: string, content: string): TabDocumen
 // 获取标签显示名称
 export function getTabDisplayName(tab: TabDocument): string {
   if (tab.filePath) {
-    // 从完整路径提取文件名
-    const parts = tab.filePath.replace(/\\/g, '/').split('/')
+    const p = tab.filePath
+    // SAF URI：content://...document/primary%3ADocuments%2Fxxx 需要解码并提取文件名
+    if (p.startsWith('content://')) {
+      try {
+        // 取 URI 最后一段（可能是 docId）
+        const last = p.split('/').pop() || ''
+        // 解码 URL 编码
+        const decoded = decodeURIComponent(last)
+        // 再按 / 或 : 分割取最后一段（处理 primary:Documents/xxx 这种格式）
+        const segments = decoded.split(/[:/]/)
+        const name = segments[segments.length - 1]?.trim()
+        if (name) return name
+      } catch {
+        // 解码失败则继续用默认逻辑
+      }
+    }
+    // 普通路径：从完整路径提取文件名
+    const parts = p.replace(/\\/g, '/').split('/')
     return parts[parts.length - 1] || '未命名'
   }
   if (tab.displayName) return tab.displayName
