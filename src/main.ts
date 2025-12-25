@@ -47,7 +47,7 @@ import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConf
 // 平台适配层（Android 支持）
 import { initPlatformIntegration } from './platform-integration'
 import { ensureAndroidDefaultLibraryRoot } from './platform/androidLibrary'
-import { safDelete, safListDir, persistSafUriPermission, safPickFolder, safPrettyName } from './platform/androidSaf'
+import { safDelete, safListDir, persistSafUriPermission, safPickFolder, safPrettyName, isSafUninstallUnsafeFolder } from './platform/androidSaf'
 import { createImageUploader } from './core/imageUpload'
 import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
 import type { InstallableItem } from './extensions/market'
@@ -411,6 +411,8 @@ try {
 
 // 应用状态
 let fileTreeReady = false
+// Android：外置库误选到 Android/data/obb 时，卸载会被系统清空——必须强提示（且仅提示一次）
+let _warnedUninstallUnsafeSafLibrary = false
 let mode: Mode = 'edit'
 // 所见即所得开关（Overlay 模式）
 let wysiwyg = false
@@ -6274,8 +6276,9 @@ async function pickLibraryRoot(): Promise<string | null> {
     try {
       const p = await invoke<string>('get_platform')
       if (p === 'android') {
-        // 选择库类型：外置（SAF，卸载不删文档）或本地（应用私有目录，简单可靠）
-        const useSaf = await ask('是否选择外置文件夹作为库？\n确定：外置（SAF，卸载不会删除文档）\n取消：本地（应用私有目录）')
+        // 选择库类型：外置（SAF）或本地（应用私有目录）
+        // 注意：外置库如果误选到 Android/data 或 Android/obb 下，系统会在卸载时清空该目录（事故）
+        const useSaf = await ask('是否选择外置文件夹作为库？\n确定：外置（SAF，不要选 Android/data/obb，否则卸载会删除）\n取消：本地（应用私有目录）')
         if (useSaf) {
           let uri = ''
           try {
@@ -6287,6 +6290,10 @@ async function pickLibraryRoot(): Promise<string | null> {
           }
           if (!uri || !uri.startsWith('content://')) {
             alert('请选择外置存储中的文件夹（SAF）')
+            return null
+          }
+          if (isSafUninstallUnsafeFolder(uri)) {
+            alert('你选的是 Android/data 或 Android/obb 下的目录。\n这类目录属于应用专用外部目录，系统会在卸载应用时自动清空。\n请在“下载/文档/存储根目录”下新建一个文件夹再选择。')
             return null
           }
           try { await persistSafUriPermission(uri) } catch {}
@@ -6357,6 +6364,10 @@ async function importAndroidSafFolderAsLocalLibrary(): Promise<void> {
     if (!uri || !uri.startsWith('content://')) {
       alert('请选择外置存储中的文件夹（SAF）')
       return
+    }
+    if (isSafUninstallUnsafeFolder(uri)) {
+      const ok = await ask('你选的是 Android/data 或 Android/obb 下的目录。\n这类目录卸载会被系统清空。\n仍要继续从该目录“导入到本地库”吗？')
+      if (!ok) return
     }
     try { await persistSafUriPermission(uri) } catch {}
 
@@ -6949,6 +6960,20 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
         elPath.textContent = cur?.name || ''
       } else {
         elPath.textContent = ''
+      }
+    }
+  } catch {}
+
+  // Android：若当前激活库是危险 SAF 目录（Android/data/obb），立刻强提示避免事故继续发生
+  try {
+    if (!_warnedUninstallUnsafeSafLibrary) {
+      const p = await (async () => { try { return await invoke<string>('get_platform') } catch { return '' } })()
+      if (p === 'android') {
+        const root = await getLibraryRoot()
+        if (root && root.startsWith('content://') && isSafUninstallUnsafeFolder(root)) {
+          _warnedUninstallUnsafeSafLibrary = true
+          alert('警告：当前库目录位于 Android/data 或 Android/obb。\n这类目录会在卸载应用时被系统自动清空，文档会丢失。\n请立刻更换库目录（建议：下载/文档/存储根目录下自建文件夹），或先“从外置文件夹导入…”到本地库。')
+        }
       }
     }
   } catch {}
