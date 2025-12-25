@@ -90,7 +90,7 @@ function injectApplyLine(buildFile, kind) {
 
 function ensureSigningGradle(androidRoot) {
   const p = path.join(androidRoot, 'flymd-signing.gradle')
-  const marker = 'flymd:android-signing-gradle-v1'
+  const marker = 'flymd:android-signing-gradle-v2'
   if (exists(p)) {
     const cur = readText(p)
     if (cur.includes(marker)) {
@@ -115,12 +115,12 @@ function ensureSigningGradle(androidRoot) {
 // 注意：
 // - 任意变量缺失或文件不存在：不配置 signing（避免破坏无签名构建）
 
-def keystorePath = System.getenv('KEYSTORE_PATH')
-def keystorePassword = System.getenv('KEYSTORE_PASSWORD')
-def keyAlias = System.getenv('KEY_ALIAS')
-def keyPassword = System.getenv('KEY_PASSWORD')
+def flymdKeystorePath = System.getenv('KEYSTORE_PATH')
+def flymdKeystorePassword = System.getenv('KEYSTORE_PASSWORD')
+def flymdKeyAlias = System.getenv('KEY_ALIAS')
+def flymdKeyPassword = System.getenv('KEY_PASSWORD')
 
-def hasSigning = keystorePath && keystorePassword && keyAlias && keyPassword && file(keystorePath).exists()
+def hasSigning = flymdKeystorePath && flymdKeystorePassword && flymdKeyAlias && flymdKeyPassword && file(flymdKeystorePath).exists()
 
 if (!hasSigning) {
   println('[flymd-signing] Release signing 未配置（KEYSTORE_* 缺失或文件不存在），将跳过签名配置')
@@ -130,10 +130,10 @@ if (!hasSigning) {
 android {
   signingConfigs {
     release {
-      storeFile file(keystorePath)
-      storePassword keystorePassword
-      keyAlias keyAlias
-      keyPassword keyPassword
+      storeFile file(flymdKeystorePath)
+      storePassword flymdKeystorePassword
+      keyAlias flymdKeyAlias
+      keyPassword flymdKeyPassword
     }
   }
   buildTypes {
@@ -169,4 +169,3 @@ function main() {
 }
 
 main()
-
