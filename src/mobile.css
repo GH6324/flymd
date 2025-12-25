@@ -198,6 +198,15 @@ body.platform-mobile #mobile-selection-toolbar .mst-btn:active {
   body.platform-mobile #btn-open {
     display: none !important;
   }
+
+  /* 移动端：顶栏只保留“库 / 更多 / 语言”，其余入口全部移入“更多” */
+  body.platform-mobile #btn-mode,
+  body.platform-mobile #btn-theme,
+  body.platform-mobile #btn-extensions,
+  body.platform-mobile #btn-update,
+  body.platform-mobile #btn-about {
+    display: none !important;
+  }
 }
 
 /* ========== 移动端：扩展和语言按钮右移到最右边（避开摄像头） ========== */

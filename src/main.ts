@@ -1280,6 +1280,8 @@ performance.mark('flymd-dom-ready')
 initPlatformIntegration().catch((e) => console.error('[Platform] Initialization failed:', e))
 // 初始化平台类（用于 CSS 平台适配，Windows 显示窗口控制按钮）
 try { initPlatformClass() } catch {}
+// 移动端：根据 visualViewport 自动计算“键盘占用高度”，用于底部菜单避开输入法遮挡
+try { installMobileKeyboardInsetCssVar() } catch {}
 // 应用已保存主题并挂载主题 UI
 try { applySavedTheme() } catch {}
 try { initThemeUI() } catch {}
@@ -4373,7 +4375,52 @@ async function saveAs() {
       return
     }
 
-    const target = await save({ filters: [ { name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }, { name: 'PDF', extensions: ['pdf'] }, { name: 'Word (DOCX)', extensions: ['docx'] }, { name: 'WPS', extensions: ['wps'] } ] })
+    const guessName = () => {
+      try {
+        if (currentFilePath) {
+          const s = String(currentFilePath)
+          const parts = s.replace(/\\/g, '/').split('/')
+          const last = parts[parts.length - 1] || ''
+          if (last) return last
+        }
+      } catch {}
+      return 'untitled.md'
+    }
+
+    const joinPath = (dir: string, name: string) => {
+      const d = String(dir || '').trim().replace(/[\\/]+$/, '')
+      const n = String(name || '').trim().replace(/^[\\/]+/, '')
+      if (!d) return n
+      const sep = d.includes('\\') ? '\\' : '/'
+      return d + sep + n
+    }
+
+    // 让“另存为”默认落在当前库目录（仅对普通路径有效；content:// 目录无法作为 defaultPath）
+    let defaultPath: string | undefined = undefined
+    try {
+      const name = guessName()
+      const root = await getLibraryRoot()
+      const isContent = (p: string | null) => !!(p && typeof p === 'string' && p.startsWith('content://'))
+      if (!isContent(currentFilePath as any) && currentFilePath) {
+        const p = String(currentFilePath)
+        const dir = p.replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+        if (dir) defaultPath = joinPath(dir, name)
+      } else if (root && !isContent(root)) {
+        defaultPath = joinPath(root, name)
+      } else {
+        defaultPath = name
+      }
+    } catch {}
+
+    const target = await save({
+      defaultPath,
+      filters: [
+        { name: 'Markdown', extensions: ['md', 'markdown', 'txt'] },
+        { name: 'PDF', extensions: ['pdf'] },
+        { name: 'Word (DOCX)', extensions: ['docx'] },
+        { name: 'WPS', extensions: ['wps'] },
+      ]
+    })
     if (!target) {
       logDebug('用户取消另存为操作')
       return
@@ -6696,6 +6743,45 @@ async function renderDir(container: HTMLDivElement, dir: string) {
 type TopMenuItemSpec = { label: string; accel?: string; action: () => void; disabled?: boolean }
 // 顶部下拉菜单：全局文档级点击处理器引用，避免重复绑定与交叉干扰
 let _topMenuDocHandler: ((ev: MouseEvent) => void) | null = null
+
+function getMobileKeyboardInsetBottomPx(): number {
+  try {
+    const vv = (window as any).visualViewport as VisualViewport | undefined
+    if (!vv) return 0
+    const inset = window.innerHeight - (vv.height + vv.offsetTop)
+    if (!Number.isFinite(inset)) return 0
+    return Math.max(0, Math.round(inset))
+  } catch {
+    return 0
+  }
+}
+
+function installMobileKeyboardInsetCssVar(): void {
+  try {
+    const root = document.documentElement
+    const vv = (window as any).visualViewport as VisualViewport | undefined
+    if (!root || !vv) return
+
+    let raf = 0
+    const update = () => {
+      if (raf) cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        try {
+          const px = getMobileKeyboardInsetBottomPx()
+          root.style.setProperty('--flymd-kb-inset-bottom', px ? (px + 'px') : '0px')
+        } catch {}
+      })
+    }
+
+    vv.addEventListener('resize', update)
+    vv.addEventListener('scroll', update)
+    window.addEventListener('resize', update)
+    document.addEventListener('focusin', update, true)
+    document.addEventListener('focusout', update, true)
+    update()
+  } catch {}
+}
+
 function showTopMenu(anchor: HTMLElement, items: TopMenuItemSpec[]) {
   try {
     const isMobileUi = document.body.classList.contains('platform-mobile')
@@ -6766,7 +6852,7 @@ function showTopMenu(anchor: HTMLElement, items: TopMenuItemSpec[]) {
       // 移动端：底部动作面板，避免被状态栏遮挡
       menu.style.left = '8px'
       menu.style.right = '8px'
-      menu.style.bottom = 'calc(env(safe-area-inset-bottom) + 8px)'
+      menu.style.bottom = 'calc(env(safe-area-inset-bottom) + var(--flymd-kb-inset-bottom, 0px) + 8px)'
       menu.style.top = 'auto'
       menu.style.minWidth = 'unset'
       menu.style.maxHeight = '60vh'
@@ -6917,6 +7003,8 @@ function showMobileQuickMenu() {
     { label: t('sync.openlog'), action: () => { void handleOpenSyncLogFromMenu() } },
     { label: t('menu.extensions'), action: () => { clickById('btn-extensions') } },
     { label: t('menu.theme.tooltip') || t('menu.theme'), action: () => { clickById('btn-theme') } },
+    { label: t('menu.update'), action: () => { void checkUpdateInteractive() } },
+    { label: t('menu.about'), action: () => { void showAbout(true) } },
   ]
   showTopMenu(anchor, items)
 }
