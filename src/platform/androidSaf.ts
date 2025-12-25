@@ -19,6 +19,33 @@ export function isContentUriPath(p: string): boolean {
   return typeof p === 'string' && p.startsWith('content://')
 }
 
+function decodeURIComponentSafe(s: string): string {
+  try { return decodeURIComponent(String(s || '')) } catch { return String(s || '') }
+}
+
+// SAF：把“docId/uri”变成人能看的文件名（隐藏 primary: 这类前缀与 URL 编码）
+export function safPrettyName(input: string): string {
+  try {
+    const raw = String(input || '').trim()
+    if (!raw) return ''
+    const decoded = decodeURIComponentSafe(raw)
+    const last = (decoded.split('/').pop() || decoded).trim()
+    if (!last) return raw
+    // 常见 docId：primary:xxx
+    if (last.startsWith('primary:')) return last.slice('primary:'.length) || last
+    return last
+  } catch {
+    return String(input || '')
+  }
+}
+
+function normalizeSafEntryName(name: string, uri: string): string {
+  const n = String(name || '').trim()
+  if (n) return safPrettyName(n)
+  const last = (String(uri || '').split('/').pop() || '').trim()
+  return safPrettyName(last || uri)
+}
+
 export async function persistSafUriPermission(uri: string): Promise<void> {
   if (!isContentUriPath(uri)) return
   await invoke('android_persist_uri_permission', { uri })
@@ -29,7 +56,17 @@ export async function safPickFolder(timeoutMs = 60_000): Promise<string> {
 }
 
 export async function safListDir(uri: string): Promise<AndroidSafDirEntry[]> {
-  return await invoke<AndroidSafDirEntry[]>('android_saf_list_dir', { uri })
+  const ents = await invoke<AndroidSafDirEntry[]>('android_saf_list_dir', { uri })
+  const out: AndroidSafDirEntry[] = []
+  for (const it of ents || []) {
+    const p = String((it as any)?.path || '').trim()
+    const nmRaw = String((it as any)?.name || '').trim()
+    const isDir = !!(it as any)?.isDir
+    if (!p) continue
+    const nm = normalizeSafEntryName(nmRaw, p)
+    out.push({ name: nm, path: p, isDir })
+  }
+  return out
 }
 
 export async function safCreateFile(

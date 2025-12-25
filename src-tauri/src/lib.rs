@@ -980,6 +980,7 @@ pub fn run() {
       git_commit_snapshot,
       git_restore_file_version,
       run_installer,
+      install_apk,
       // Android SAF 命令
       android_pick_document,
       android_create_document,
@@ -1150,6 +1151,8 @@ struct CheckUpdateResp {
   // macOS 双资产（Intel / Apple Silicon）
   asset_macos_x64: Option<UpdateAssetInfo>,
   asset_macos_arm: Option<UpdateAssetInfo>,
+  // Android 资产
+  asset_android: Option<UpdateAssetInfo>,
 }
 
 fn norm_ver(v: &str) -> (i64, i64, i64, i64) {
@@ -1199,7 +1202,8 @@ fn os_arch_tag() -> (&'static str, &'static str) {
     #[cfg(target_os = "windows")] { "windows" }
     #[cfg(target_os = "linux")] { "linux" }
     #[cfg(target_os = "macos")] { "macos" }
-    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))] { "other" }
+    #[cfg(target_os = "android")] { "android" }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos", target_os = "android")))] { "other" }
   };
   let arch = {
     #[cfg(target_arch = "x86_64")] { "x86_64" }
@@ -1240,11 +1244,34 @@ fn match_windows_asset(assets: &[GhAsset]) -> Option<&GhAsset> {
   None
 }
 
+fn match_android_asset(assets: &[GhAsset]) -> Option<&GhAsset> {
+  // 优先 arm64，其次 universal，最后任意 apk
+  let mut arm64: Option<&GhAsset> = None;
+  let mut universal: Option<&GhAsset> = None;
+  let mut any_apk: Option<&GhAsset> = None;
+
+  for a in assets {
+    let n = a.name.to_ascii_lowercase();
+    if !n.ends_with(".apk") { continue; }
+
+    if n.contains("arm64") || n.contains("aarch64") {
+      if arm64.is_none() { arm64 = Some(a); }
+    } else if n.contains("universal") {
+      if universal.is_none() { universal = Some(a); }
+    } else if any_apk.is_none() {
+      any_apk = Some(a);
+    }
+  }
+
+  arm64.or(universal).or(any_apk)
+}
+
 #[tauri::command]
 async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) -> Result<CheckUpdateResp, String> {
   // 当前版本：与 tauri.conf.json 一致（构建时可由环境注入，这里直接读取 Cargo.toml 同步版本）
   let current = env!("CARGO_PKG_VERSION").to_string();
   let (os_tag, _arch_tag) = os_arch_tag();
+  let is_android = os_tag == "android";
 
   // 节流留空：简单实现始终请求（前端可决定调用频率）
 
@@ -1260,11 +1287,35 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) ->
   if !resp.status().is_success() { return Err(format!("http status {}", resp.status())); }
   let releases: Vec<GhRelease> = resp.json().await.map_err(|e| format!("json error: {e}"))?;
   let include_pre = include_prerelease.unwrap_or(false);
-  let latest = releases.into_iter().find(|r| !r.draft && (include_pre || !r.prerelease))
+
+  // Android 和桌面端使用不同的 Release 过滤逻辑
+  // Android: 只看 android- 开头的 tag（如 android-v1.0.0）
+  // 桌面端: 跳过 android- 开头的 tag
+  let latest = releases.into_iter()
+    .filter(|r| !r.draft && (include_pre || !r.prerelease))
+    .filter(|r| {
+      let tag = r.tag_name.to_ascii_lowercase();
+      if is_android {
+        tag.starts_with("android-")
+      } else {
+        !tag.starts_with("android-")
+      }
+    })
+    .next()
     .ok_or_else(|| "no release found".to_string())?;
 
-  // 统一版本号语义：从 tag_name 中剥离前缀 v，仅保留纯版本号（例如 v0.5.0 -> 0.5.0）
-  let latest_tag = latest.tag_name.trim().trim_start_matches('v').to_string();
+  // 统一版本号语义：从 tag_name 中剥离前缀
+  // Android: android-v1.0.0 -> 1.0.0
+  // 桌面端: v0.5.0 -> 0.5.0
+  let latest_tag = if is_android {
+    latest.tag_name.trim()
+      .trim_start_matches("android-")
+      .trim_start_matches("Android-")
+      .trim_start_matches('v')
+      .to_string()
+  } else {
+    latest.tag_name.trim().trim_start_matches('v').to_string()
+  };
   let n_cur = norm_ver(&current);
   let n_new = norm_ver(&latest_tag);
   let has_update = is_better(&n_new, &n_cur);
@@ -1275,6 +1326,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) ->
   let mut asset_linux_deb = None;
   let mut asset_macos_x64 = None;
   let mut asset_macos_arm = None;
+  let mut asset_android = None;
   if os_tag == "windows" {
     if let Some(a) = match_windows_asset(&latest.assets) {
       asset_win = Some(UpdateAssetInfo{
@@ -1320,6 +1372,15 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) ->
         proxy_url: gh_proxy_url(&a.browser_download_url),
       });
     }
+  } else if os_tag == "android" {
+    if let Some(a) = match_android_asset(&latest.assets) {
+      asset_android = Some(UpdateAssetInfo{
+        name: a.name.clone(),
+        size: a.size.unwrap_or(0),
+        direct_url: a.browser_download_url.clone(),
+        proxy_url: gh_proxy_url(&a.browser_download_url),
+      });
+    }
   }
 
   let notes = latest.body.unwrap_or_default();
@@ -1337,6 +1398,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) ->
     asset_linux_deb,
     asset_macos_x64,
     asset_macos_arm,
+    asset_android,
   })
 }
 
@@ -1911,6 +1973,93 @@ async fn run_installer(path: String) -> Result<(), String> {
   {
     let _ = path;
     Err("run_installer only supports Windows".into())
+  }
+}
+
+#[tauri::command]
+async fn install_apk(path: String) -> Result<(), String> {
+  #[cfg(target_os = "android")]
+  {
+    use jni::objects::{JObject, JValue};
+    use jni::JavaVM;
+    use jni::sys::jobject;
+
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }
+      .map_err(|e| format!("获取 JavaVM 失败: {e}"))?;
+    let mut env = vm
+      .attach_current_thread()
+      .map_err(|e| format!("attach_current_thread 失败: {e}"))?;
+
+    // 获取 Activity context
+    let raw_ctx = ctx.context() as jobject;
+    let ctx_global: JObject<'static> = unsafe { JObject::from_raw(raw_ctx) };
+    let activity = env
+      .new_local_ref(ctx_global)
+      .map_err(|e| format!("NewLocalRef(context) 失败: {e}"))?;
+
+    // 创建 File 对象
+    let file_class = env.find_class("java/io/File")
+      .map_err(|e| format!("find_class(File) 失败: {e}"))?;
+    let path_str = env.new_string(&path)
+      .map_err(|e| format!("new_string(path) 失败: {e}"))?;
+    let file_obj = env.new_object(file_class, "(Ljava/lang/String;)V", &[JValue::from(&path_str)])
+      .map_err(|e| format!("new File() 失败: {e}"))?;
+
+    // 获取包名用于 FileProvider authority
+    let pkg_name = env.call_method(&activity, "getPackageName", "()Ljava/lang/String;", &[])
+      .map_err(|e| format!("getPackageName 失败: {e}"))?
+      .l().map_err(|e| format!("getPackageName 返回类型异常: {e}"))?;
+    let pkg_str: String = env.get_string((&pkg_name).into())
+      .map_err(|e| format!("get_string(pkg) 失败: {e}"))?
+      .into();
+    let authority = format!("{}.fileprovider", pkg_str);
+    let authority_str = env.new_string(&authority)
+      .map_err(|e| format!("new_string(authority) 失败: {e}"))?;
+
+    // 使用 FileProvider 获取 content:// URI（Android 7.0+）
+    let file_provider_class = env.find_class("androidx/core/content/FileProvider")
+      .map_err(|e| format!("find_class(FileProvider) 失败: {e}"))?;
+    let uri = env.call_static_method(
+      file_provider_class,
+      "getUriForFile",
+      "(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;",
+      &[JValue::from(&activity), JValue::from(&authority_str), JValue::from(&file_obj)],
+    ).map_err(|e| format!("FileProvider.getUriForFile 失败: {e}"))?
+      .l().map_err(|e| format!("getUriForFile 返回类型异常: {e}"))?;
+
+    // 创建 Intent (ACTION_VIEW)
+    let action_view = env.new_string("android.intent.action.VIEW")
+      .map_err(|e| format!("new_string(ACTION_VIEW) 失败: {e}"))?;
+    let intent_class = env.find_class("android/content/Intent")
+      .map_err(|e| format!("find_class(Intent) 失败: {e}"))?;
+    let intent = env.new_object(intent_class, "(Ljava/lang/String;)V", &[JValue::from(&action_view)])
+      .map_err(|e| format!("new Intent() 失败: {e}"))?;
+
+    // 设置 Data 和 Type
+    let mime_type = env.new_string("application/vnd.android.package-archive")
+      .map_err(|e| format!("new_string(mime) 失败: {e}"))?;
+    let _ = env.call_method(
+      &intent,
+      "setDataAndType",
+      "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;",
+      &[JValue::from(&uri), JValue::from(&mime_type)],
+    ).map_err(|e| format!("setDataAndType 失败: {e}"))?;
+
+    // 添加 FLAG_GRANT_READ_URI_PERMISSION (1)
+    let _ = env.call_method(&intent, "addFlags", "(I)Landroid/content/Intent;", &[JValue::Int(1)])
+      .map_err(|e| format!("addFlags 失败: {e}"))?;
+
+    // 启动安装器
+    env.call_method(&activity, "startActivity", "(Landroid/content/Intent;)V", &[JValue::from(&intent)])
+      .map_err(|e| format!("startActivity 失败: {e}"))?;
+
+    Ok(())
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = path;
+    Err("install_apk only supports Android".into())
   }
 }
 

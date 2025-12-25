@@ -10,6 +10,8 @@ import { openPath } from '@tauri-apps/plugin-opener'
 import { ask } from '@tauri-apps/plugin-dialog'
 import { t } from '../i18n'
 import { showConflictDialog, showLocalDeleteDialog, showRemoteDeleteDialog, showUploadMissingRemoteDialog } from '../dialog'
+import { readTextFileAnySafe, writeTextFileAnySafe } from '../core/fsSafe'
+import { persistSafUriPermission, safCreateDir, safCreateFile, safListDir, type AndroidSafDirEntry } from '../platform/androidSaf'
 
 // 当前同步通知ID（用于更新同一条通知）
 let _currentSyncNotificationId: string | null = null
@@ -195,6 +197,301 @@ function shouldDiveIntoHiddenDir(relDir: string): boolean {
   } catch {
     return false
   }
+}
+
+// =============== Android SAF 外置库：WebDAV 同步镜像（笨但可靠） ===============
+// 背景：WebDAV 同步的本地端实现依赖 plugin-fs 的 readDir/stat；而 SAF 返回的是 content:// URI，直接用会炸。
+// 策略：同步时把外置库镜像到 App 私有目录（用户不可见），同步跑在镜像目录上；同步成功后再把结果导回外置库。
+// 限制：目前镜像仅处理“文本类文件”（md/markdown/txt/json/svg + .flymd/library-id.json）。二进制（png/pdf 等）暂不支持，避免写坏文件。
+
+function isContentUriPath(p: string): boolean {
+  return typeof p === 'string' && p.startsWith('content://')
+}
+
+function sanitizeMirrorName(name: string): string {
+  // 只做最小清洗：避免把 / \ 这种路径分隔符带进本地镜像路径
+  return String(name || '').replace(/[\\/]+/g, '_').trim()
+}
+
+function joinFsPath(base: string, child: string): string {
+  const b = String(base || '').replace(/[\\/]+$/, '')
+  const sep = b.includes('\\') ? '\\' : '/'
+  const c = String(child || '').replace(/^[/\\]+/, '')
+  return b ? (b + sep + c) : c
+}
+
+function isSafTextLikeFile(relUnix: string, name: string): boolean {
+  try {
+    const rel = String(relUnix || '').replace(/\\/g, '/').replace(/^\/+/, '')
+    const lowerRel = rel.toLowerCase()
+    if (lowerRel === '.flymd/library-id.json') return true
+    const base = (String(name || '').split('/').pop() || '').toLowerCase()
+    const ext = (base.split('.').pop() || '').toLowerCase()
+    return ['md', 'markdown', 'txt', 'json', 'svg'].includes(ext)
+  } catch {
+    return false
+  }
+}
+
+async function resolveSafMirrorRoot(libraryId: string): Promise<string> {
+  const id = String(libraryId || '').trim() || ('saf-' + Date.now())
+  const safeId = id.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 64) || ('saf-' + Date.now())
+  const base = (await appLocalDataDir()).replace(/[\\/]+$/, '')
+  const sep = base.includes('\\') ? '\\' : '/'
+  const join = (a: string, b: string) => (a.endsWith(sep) ? a + b : a + sep + b)
+  return join(join(join(base, 'flymd'), 'saf-mirror'), safeId)
+}
+
+async function safMirrorPullToLocal(
+  safRoot: string,
+  mirrorRoot: string,
+  log: (msg: string) => Promise<void>,
+): Promise<{ ok: boolean; copied: number; skippedBinary: number; errors: number }> {
+  let copied = 0
+  let skippedBinary = 0
+  let errors = 0
+  const keepFiles = new Set<string>()
+
+  const encoder = new TextEncoder()
+  const sep = mirrorRoot.includes('\\') ? '\\' : '/'
+  const joinLocal = (a: string, b: string) => a.replace(/[\\/]+$/, '') + sep + sanitizeMirrorName(b)
+
+  const shouldSkipDirName = (name: string) => {
+    const n = String(name || '').trim()
+    if (!n) return true
+    if (n === '.' || n === '..') return true
+    if (n === '.git' || n === 'node_modules' || n === '.trash') return true
+    return false
+  }
+
+  const walk = async (dirUri: string, localDir: string, relDirUnix: string, depth: number) => {
+    if (depth > 64) return
+    try { await mkdir(localDir as any, { recursive: true } as any) } catch {}
+    let entries: AndroidSafDirEntry[] = []
+    try { await persistSafUriPermission(dirUri) } catch {}
+    try { entries = await safListDir(dirUri) } catch (e) {
+      errors++
+      await log('[saf-mirror][pull][list-fail] ' + relDirUnix + ' : ' + String((e as any)?.message || e))
+      return
+    }
+
+    for (const it of entries || []) {
+      const name = String((it as any)?.name || '').trim()
+      const uri = String((it as any)?.path || '').trim()
+      const isDir = !!(it as any)?.isDir
+      if (!name || !uri) continue
+      if (shouldSkipDirName(name)) continue
+
+      const rel = relDirUnix ? (relDirUnix + '/' + name) : name
+      if (isDir) {
+        if (name.startsWith('.') && !shouldDiveIntoHiddenDir(rel)) continue
+        // eslint-disable-next-line no-await-in-loop
+        await walk(uri, joinLocal(localDir, name), rel, depth + 1)
+        continue
+      }
+
+      if (!shouldSyncRelativePath(rel, name)) continue
+      if (!isSafTextLikeFile(rel, name)) {
+        skippedBinary++
+        // eslint-disable-next-line no-await-in-loop
+        await log('[saf-mirror][pull][skip-binary] ' + rel)
+        continue
+      }
+
+      let content = ''
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        content = await readTextFileAnySafe(uri)
+      } catch (e) {
+        errors++
+        // eslint-disable-next-line no-await-in-loop
+        await log('[saf-mirror][pull][read-fail] ' + rel + ' : ' + String((e as any)?.message || e))
+        continue
+      }
+
+      const dst = joinLocal(localDir, name)
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await writeFile(dst as any, encoder.encode(content) as any)
+        keepFiles.add(rel)
+        copied++
+      } catch (e) {
+        errors++
+        // eslint-disable-next-line no-await-in-loop
+        await log('[saf-mirror][pull][write-fail] ' + rel + ' : ' + String((e as any)?.message || e))
+      }
+
+      // 让出事件循环，避免大目录把 UI 卡死
+      if ((copied & 31) === 0) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise<void>((r) => setTimeout(r, 0))
+      }
+    }
+  }
+
+  const prune = async (dir: string, relDirUnix: string, depth: number) => {
+    if (depth > 64) return
+    let ents: any[] = []
+    try { ents = await readDir(dir as any, { recursive: false } as any) as any[] } catch { ents = [] }
+    for (const e of ents || []) {
+      const name = String(e?.name || '').trim()
+      if (!name) continue
+      const abs = joinFsPath(dir, name)
+      const rel = relDirUnix ? (relDirUnix + '/' + name) : name
+
+      let isDir = !!(e as any)?.isDirectory
+      if ((e as any)?.isDirectory === undefined) {
+        try { const st = await stat(abs as any) as any; isDir = !!st?.isDirectory } catch { isDir = false }
+      }
+
+      if (isDir) {
+        if (name.startsWith('.') && !shouldDiveIntoHiddenDir(rel)) continue
+        // eslint-disable-next-line no-await-in-loop
+        await prune(abs, rel, depth + 1)
+        continue
+      }
+
+      if (!shouldSyncRelativePath(rel, name)) continue
+      if (!isSafTextLikeFile(rel, name)) continue
+      if (keepFiles.has(rel)) continue
+
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await remove(abs as any, {} as any)
+      } catch {}
+    }
+  }
+
+  try { await mkdir(mirrorRoot as any, { recursive: true } as any) } catch {}
+  await walk(safRoot, mirrorRoot, '', 0)
+  await prune(mirrorRoot, '', 0)
+
+  const ok = errors === 0 || copied > 0
+  return { ok, copied, skippedBinary, errors }
+}
+
+async function safMirrorExportToSaf(
+  mirrorRoot: string,
+  safRoot: string,
+  log: (msg: string) => Promise<void>,
+): Promise<{ exported: number; skippedBinary: number; errors: number }> {
+  let exported = 0
+  let skippedBinary = 0
+  let errors = 0
+
+  const childrenCache = new Map<string, AndroidSafDirEntry[]>()
+  const getChildren = async (dirUri: string): Promise<AndroidSafDirEntry[]> => {
+    if (childrenCache.has(dirUri)) return childrenCache.get(dirUri) as AndroidSafDirEntry[]
+    try { await persistSafUriPermission(dirUri) } catch {}
+    let ents: AndroidSafDirEntry[] = []
+    try { ents = await safListDir(dirUri) } catch { ents = [] }
+    childrenCache.set(dirUri, ents || [])
+    return ents || []
+  }
+
+  const ensureChildDir = async (parentUri: string, name: string): Promise<string | null> => {
+    const nm = String(name || '').trim()
+    if (!nm) return null
+    const ents = await getChildren(parentUri)
+    const found = (ents || []).find((x) => String((x as any)?.name || '').trim() === nm && !!(x as any)?.isDir)
+    if (found && String((found as any)?.path || '').trim()) return String((found as any).path)
+    try {
+      const uri = await safCreateDir(parentUri, nm)
+      // 更新缓存：避免同级重复 list
+      childrenCache.delete(parentUri)
+      return uri
+    } catch (e) {
+      errors++
+      await log('[saf-mirror][push][mkdir-fail] ' + nm + ' : ' + String((e as any)?.message || e))
+      return null
+    }
+  }
+
+  const guessMime = (name: string): string => {
+    const lower = String(name || '').toLowerCase()
+    if (lower.endsWith('.json')) return 'application/json'
+    if (lower.endsWith('.svg')) return 'image/svg+xml'
+    return 'text/plain'
+  }
+
+  const ensureChildFile = async (parentUri: string, name: string): Promise<string | null> => {
+    const nm = String(name || '').trim()
+    if (!nm) return null
+    const ents = await getChildren(parentUri)
+    const found = (ents || []).find((x) => String((x as any)?.name || '').trim() === nm && !(x as any)?.isDir)
+    if (found && String((found as any)?.path || '').trim()) return String((found as any).path)
+    try {
+      const uri = await safCreateFile(parentUri, nm, guessMime(nm))
+      childrenCache.delete(parentUri)
+      return uri
+    } catch (e) {
+      errors++
+      await log('[saf-mirror][push][mkfile-fail] ' + nm + ' : ' + String((e as any)?.message || e))
+      return null
+    }
+  }
+
+  const walk = async (localDir: string, relDirUnix: string, dirUri: string, depth: number) => {
+    if (depth > 64) return
+    let ents: any[] = []
+    try { ents = await readDir(localDir as any, { recursive: false } as any) as any[] } catch { ents = [] }
+
+    for (const e of ents || []) {
+      const name = String(e?.name || '').trim()
+      if (!name) continue
+      const abs = joinFsPath(localDir, name)
+      const rel = relDirUnix ? (relDirUnix + '/' + name) : name
+
+      let isDir = !!(e as any)?.isDirectory
+      if ((e as any)?.isDirectory === undefined) {
+        try { const st = await stat(abs as any) as any; isDir = !!st?.isDirectory } catch { isDir = false }
+      }
+
+      if (isDir) {
+        if (name.startsWith('.') && !shouldDiveIntoHiddenDir(rel)) continue
+        const nextUri = await ensureChildDir(dirUri, name)
+        if (!nextUri) continue
+        // eslint-disable-next-line no-await-in-loop
+        await walk(abs, rel, nextUri, depth + 1)
+        continue
+      }
+
+      if (!shouldSyncRelativePath(rel, name)) continue
+      if (!isSafTextLikeFile(rel, name)) { skippedBinary++; continue }
+
+      let text = ''
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const data = await readFile(abs as any)
+        text = new TextDecoder().decode(data as any)
+      } catch (e2) {
+        errors++
+        // eslint-disable-next-line no-await-in-loop
+        await log('[saf-mirror][push][read-fail] ' + rel + ' : ' + String((e2 as any)?.message || e2))
+        continue
+      }
+
+      const fileUri = await ensureChildFile(dirUri, name)
+      if (!fileUri) continue
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await writeTextFileAnySafe(fileUri, text)
+        exported++
+      } catch (e3) {
+        errors++
+        // eslint-disable-next-line no-await-in-loop
+        await log('[saf-mirror][push][write-fail] ' + rel + ' : ' + String((e3 as any)?.message || e3))
+      }
+
+      if ((exported & 31) === 0) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise<void>((r) => setTimeout(r, 0))
+      }
+    }
+  }
+
+  await walk(mirrorRoot, '', safRoot, 0)
+  return { exported, skippedBinary, errors }
 }
 
 async function hashProfileKey(input: string): Promise<string> {
@@ -1535,23 +1832,14 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
       console.log('[WebDAV Sync] 同步未启用')
       return { uploaded: 0, downloaded: 0, skipped: true }
     }
-    const localRoot = await getActiveLibraryRoot()
-    if (!localRoot) {
+    const activeRoot = await getActiveLibraryRoot()
+    if (!activeRoot) {
       await syncLog('[skip] 未选择库目录')
       console.log('[WebDAV Sync] 未选择库目录')
       updateStatus('未选择库目录，已跳过同步')
       clearStatus()
       return { uploaded: 0, downloaded: 0, skipped: true }
     }
-    if (String(localRoot).startsWith('content://')) {
-      // SAF 外置库：当前同步实现依赖 plugin-fs 的 readDir/stat，直接对 content:// 会炸。
-      // 实用主义：先明确禁用，避免用户误以为“同步成功”但实际没干活。
-      await syncLog('[skip] 外置库(SAF)暂不支持同步')
-      updateStatus('外置库（SAF）暂不支持 WebDAV 同步，请先导入为本地库或使用桌面端同步')
-      clearStatus()
-      return { uploaded: 0, downloaded: 0, skipped: true }
-    }
-    updateStatus('正在同步… 准备中')
     const baseUrl = (cfg.baseUrl || '').trim()
     if (!baseUrl) {
       await syncLog('[skip] 未配置 WebDAV Base URL')
@@ -1578,7 +1866,32 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
         return { uploaded: 0, downloaded: 0, skipped: true }
       }
     }
-    const auth = { username: cfg.username, password: cfg.password }; await syncLog('[prep] root=' + (await getActiveLibraryRoot()) + ' remoteRoot=' + cfg.rootPath)
+
+    // SAF 外置库：同步时走“镜像目录”（用户不可见），同步完成后导回外置库
+    let safRoot: string | null = null
+    let safMirrorRoot: string | null = null
+    let localRoot = activeRoot
+    if (isContentUriPath(String(activeRoot))) {
+      safRoot = String(activeRoot)
+      const libId = (await getActiveLibraryId()) || ('android-saf-' + (await hashProfileKey(safRoot)))
+      safMirrorRoot = await resolveSafMirrorRoot(libId)
+      await syncLog('[saf] 外置库启用镜像: root=' + safRoot + ' mirror=' + safMirrorRoot)
+      updateStatus('外置库：准备同步镜像…')
+      const prep = await safMirrorPullToLocal(safRoot, safMirrorRoot, syncLog)
+      await syncLog('[saf] 镜像完成: ok=' + prep.ok + ' copied=' + prep.copied + ' skippedBinary=' + prep.skippedBinary + ' errors=' + prep.errors)
+      if (!prep.ok) {
+        updateStatus('外置库镜像失败，已跳过同步（请检查外置目录权限）')
+        clearStatus(4000)
+        return { uploaded: 0, downloaded: 0, skipped: true }
+      }
+      if (prep.skippedBinary > 0) {
+        await syncLog('[saf] 提示：镜像跳过了 ' + prep.skippedBinary + ' 个二进制文件（暂不支持）')
+      }
+      localRoot = safMirrorRoot
+    }
+
+    updateStatus('正在同步… 准备中')
+    const auth = { username: cfg.username, password: cfg.password }; await syncLog('[prep] root=' + activeRoot + (safMirrorRoot ? (' mirror=' + localRoot) : '') + ' remoteRoot=' + cfg.rootPath)
     try { await ensureRemoteDir(baseUrl, auth, (cfg.rootPath || '').replace(/\/+$/, '')) } catch {}
 
     // 获取上次同步的元数据
@@ -2316,6 +2629,24 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
       await writeLocalStructureHint(localRoot, postHint)
       await syncLog('[save-hint] 已更新本地结构快照')
     } catch {}
+
+    // SAF：如果本次把远程内容下载到了镜像目录，则将结果导回外置库
+    if (safRoot && safMirrorRoot && down > 0) {
+      try {
+        updateStatus('外置库：导出同步结果…')
+        await syncLog('[saf] 开始导出到外置库: root=' + safRoot)
+        const pushed = await safMirrorExportToSaf(safMirrorRoot, safRoot, syncLog)
+        await syncLog('[saf] 导出完成: exported=' + pushed.exported + ' skippedBinary=' + pushed.skippedBinary + ' errors=' + pushed.errors)
+        if (pushed.skippedBinary > 0) {
+          await syncLog('[saf] 提示：导出跳过了 ' + pushed.skippedBinary + ' 个二进制文件（暂不支持）')
+        }
+      } catch (e) {
+        await syncLog('[saf] 导出失败: ' + String((e as any)?.message || e))
+        // 不要把整个同步判死刑：WebDAV 已经完成了，只是外置库导出失败
+        updateStatus('外置库导出失败：' + String((e as any)?.message || e))
+        clearStatus(5000)
+      }
+    }
 
     try {
       let msg = `同步完成（`

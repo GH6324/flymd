@@ -1,13 +1,7 @@
 name: Android Build
 
 on:
-  # Android 分支：自动跑 debug 包，避免本地没环境时“改完不知道能不能打包”
-  push:
-    branches: [ android ]
-  pull_request:
-    branches: [ android ]
-
-  # 也允许手动触发（可选 debug/release）
+  # 手动触发（可选 debug/release）
   workflow_dispatch:
     inputs:
       build_type:
@@ -18,6 +12,11 @@ on:
         options:
           - debug
           - release
+
+  # 仅在推送 Tag 时自动构建 Release（用于发布）
+  push:
+    tags:
+      - 'v*'
 
 env:
   TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
@@ -37,7 +36,8 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "type=${{ github.event.inputs.build_type }}" >> "$GITHUB_OUTPUT"
           else
-            echo "type=debug" >> "$GITHUB_OUTPUT"
+            # tag push：自动走 release
+            echo "type=release" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 设置 Node.js
@@ -91,6 +91,9 @@ jobs:
       - name: Android 补丁：沉浸式全屏
         run: node scripts/patch-android-immersive.cjs
 
+      - name: Android 补丁：Release 签名（可选）
+        run: node scripts/patch-android-signing.cjs
+
       - name: 构建前端
         run: npm run build
 
@@ -127,6 +130,19 @@ jobs:
           echo "=== apk files ==="
           find src-tauri/gen/android/app/build/outputs -type f -name "*.apk" | sort || true
 
+      - name: 准备 Android Keystore (Release，可选)
+        if: ${{ steps.buildtype.outputs.type == 'release' }}
+        run: |
+          set -e
+          if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "::notice::未配置 ANDROID_KEYSTORE_BASE64，将跳过 release 签名（可能生成未签名 APK）"
+            exit 0
+          fi
+          OUT="$GITHUB_WORKSPACE/src-tauri/gen/android/app/flymd-release.jks"
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | tr -d '\n' | base64 -d > "$OUT"
+          chmod 600 "$OUT" || true
+          echo "KEYSTORE_PATH=$OUT" >> "$GITHUB_ENV"
+
       - name: 构建 Android APK (Release)
         id: tauri_build_release
         if: ${{ steps.buildtype.outputs.type == 'release' }}
@@ -137,7 +153,8 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
           NDK_HOME: ${{ env.NDK_HOME }}
-          KEYSTORE_PATH: ${{ secrets.ANDROID_KEYSTORE_PATH }}
+          # 兼容：如果未提供 ANDROID_KEYSTORE_BASE64，可继续用 ANDROID_KEYSTORE_PATH（需要你自己确保 runner 上该文件存在）
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH || secrets.ANDROID_KEYSTORE_PATH }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}

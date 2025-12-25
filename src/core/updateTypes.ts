@@ -19,6 +19,7 @@ export type CheckUpdateResp = {
   assetLinuxDeb?: UpdateAssetInfo | null
   assetMacosX64?: UpdateAssetInfo | null
   assetMacosArm?: UpdateAssetInfo | null
+  assetAndroid?: UpdateAssetInfo | null
 }
 
 // 可选的“额外信息”注入：位于 public/update-extra.json，由运维/作者按需维护

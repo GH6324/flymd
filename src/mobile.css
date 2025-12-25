@@ -60,8 +60,13 @@
   }
 }
 
-/* ========== 移动端：隐藏“主题”入口（用文字菜单替代） ========== */
+/* ========== 移动端：隐藏"主题"入口（用文字菜单替代） ========== */
 body.platform-mobile #btn-theme {
+  display: none !important;
+}
+
+/* 移动端：隐藏"文件"菜单入口（功能已在"更多"菜单里） */
+body.platform-mobile #btn-open {
   display: none !important;
 }
 
@@ -179,11 +184,26 @@ body.platform-mobile #mobile-selection-toolbar .mst-btn:active {
     display: none !important;
   }
 
-  /* Android：隐藏“固定/左右切换”等桌面概念，但保留“选库/新增库”入口 */
+  /* Android：隐藏"固定/左右切换"等桌面概念，但保留"选库/新增库"入口 */
   body.platform-android #lib-pin,
   body.platform-android #lib-side {
     display: none !important;
   }
+}
+
+/* ========== 移动端：扩展和语言按钮右移到最右边（避开摄像头） ========== */
+body.platform-mobile #btn-extensions {
+  order: 100;
+  margin-left: auto;
+}
+
+body.platform-mobile #btn-lang {
+  order: 101;
+  margin-right: env(safe-area-inset-right);
+}
+
+body.platform-mobile #btn-mobile-menu {
+  order: 50;
 }
 
 /* ========== 移动端弹窗（图床 / WebDAV 同步等） ========== */

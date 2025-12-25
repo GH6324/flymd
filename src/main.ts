@@ -47,7 +47,7 @@ import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConf
 // 平台适配层（Android 支持）
 import { initPlatformIntegration } from './platform-integration'
 import { ensureAndroidDefaultLibraryRoot } from './platform/androidLibrary'
-import { safDelete, safListDir, persistSafUriPermission, safPickFolder } from './platform/androidSaf'
+import { safDelete, safListDir, persistSafUriPermission, safPickFolder, safPrettyName } from './platform/androidSaf'
 import { createImageUploader } from './core/imageUpload'
 import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
 import type { InstallableItem } from './extensions/market'
@@ -2751,7 +2751,15 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
 function refreshTitle() {
   // 以文件名为主；未保存附加 *；悬浮显示完整路径；同步 OS 窗口标题
   const full = currentFilePath || ''
-  const name = full ? (full.split(/[/\\]/).pop() || t('filename.untitled')) : t('filename.untitled')
+  const name = (() => {
+    if (!full) return t('filename.untitled')
+    // SAF：content://.../primary%3Axxx%2Ffoo.md 这种不要直接展示给用户看
+    if (full.startsWith('content://')) {
+      const pretty = safPrettyName(full)
+      return pretty || t('filename.untitled')
+    }
+    return full.split(/[/\\]/).pop() || t('filename.untitled')
+  })()
   const label = name + (dirty ? ' *' : '')
   filenameLabel.textContent = label
   try { filenameLabel.title = full || name } catch {}
@@ -3727,6 +3735,53 @@ async function checkUpdateInteractive() {
         }
       } catch (e) {
         NotificationManager.show('appUpdate', '下载或打开失败，将打开发布页', 5000)
+        await openInBrowser(resp.htmlUrl)
+      }
+      return
+    }
+
+    // Android：下载 APK 并调用系统安装器
+    if (resp.assetAndroid) {
+      const a = resp.assetAndroid
+      const ok = await confirmNative(`发现新版本 v${resp.latest}（当前 v${resp.current}）\n是否立即下载并安装？`, '更新')
+      if (!ok) {
+        NotificationManager.show('appUpdate', '已取消更新', 3000)
+        return
+      }
+      try {
+        const downloadId = NotificationManager.show('appUpdate', '正在下载安装包…', 0)
+        let savePath = ''
+        {
+          const direct = a.directUrl
+          // 优先直连，其次备用代理（与 PC 一致）
+          const urls = [
+            direct,
+            'https://ghfast.top/' + direct,
+            'https://gh-proxy.com/' + direct,
+            'https://cdn.gh-proxy.com/' + direct,
+            'https://edgeone.gh-proxy.com/' + direct,
+          ]
+          let ok = false
+          for (const u of urls) {
+            try {
+              savePath = await invoke('download_file', { url: u, useProxy: false }) as any as string
+              ok = true
+              break
+            } catch {}
+          }
+          if (!ok) throw new Error('all proxies failed')
+        }
+        NotificationManager.hide(downloadId)
+        NotificationManager.show('appUpdate', '下载完成，正在启动安装…', 5000)
+        try {
+          await invoke('install_apk', { path: savePath })
+          NotificationManager.show('appUpdate', '已启动安装程序', 3000)
+        } catch (e) {
+          // 安装失败，显示文件位置
+          NotificationManager.show('appUpdate', `安装失败，APK 已保存至: ${savePath}`, 10000)
+        }
+      } catch (e) {
+        NotificationManager.show('appUpdate', '下载失败，将打开发布页', 5000)
         await openInBrowser(resp.htmlUrl)
       }
       return
@@ -5046,6 +5101,79 @@ try {
         })
       } catch {}
     }
+
+    // 移动端：双击空白区触发右键菜单
+    ;(function initMobileDoubleTapContextMenu() {
+      const isMobileUi = () => document.body.classList.contains('platform-mobile')
+      if (!isMobileUi()) return
+
+      let lastTapTime = 0
+      let lastTapX = 0
+      let lastTapY = 0
+      const TAP_THRESHOLD = 300   // 双击时间阈值 ms
+      const MOVE_THRESHOLD = 30   // 位置容差 px
+
+      const handleDoubleTap = (e: TouchEvent) => {
+        if (!isMobileUi()) return
+
+        const now = Date.now()
+        const touch = e.changedTouches[0]
+        if (!touch) return
+        const { clientX, clientY } = touch
+
+        const timeDiff = now - lastTapTime
+        const xDiff = Math.abs(clientX - lastTapX)
+        const yDiff = Math.abs(clientY - lastTapY)
+
+        if (timeDiff < TAP_THRESHOLD && xDiff < MOVE_THRESHOLD && yDiff < MOVE_THRESHOLD) {
+          // 检测到双击，延迟检查是否有文字被选中
+          setTimeout(() => {
+            const sel = window.getSelection()
+            const selectedText = sel?.toString()?.trim() || ''
+
+            // 无选区 → 触发右键菜单
+            if (!selectedText) {
+              const ed = document.getElementById('editor') as HTMLTextAreaElement | null
+              if (document.activeElement === ed) {
+                const start = ed?.selectionStart || 0
+                const end = ed?.selectionEnd || 0
+                if (start === end) {
+                  ;(window as any).flymdOpenContextMenu?.()
+                }
+              } else {
+                ;(window as any).flymdOpenContextMenu?.()
+              }
+            }
+            // 有选区 → 不触发，保留双击选词行为
+          }, 50)
+
+          lastTapTime = 0  // 重置，避免三击误触发
+        } else {
+          lastTapTime = now
+          lastTapX = clientX
+          lastTapY = clientY
+        }
+      }
+
+      // 绑定编辑器
+      editor.addEventListener('touchend', handleDoubleTap, { passive: true })
+
+      // 绑定预览区
+      const preview = document.querySelector('.preview')
+      preview?.addEventListener('touchend', handleDoubleTap, { passive: true })
+
+      // 动态绑定所见模式
+      const bindWysiwyg = () => {
+        const root = document.getElementById('md-wysiwyg-root')
+        if (root && !(root as any).__dblTapBound) {
+          root.addEventListener('touchend', handleDoubleTap, { passive: true })
+          ;(root as any).__dblTapBound = true
+        }
+      }
+      bindWysiwyg()
+      new MutationObserver(bindWysiwyg).observe(document.body, { childList: true, subtree: true })
+    })()
+
     ;(window as any).flymdRenamePathWithDialog = (path: string) => renamePathWithDialog(path)
     ;(window as any).flymdRenameCurrentFileForTypecho = async (id: string, title: string) => {
       try {
