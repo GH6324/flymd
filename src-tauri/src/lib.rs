@@ -1921,10 +1921,28 @@ async fn run_installer(path: String) -> Result<(), String> {
 #[cfg(target_os = "android")]
 mod android_saf {
   use jni::{
-    objects::{JByteArray, JObject, JString, JValue},
+    objects::{JByteArray, JObject, JObjectArray, JString, JValue},
     sys::{jint, jlong, jobject, jsize},
     JavaVM,
   };
+
+  fn new_string_array<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    values: &[&str],
+  ) -> Result<JObjectArray<'local>, String> {
+    let arr = env
+      .new_object_array(values.len() as jsize, "java/lang/String", JObject::null())
+      .map_err(|e| format!("new_object_array(String[]) 失败: {e}"))?;
+    for (i, s) in values.iter().enumerate() {
+      let js = env
+        .new_string(*s)
+        .map_err(|e| format!("new_string({s}) 失败: {e}"))?;
+      env
+        .set_object_array_element(&arr, i as jsize, JObject::from(js))
+        .map_err(|e| format!("set_object_array_element({s}) 失败: {e}"))?;
+    }
+    Ok(arr)
+  }
 
   fn with_env<R>(
     f: impl for<'local> FnOnce(&mut jni::JNIEnv<'local>, JObject<'local>) -> Result<R, String>,
@@ -2280,6 +2298,7 @@ mod android_saf {
       let children_uri = build_children_uri_using_tree(env, &tree_uri, &doc_id)?;
 
       let null_obj = JObject::null();
+      let projection = new_string_array(env, &["document_id", "display_name", "mime_type"])?;
       let cursor = env
         .call_method(
           &resolver,
@@ -2287,7 +2306,7 @@ mod android_saf {
           "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
           &[
             JValue::from(&children_uri),
-            JValue::from(&null_obj),
+            JValue::from(&projection),
             JValue::from(&null_obj),
             JValue::from(&null_obj),
             JValue::from(&null_obj),

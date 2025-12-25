@@ -21,14 +21,14 @@
 
   /* 编辑器全屏 */
   #editor {
-    width: 100vw !important;
+    width: 100% !important;
     height: calc(100vh - 48px) !important; /* 减去顶部工具栏 */
     font-size: 16px !important; /* iOS 防止自动缩放 */
   }
 
   /* 预览区全屏 */
   #preview {
-    width: 100vw !important;
+    width: 100% !important;
     height: calc(100vh - 48px) !important;
   }
 
@@ -49,6 +49,17 @@
   /* 旧版本按钮 id 已废弃：移动端通过 FAB / 标题栏“库”按钮打开 */
 }
 
+/* 修复：移动端源码模式右侧文字被裁切（content-box + 100vw + padding 组合容易溢出被父容器裁掉） */
+@media (max-width: 768px) {
+  body.platform-mobile .container:not(.wysiwyg):not(.wysiwyg-v2):not(.split-preview) .editor {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+}
+
 /* ========== 浮动操作按钮 (FAB) ========== */
 .fab-container {
   position: fixed;
@@ -62,6 +73,44 @@
   .fab-container {
     display: block;
   }
+}
+
+/* ========== 最小 UI：隐藏主题按钮 + FAB，仅留一个“把手” ========== */
+body.platform-mobile.mobile-ui-minimized #btn-theme {
+  display: none !important;
+}
+
+body.platform-mobile.mobile-ui-minimized .fab-container {
+  display: none !important;
+}
+
+.mobile-ui-handle {
+  position: fixed;
+  right: 20px;
+  bottom: calc(env(safe-area-inset-bottom) + 20px);
+  z-index: 1001;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(0,0,0,0.45);
+  color: #fff;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.25);
+  backdrop-filter: blur(6px);
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+body.platform-mobile.mobile-ui-minimized .mobile-ui-handle {
+  display: flex;
+}
+
+.mobile-ui-handle:active {
+  transform: scale(0.95);
 }
 
 .fab-main {
@@ -340,6 +389,24 @@ body.platform-mobile .link-actions button {
   min-height: 44px;
 }
 
+/* ========== 移动端同步日志弹窗 ========== */
+body.platform-mobile .sync-log-overlay {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+body.platform-mobile .sync-log-dialog {
+  width: calc(100vw - 16px) !important;
+  max-height: calc(100vh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  border-radius: 12px !important;
+}
+
+@supports (height: 100dvh) {
+  body.platform-mobile .sync-log-dialog {
+    max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  }
+}
+
 /* ========== 移动端通知：避开 FAB + 支持换行 ========== */
 body.platform-mobile .notification-container {
   left: 8px;
@@ -422,6 +489,20 @@ body.platform-mobile .ext-body {
   max-height: none !important;
   height: calc(100% - 56px) !important;
   padding: 12px 14px 16px !important;
+}
+
+/* 扩展面板标题行：允许换行，避免控件被挤成“竖排字” */
+body.platform-mobile .ext-subtitle {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+body.platform-mobile .ext-subtitle > * {
+  flex: 0 0 auto;
+}
+
+body.platform-mobile .ext-subtitle .ext-market-search {
+  flex: 1 1 100%;
 }
 
 body.platform-mobile .ext-install {

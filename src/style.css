@@ -3075,6 +3075,14 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .link-actions button { -webkit-app-region: no-drag; cursor: pointer; border: 1px solid var(--border); background: rgba(127,127,127,0.08); color: var(--fg); border-radius: 8px; padding: 6px 12px; font-size: 13px; }
 .link-actions button:hover { background: rgba(127,127,127,0.14); }
 
+/* 同步日志查看（移动端优先内置弹窗，桌面端失败兜底） */
+.sync-log-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 10050; }
+.sync-log-dialog { width: min(860px, calc(100vw - 32px)); max-height: min(80vh, 720px); background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 18px 60px rgba(0,0,0,0.35); overflow: hidden; display: flex; flex-direction: column; }
+.sync-log-header { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.sync-log-title { font-weight: 600; font-size: 13px; }
+.sync-log-actions { margin-left: auto; display: flex; gap: 8px; }
+.sync-log-body { padding: 12px 14px; margin: 0; overflow: auto; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+
 /* 图床设置 对话框 */
 /* 图床和同步设置弹窗 */
 .upl-overlay {

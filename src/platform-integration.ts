@@ -84,6 +84,10 @@ function setupFABListeners(): void {
         }
         break
       }
+      case 'menu': {
+        callGlobal('flymdOpenContextMenu')
+        break
+      }
     }
   }) as EventListener)
 }

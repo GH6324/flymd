@@ -946,6 +946,9 @@ function initContextMenuListener() {
     // 监听编辑器的右键事件
     editor.addEventListener('contextmenu', (e) => {
       if (e.shiftKey) return
+      // 移动端：长按通常用于系统文本选择，拦截会和选字冲突；仅“真实右键”(鼠标)才弹自定义菜单
+      const isMobileUi = document.body.classList.contains('platform-mobile')
+      if (isMobileUi && e.button !== 2) return
       try { e.preventDefault() } catch {}
       const ctx = buildContextMenuContext(e)
       void showContextMenu(e.clientX, e.clientY, ctx, {
@@ -959,6 +962,13 @@ function initContextMenuListener() {
     if (preview) {
       preview.addEventListener('contextmenu', (e) => {
         if (e.shiftKey) return
+        // 移动端：文本长按交给系统；若命中图片等非文本目标，才弹自定义菜单（用于“上传此图片”等）
+        const isMobileUi = document.body.classList.contains('platform-mobile')
+        if (isMobileUi && e.button !== 2) {
+          const target = (e.target as HTMLElement | null)
+          const img = target?.closest?.('img') as HTMLImageElement | null
+          if (!img) return
+        }
         try { e.preventDefault() } catch {}
         const ctx = buildContextMenuContext(e)
         void showContextMenu(e.clientX, e.clientY, ctx, {
@@ -973,6 +983,12 @@ function initContextMenuListener() {
       if (e.shiftKey) return
       const root = document.getElementById('md-wysiwyg-root') as HTMLElement | null
       if (!root || !root.contains(e.target as Node)) return
+      const isMobileUi = document.body.classList.contains('platform-mobile')
+      if (isMobileUi && (e as MouseEvent).button !== 2) {
+        const target = (e.target as HTMLElement | null)
+        const img = target?.closest?.('img') as HTMLImageElement | null
+        if (!img) return
+      }
       try { e.preventDefault() } catch {}
       const ctx = buildContextMenuContext(e)
       void showContextMenu(e.clientX, e.clientY, ctx, {
@@ -5016,6 +5032,17 @@ try {
       } catch (e) {
         console.error('[WebDAV] 打开设置失败', e)
       }
+    }
+    // 移动端：提供一个“更多操作”入口，避免长按与系统选字冲突
+    ;(window as any).flymdOpenContextMenu = () => {
+      try {
+        const target = (document.activeElement as HTMLElement | null) || (editor as any)
+        const ctx = buildContextMenuContext(({ target } as any) as MouseEvent)
+        void showContextMenu(0, 0, ctx, {
+          pluginItems: pluginContextMenuItems,
+          buildBuiltinItems: buildBuiltinContextMenuItems,
+        })
+      } catch {}
     }
     ;(window as any).flymdRenamePathWithDialog = (path: string) => renamePathWithDialog(path)
     ;(window as any).flymdRenameCurrentFileForTypecho = async (id: string, title: string) => {

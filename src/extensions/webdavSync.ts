@@ -337,7 +337,7 @@ async function syncLog(msg: string): Promise<void> {
     try {
       const STAT_THRESHOLD = 5 * 1024 * 1024 // 5MB
       try {
-        const statInfo = await stat(logPath as any)
+        const statInfo = await stat(logPath as any, { baseDir: BaseDirectory.AppLocalData } as any)
         if (statInfo && typeof statInfo.size === 'number' && statInfo.size > STAT_THRESHOLD) {
           // 先关闭句柄再截断（Windows 下需要重新打开为写模式）
           try { await (logHandle as any).close() } catch {}
@@ -351,6 +351,117 @@ async function syncLog(msg: string): Promise<void> {
       try { await (logHandle as any).close() } catch {}
     }
   } catch {}
+}
+
+function removeSyncLogOverlay(): void {
+  try { document.getElementById('sync-log-overlay')?.remove() } catch {}
+}
+
+async function readSyncLogText(): Promise<{ text: string; truncated: boolean }> {
+  const logPath = 'flymd-sync.log'
+  const data = await readFile(logPath as any, { baseDir: BaseDirectory.AppLocalData } as any)
+  let text = new TextDecoder().decode(data || new Uint8Array())
+
+  // 移动端 WebView 对超大文本不友好：只展示末尾，避免卡死
+  const MAX_CHARS = 200_000
+  let truncated = false
+  if (text.length > MAX_CHARS) {
+    text = text.slice(text.length - MAX_CHARS)
+    truncated = true
+  }
+  return { text, truncated }
+}
+
+async function showSyncLogOverlay(): Promise<void> {
+  removeSyncLogOverlay()
+
+  const overlay = document.createElement('div')
+  overlay.id = 'sync-log-overlay'
+  overlay.className = 'sync-log-overlay'
+
+  const dialog = document.createElement('div')
+  dialog.className = 'sync-log-dialog'
+  overlay.appendChild(dialog)
+
+  const header = document.createElement('div')
+  header.className = 'sync-log-header'
+  dialog.appendChild(header)
+
+  const title = document.createElement('div')
+  title.className = 'sync-log-title'
+  title.textContent = '同步日志'
+  header.appendChild(title)
+
+  const actions = document.createElement('div')
+  actions.className = 'sync-log-actions'
+  header.appendChild(actions)
+
+  const btnRefresh = document.createElement('button')
+  btnRefresh.className = 'btn'
+  btnRefresh.textContent = '刷新'
+  actions.appendChild(btnRefresh)
+
+  const btnCopy = document.createElement('button')
+  btnCopy.className = 'btn'
+  btnCopy.textContent = '复制'
+  actions.appendChild(btnCopy)
+
+  const btnClose = document.createElement('button')
+  btnClose.className = 'btn'
+  btnClose.textContent = '关闭'
+  actions.appendChild(btnClose)
+
+  const body = document.createElement('pre')
+  body.className = 'sync-log-body'
+  body.textContent = '加载中…'
+  dialog.appendChild(body)
+
+  const load = async () => {
+    try {
+      const { text, truncated } = await readSyncLogText()
+      if (!text.trim()) {
+        body.textContent = '（日志为空）'
+        return
+      }
+      body.textContent = (truncated ? '（日志过大，已截断，仅显示末尾）\n\n' : '') + text
+    } catch (e) {
+      body.textContent = '读取日志失败：' + String((e as any)?.message || e || '')
+    }
+  }
+
+  btnRefresh.addEventListener('click', () => { void load() })
+  btnCopy.addEventListener('click', async () => {
+    try {
+      const txt = body.textContent || ''
+      if (!txt) return
+      const nav = navigator as any
+      if (nav?.clipboard?.writeText) {
+        await nav.clipboard.writeText(txt)
+        return
+      }
+      // 兜底：旧式复制
+      const ta = document.createElement('textarea')
+      ta.value = txt
+      ta.style.position = 'fixed'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      ta.remove()
+    } catch {}
+  })
+
+  const close = () => removeSyncLogOverlay()
+  btnClose.addEventListener('click', close)
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+  document.addEventListener('keydown', function onKey(e) {
+    if (e.key !== 'Escape') return
+    document.removeEventListener('keydown', onKey)
+    close()
+  })
+
+  document.body.appendChild(overlay)
+  await load()
 }
 
 // HTTP 请求重试：最多 3 次，指数退避 + 抖动
@@ -389,9 +500,21 @@ async function withHttpRetry<T>(label: string, fn: (attempt: number) => Promise<
 }
 export async function openSyncLog(): Promise<void> {
   try {
+    const isMobileUi = document.body.classList.contains('platform-mobile')
+    if (isMobileUi) {
+      await showSyncLogOverlay()
+      return
+    }
+
     const localDataDir = await appLocalDataDir()
     const logPath = localDataDir + (localDataDir.includes('\\') ? '\\' : '/') + 'flymd-sync.log'
-    await openPath(logPath)
+    try {
+      await openPath(logPath)
+      return
+    } catch {
+      // 兜底：外部打开失败就内置查看（例如 Android 的私有目录路径）
+      await showSyncLogOverlay()
+    }
   } catch (e) {
     console.warn('打开日志失败', e)
     alert('打开日志失败: ' + ((e as any)?.message || e))

@@ -8,13 +8,47 @@
 import { isMobile } from './platform'
 
 let _autoCloseBindTries = 0
+let _fabContainer: HTMLDivElement | null = null
+let _fabMain: HTMLButtonElement | null = null
+let _fabMenu: HTMLDivElement | null = null
+let _fabOpen = false
+
+const MOBILE_UI_MIN_KEY = 'flymd_mobile_ui_minimized'
+
+function isUiMinimized(): boolean {
+  try { return localStorage.getItem(MOBILE_UI_MIN_KEY) === '1' } catch { return false }
+}
+
+function setUiMinimized(minimized: boolean): void {
+  try { localStorage.setItem(MOBILE_UI_MIN_KEY, minimized ? '1' : '0') } catch {}
+  try { document.body.classList.toggle('mobile-ui-minimized', minimized) } catch {}
+}
+
+function setFabOpen(open: boolean): void {
+  try {
+    if (!_fabMain || !_fabMenu) return
+    _fabOpen = open
+    _fabMain.classList.toggle('open', _fabOpen)
+    _fabMenu.classList.toggle('open', _fabOpen)
+  } catch {}
+}
+
+function openFabMenu(): void {
+  setFabOpen(true)
+}
 
 // 初始化移动端 UI
 export function initMobileUI(): void {
   if (!isMobile()) return
 
+  // 先应用“最小 UI”偏好（用于隐藏主题按钮 / FAB）
+  try { setUiMinimized(isUiMinimized()) } catch {}
+
   // 创建 FAB
   createFAB()
+
+  // 创建“呼出 UI”的小把手（仅最小 UI 时显示）
+  createUiHandle()
 
   // 创建抽屉遮罩层
   createDrawerOverlay()
@@ -33,11 +67,18 @@ export function initMobileUI(): void {
 function createFAB(): void {
   const container = document.createElement('div')
   container.className = 'fab-container'
+  container.id = 'fab-container'
   container.innerHTML = `
     <button class="fab-main" id="fabMain" aria-label="操作菜单">
       <span>+</span>
     </button>
     <div class="fab-menu" id="fabMenu">
+      <button class="fab-item" data-action="ui-min" data-label="隐藏UI" aria-label="隐藏主题按钮与浮动按钮">
+        🫥
+      </button>
+      <button class="fab-item" data-action="menu" data-label="更多" aria-label="更多操作">
+        ⋯
+      </button>
       <button class="fab-item" data-action="library" data-label="文件库" aria-label="打开文件库">
         📁
       </button>
@@ -62,16 +103,16 @@ function createFAB(): void {
     </div>
   `
   document.body.appendChild(container)
+  _fabContainer = container
 
   // FAB 主按钮点击事件
-  const fabMain = document.getElementById('fabMain')!
-  const fabMenu = document.getElementById('fabMenu')!
-  let isOpen = false
+  const fabMain = document.getElementById('fabMain') as HTMLButtonElement
+  const fabMenu = document.getElementById('fabMenu') as HTMLDivElement
+  _fabMain = fabMain
+  _fabMenu = fabMenu
 
   fabMain.addEventListener('click', () => {
-    isOpen = !isOpen
-    fabMain.classList.toggle('open', isOpen)
-    fabMenu.classList.toggle('open', isOpen)
+    setFabOpen(!_fabOpen)
   })
 
   // FAB 子按钮点击事件（通过事件委托）
@@ -83,22 +124,41 @@ function createFAB(): void {
     const action = btn.dataset.action
     if (!action) return
 
+    // UI 收起/展开不走主程序
+    if (action === 'ui-min') {
+      setFabOpen(false)
+      setUiMinimized(true)
+      return
+    }
+
     // 触发对应操作
     triggerFABAction(action)
 
     // 关闭菜单
-    isOpen = false
-    fabMain.classList.remove('open')
-    fabMenu.classList.remove('open')
+    setFabOpen(false)
   })
 
   // 点击其他区域关闭 FAB
   document.addEventListener('click', (e) => {
-    if (!container.contains(e.target as Node) && isOpen) {
-      isOpen = false
-      fabMain.classList.remove('open')
-      fabMenu.classList.remove('open')
+    if (!container.contains(e.target as Node) && _fabOpen) {
+      setFabOpen(false)
     }
+  })
+}
+
+function createUiHandle(): void {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.id = 'mobile-ui-handle'
+  btn.className = 'mobile-ui-handle'
+  btn.textContent = '＋'
+  btn.setAttribute('aria-label', '呼出操作按钮')
+  document.body.appendChild(btn)
+
+  btn.addEventListener('click', () => {
+    setUiMinimized(false)
+    // 呼出后顺便展开菜单（减少一次点击）
+    openFabMenu()
   })
 }
 
