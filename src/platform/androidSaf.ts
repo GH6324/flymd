@@ -15,6 +15,46 @@ export type AndroidSafDirEntry = {
   isDir: boolean
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, ms | 0)))
+}
+
+function isCancelErrorMessage(msg: string): boolean {
+  const s = String(msg || '')
+  return /cancel/i.test(s) || /canceled/i.test(s) || /cancellation/i.test(s)
+}
+
+// 说明：Android release 场景下，极少数情况下 invoke 可能在 UI 交互早期不可用/失败；
+// 对 SAF 相关命令做轻量重试，避免“偶发不可用”导致功能直接报废。
+async function invokeSaf<T>(cmd: string, args?: any, opt?: { retries?: number; baseDelayMs?: number }): Promise<T> {
+  const retries = Math.max(0, opt?.retries ?? 2)
+  const baseDelayMs = Math.max(50, opt?.baseDelayMs ?? 200)
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await invoke<T>(cmd as any, args as any)
+    } catch (e) {
+      lastErr = e
+      const msg = String((e as any)?.message || e || '')
+      // 用户取消：不重试，直接抛给上层按“取消选择”处理
+      if (isCancelErrorMessage(msg)) throw e
+      // 明确不可用：不重试（例如非 Android、命令不存在）
+      if (/only available on android/i.test(msg) || /unknown command/i.test(msg)) throw e
+      // 仅对疑似“桥接未就绪/偶发注入失败”做重试
+      const transient =
+        /__tauri__/i.test(msg) ||
+        /tauri/i.test(msg) ||
+        /invoke/i.test(msg) ||
+        /ipc/i.test(msg) ||
+        /not.*initialized/i.test(msg) ||
+        /cannot read (properties|property)/i.test(msg)
+      if (!transient || attempt >= retries) throw e
+      await sleep(baseDelayMs * (attempt + 1))
+    }
+  }
+  throw (lastErr instanceof Error) ? lastErr : new Error(String(lastErr || 'invokeSaf failed'))
+}
+
 export function isContentUriPath(p: string): boolean {
   return typeof p === 'string' && p.startsWith('content://')
 }
@@ -107,15 +147,15 @@ function normalizeSafEntryName(name: string, uri: string): string {
 
 export async function persistSafUriPermission(uri: string): Promise<void> {
   if (!isContentUriPath(uri)) return
-  await invoke('android_persist_uri_permission', { uri })
+  await invokeSaf('android_persist_uri_permission', { uri })
 }
 
 export async function safPickFolder(timeoutMs = 60_000): Promise<string> {
-  return await invoke<string>('android_saf_pick_folder', { timeout_ms: timeoutMs })
+  return await invokeSaf<string>('android_saf_pick_folder', { timeout_ms: timeoutMs })
 }
 
 export async function safListDir(uri: string): Promise<AndroidSafDirEntry[]> {
-  const ents = await invoke<AndroidSafDirEntry[]>('android_saf_list_dir', { uri })
+  const ents = await invokeSaf<AndroidSafDirEntry[]>('android_saf_list_dir', { uri })
   const out: AndroidSafDirEntry[] = []
   for (const it of ents || []) {
     const p = String((it as any)?.path || '').trim()
@@ -133,7 +173,7 @@ export async function safCreateFile(
   name: string,
   mimeType?: string,
 ): Promise<string> {
-  return await invoke<string>('android_saf_create_file', {
+  return await invokeSaf<string>('android_saf_create_file', {
     parent_uri: parentUri,
     name,
     mime_type: mimeType,
@@ -141,13 +181,13 @@ export async function safCreateFile(
 }
 
 export async function safCreateDir(parentUri: string, name: string): Promise<string> {
-  return await invoke<string>('android_saf_create_dir', { parent_uri: parentUri, name })
+  return await invokeSaf<string>('android_saf_create_dir', { parent_uri: parentUri, name })
 }
 
 export async function safDelete(uri: string): Promise<void> {
-  await invoke('android_saf_delete', { uri })
+  await invokeSaf('android_saf_delete', { uri })
 }
 
 export async function safRename(uri: string, newName: string): Promise<string> {
-  return await invoke<string>('android_saf_rename', { uri, new_name: newName })
+  return await invokeSaf<string>('android_saf_rename', { uri, new_name: newName })
 }

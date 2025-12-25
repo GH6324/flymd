@@ -6319,73 +6319,74 @@ async function centerWindow(): Promise<void> {
 async function pickLibraryRoot(): Promise<string | null> {
   try {
     // Android：不再直接让用户选“系统目录作为库”（Scoped Storage + SAF 目录遍历还没全量接入）。
-    // 先用应用私有目录下的子文件夹作为库根目录：能浏览/搜索/编辑，并可用 WebDAV 与桌面共享库。
-    try {
-      const p = await (async () => {
-        try { return await invoke<string>('get_platform') } catch { return '' }
-      })()
-      const ua = String(navigator?.userAgent || '')
-      const isAndroid = p === 'android' || /Android/i.test(ua)
-      if (isAndroid) {
-        // 选择库类型：外置（SAF）或本地（应用私有目录）
-        // 注意：外置库如果误选到 Android/data 或 Android/obb 下，系统会在卸载时清空该目录（事故）
-        const useSaf = await ask('是否选择外置文件夹作为库？\n确定：外置（SAF，不要选 Android/data/obb，否则卸载会删除）\n取消：本地（应用私有目录）')
-        if (useSaf) {
-          let uri = ''
-          try {
-            uri = normalizePath(await safPickFolder()) || ''
-          } catch (e) {
-            const msg = String((e as any)?.message || e || '')
-            if (/cancel/i.test(msg) || /canceled/i.test(msg) || /cancellation/i.test(msg)) return null
-            throw e
-          }
-          if (!uri || !uri.startsWith('content://')) {
-            alert('请选择外置存储中的文件夹（SAF）')
-            return null
-          }
-          if (isSafUninstallUnsafeFolder(uri)) {
-            alert('你选的是 Android/data 或 Android/obb 下的目录。\n这类目录属于应用专用外部目录，系统会在卸载应用时自动清空。\n请在“下载/文档/存储根目录”下新建一个文件夹再选择。')
-            return null
-          }
-          try { await persistSafUriPermission(uri) } catch {}
-          const rawName = await openRenameDialog('外置库', '')
-          const name = (rawName || '').trim() || '外置库'
-          await upsertLibrary({ id: `android-saf-${Date.now()}`, name, root: uri })
-          return uri
+    // 先用应用私有目录下的子文件夹作为库根目录；外置目录通过 SAF 以 content:// URI 方式接入。
+    const platform = await (async () => {
+      try { return await invoke<string>('get_platform') } catch { return '' }
+    })()
+    const ua = String(navigator?.userAgent || '')
+    const isAndroid = platform === 'android' || /Android/i.test(ua)
+    if (isAndroid) {
+      // 选择库类型：外置（SAF）或本地（应用私有目录）
+      // 注意：外置库如果误选到 Android/data 或 Android/obb 下，系统会在卸载时清空该目录（事故）
+      const useSaf = await confirmNative(
+        '是否选择外置文件夹作为库？\n确定：外置（SAF，不要选 Android/data/obb，否则卸载会删除）\n取消：本地（应用私有目录）',
+        '新增库',
+      )
+      if (useSaf) {
+        let uri = ''
+        try {
+          uri = normalizePath(await safPickFolder()) || ''
+        } catch (e) {
+          const msg = String((e as any)?.message || e || '')
+          if (/cancel/i.test(msg) || /canceled/i.test(msg) || /cancellation/i.test(msg)) return null
+          showError('选择外置文件夹失败', e)
+          return null
         }
-
-        const base = (await appLocalDataDir()).replace(/[\\/]+$/, '')
-        const sep = base.includes('\\') ? '\\' : '/'
-        const join = (a: string, b: string) => (a.endsWith(sep) ? a + b : a + sep + b)
-        const libsRoot = join(join(base, 'flymd'), 'library')
-        await mkdir(libsRoot as any, { recursive: true } as any)
-
-        const rawName = await openRenameDialog('新建库', '')
-        const name = (rawName || '').trim() || '本地库'
-        const safeBase = name
-          .replace(/[\\/:*?"<>|]/g, '')
-          .replace(/\s+/g, ' ')
-          .trim() || ('lib-' + Date.now())
-
-        let dirName = safeBase
-        let root = join(libsRoot, dirName)
-        let n = 1
-        while (await exists(root)) {
-          n += 1
-          dirName = `${safeBase}-${n}`
-          root = join(libsRoot, dirName)
+        if (!uri || !uri.startsWith('content://')) {
+          alert('请选择外置存储中的文件夹（SAF）')
+          return null
         }
-        await mkdir(root as any, { recursive: true } as any)
-        await upsertLibrary({ id: `android-${Date.now()}`, name, root })
-        return root
+        if (isSafUninstallUnsafeFolder(uri)) {
+          alert('你选的是 Android/data 或 Android/obb 下的目录。\n这类目录属于应用专用外部目录，系统会在卸载应用时自动清空。\n请在“下载/文档/存储根目录”下新建一个文件夹再选择。')
+          return null
+        }
+        try { await persistSafUriPermission(uri) } catch {}
+        const rawName = await openRenameDialog('外置库', '')
+        const name = (rawName || '').trim() || '外置库'
+        await upsertLibrary({ id: `android-saf-${Date.now()}`, name, root: uri })
+        return uri
       }
-    } catch {}
 
-    // 兜底：移动端不走桌面“选目录”弹窗（Android 需要走 SAF；iOS/其他移动端暂未实现）
+      const base = (await appLocalDataDir()).replace(/[\\/]+$/, '')
+      const sep = base.includes('\\') ? '\\' : '/'
+      const join = (a: string, b: string) => (a.endsWith(sep) ? a + b : a + sep + b)
+      const libsRoot = join(join(base, 'flymd'), 'library')
+      await mkdir(libsRoot as any, { recursive: true } as any)
+
+      const rawName = await openRenameDialog('新建库', '')
+      const name = (rawName || '').trim() || '本地库'
+      const safeBase = name
+        .replace(/[\\/:*?"<>|]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim() || ('lib-' + Date.now())
+
+      let dirName = safeBase
+      let root = join(libsRoot, dirName)
+      let n = 1
+      while (await exists(root)) {
+        n += 1
+        dirName = `${safeBase}-${n}`
+        root = join(libsRoot, dirName)
+      }
+      await mkdir(root as any, { recursive: true } as any)
+      await upsertLibrary({ id: `android-${Date.now()}`, name, root })
+      return root
+    }
+
+    // iOS/其他移动端：暂未实现目录作为库
     try {
-      const ua = String(navigator?.userAgent || '')
-      if (/Android|iPhone|iPad|iPod|webOS|IEMobile|Opera Mini/i.test(ua)) {
-        alert('移动端不支持通过“系统目录选择”来新增库。\nAndroid 请使用“外置（SAF）/本地（应用私有目录）”方式创建库。')
+      if (/iPhone|iPad|iPod|webOS|IEMobile|Opera Mini/i.test(ua)) {
+        alert('移动端暂不支持通过“系统目录选择”来新增库。')
         return null
       }
     } catch {}
@@ -6426,7 +6427,7 @@ async function importAndroidSafFolderAsLocalLibrary(): Promise<void> {
       return
     }
     if (isSafUninstallUnsafeFolder(uri)) {
-      const ok = await ask('你选的是 Android/data 或 Android/obb 下的目录。\n这类目录卸载会被系统清空。\n仍要继续从该目录“导入到本地库”吗？')
+      const ok = await confirmNative('你选的是 Android/data 或 Android/obb 下的目录。\n这类目录卸载会被系统清空。\n仍要继续从该目录“导入到本地库”吗？', '确认')
       if (!ok) return
     }
     try { await persistSafUriPermission(uri) } catch {}
