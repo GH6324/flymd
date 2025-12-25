@@ -47,7 +47,7 @@ import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConf
 // 平台适配层（Android 支持）
 import { initPlatformIntegration } from './platform-integration'
 import { ensureAndroidDefaultLibraryRoot } from './platform/androidLibrary'
-import { safDelete, safListDir, persistSafUriPermission, safPickFolder, safPrettyName, isSafUninstallUnsafeFolder } from './platform/androidSaf'
+import { safDelete, safListDir, persistSafUriPermission, safPickFolder, safPrettyName, isSafUninstallUnsafeFolder, safLocationHint } from './platform/androidSaf'
 import { createImageUploader } from './core/imageUpload'
 import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
 import type { InstallableItem } from './extensions/market'
@@ -6957,7 +6957,17 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
       if (id) {
         const libs = await getLibraries()
         const cur = libs.find(x => x.id === id)
-        elPath.textContent = cur?.name || ''
+        const name = cur?.name || ''
+        const root = String(cur?.root || '').trim()
+        if (root.startsWith('content://')) {
+          const hint0 = safLocationHint(root)
+          const hint = hint0 ? (hint0.length > 32 ? (hint0.slice(0, 32) + '…') : hint0) : ''
+          elPath.textContent = hint ? (name ? (name + ' · ' + hint) : hint) : name
+          try { elPath.title = hint0 || root } catch {}
+        } else {
+          elPath.textContent = name
+          try { elPath.title = root || name } catch {}
+        }
       } else {
         elPath.textContent = ''
       }

@@ -38,6 +38,24 @@ function extractTreeDocId(uri: string): string {
   }
 }
 
+// SAF：给 UI 用的“位置提示”，尽量暴露 docId 的真实路径（用于识别 Android/data 这类危险目录）
+export function safLocationHint(uri: string): string {
+  try {
+    const raw = String(uri || '').trim()
+    if (!raw) return ''
+    const decoded = decodeURIComponentSafe(raw)
+    const docId = extractTreeDocId(decoded) || ''
+    const base = (docId || decoded).trim()
+    if (!base) return ''
+
+    // docId 常见：primary:Documents/FlyMD 或 1234-5678:Documents/FlyMD
+    if (base.startsWith('primary:')) return base.slice('primary:'.length).replace(/^[/\\]+/, '')
+    return base.replace(/^[/\\]+/, '')
+  } catch {
+    return ''
+  }
+}
+
 // SAF：强防护——检测“卸载会被系统清空”的危险目录
 // 说明：Android 会在卸载应用时自动删除其“应用专用外部目录”（常见在 /Android/data 与 /Android/obb）
 // 用户如果通过 SAF 误选了这类目录当库，卸载=文档被系统清空，这是事故。
