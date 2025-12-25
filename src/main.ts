@@ -900,7 +900,7 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
 // ============ 右键菜单系统 ============
 
 // 构建右键菜单上下文
-function buildContextMenuContext(e: MouseEvent): ContextMenuContext {
+function buildContextMenuContextFromTarget(targetElement: HTMLElement | null): ContextMenuContext {
   try {
     const sel = editor.selectionStart || 0
     const end = editor.selectionEnd || 0
@@ -916,7 +916,7 @@ function buildContextMenuContext(e: MouseEvent): ContextMenuContext {
       cursorPosition: sel,
       mode: wysiwygV2Active ? 'wysiwyg' : mode,
       filePath: currentFilePath,
-      targetElement: (e.target as HTMLElement | null) || null,
+      targetElement: targetElement || null,
     }
   } catch {
     return {
@@ -924,9 +924,13 @@ function buildContextMenuContext(e: MouseEvent): ContextMenuContext {
       cursorPosition: 0,
       mode: mode,
       filePath: currentFilePath,
-      targetElement: (e.target as HTMLElement | null) || null,
+      targetElement: targetElement || null,
     }
   }
+}
+
+function buildContextMenuContext(e: MouseEvent): ContextMenuContext {
+  return buildContextMenuContextFromTarget((e.target as HTMLElement | null) || null)
 }
 
 function escapeAttrValue(input: string): string {
@@ -944,6 +948,93 @@ function escapeAttrValue(input: string): string {
 // 初始化右键菜单监听
 function initContextMenuListener() {
   try {
+    // 移动端：双击呼出右键菜单（不劫持长按，避免和系统选字冲突）
+    // 说明：这里的“右键菜单”是 flymd 的自定义菜单（移动端表现为底部动作面板）
+    const installMobileDoubleTap = (
+      getTargetElement: (ev: TouchEvent) => HTMLElement | null,
+      shouldHandle: (target: HTMLElement | null) => boolean,
+    ) => {
+      let lastAt = 0
+      let lastX = 0
+      let lastY = 0
+      const maxGapMs = 320
+      const maxDistPx = 22
+
+      const onTouchEnd = (ev: TouchEvent) => {
+        try {
+          const isMobileUi = document.body.classList.contains('platform-mobile')
+          if (!isMobileUi) return
+          if ((ev.touches && ev.touches.length) || (ev.changedTouches && ev.changedTouches.length !== 1)) return
+
+          const t = ev.changedTouches[0]
+          const x = t?.clientX ?? 0
+          const y = t?.clientY ?? 0
+          const now = Date.now()
+          const targetEl = getTargetElement(ev)
+          if (!shouldHandle(targetEl)) {
+            lastAt = 0
+            return
+          }
+
+          const dt = now - lastAt
+          const dx = x - lastX
+          const dy = y - lastY
+          const distOk = (dx * dx + dy * dy) <= (maxDistPx * maxDistPx)
+
+          if (lastAt > 0 && dt > 0 && dt <= maxGapMs && distOk) {
+            lastAt = 0
+            lastX = 0
+            lastY = 0
+            // 源码模式 textarea：别阻止默认行为（否则可能影响系统选字）
+            if (targetEl !== editor) {
+              try { ev.preventDefault() } catch {}
+            }
+            try { ev.stopPropagation() } catch {}
+
+            // 让系统先完成选字/更新 selection，再读 selectedText
+            setTimeout(() => {
+              try {
+                const ctx = buildContextMenuContextFromTarget(targetEl)
+                void showContextMenu(x, y, ctx, {
+                  pluginItems: pluginContextMenuItems,
+                  buildBuiltinItems: buildBuiltinContextMenuItems,
+                })
+              } catch {}
+            }, 0)
+            return
+          }
+
+          lastAt = now
+          lastX = x
+          lastY = y
+        } catch {}
+      }
+
+      document.addEventListener('touchend', onTouchEnd, { passive: false, capture: true })
+    }
+
+    // 仅在编辑/预览/所见区域内响应双击；点到顶栏/按钮等交互控件则不触发
+    const shouldHandleDoubleTap = (target: HTMLElement | null) => {
+      try {
+        if (!target) return false
+        // 源码模式：允许在编辑器 textarea 双击呼出（用于扩展右键菜单）
+        if (target === editor) return true
+        if (target.closest('.window-controls, .menu-item, button, a, input, textarea, [data-tauri-drag-ignore]')) return false
+        const inPreview = !!target.closest?.('.preview')
+        const inWysiwyg = !!target.closest?.('#md-wysiwyg-root')
+        if (inPreview || inWysiwyg) return true
+        return false
+      } catch {
+        return false
+      }
+    }
+
+    // 预览/所见：双击呼出菜单（用于插件右键菜单、图片上传等）
+    installMobileDoubleTap(
+      (ev) => (ev.target as HTMLElement | null),
+      shouldHandleDoubleTap,
+    )
+
     // 监听编辑器的右键事件
     editor.addEventListener('contextmenu', (e) => {
       if (e.shiftKey) return

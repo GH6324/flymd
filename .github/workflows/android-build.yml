@@ -88,6 +88,9 @@ jobs:
             npx tauri android init
           fi
 
+      - name: Android 补丁：Gradle settings 兜底
+        run: node scripts/patch-android-tauri-settings.cjs
+
       - name: Android 补丁：沉浸式全屏
         run: node scripts/patch-android-immersive.cjs
 
@@ -146,7 +149,7 @@ jobs:
       - name: 构建 Android APK (Release)
         id: tauri_build_release
         if: ${{ steps.buildtype.outputs.type == 'release' }}
-        run: npx tauri android build --release
+        run: npx tauri android build
         continue-on-error: true
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
