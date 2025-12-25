@@ -26,6 +26,14 @@ export async function getPlatform(): Promise<Platform> {
   try {
     cachedPlatform = await invoke<Platform>('get_platform')
   } catch {
+    // 移动端 release 场景下，极少数情况下 invoke 可能不可用/失败；用 UA 做兜底，避免走到桌面分支。
+    try {
+      const ua = String(navigator?.userAgent || '')
+      if (/Android/i.test(ua)) {
+        cachedPlatform = 'android'
+        return cachedPlatform
+      }
+    } catch {}
     cachedPlatform = 'unknown'
   }
   return cachedPlatform

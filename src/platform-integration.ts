@@ -13,7 +13,9 @@ export async function initPlatformIntegration(): Promise<void> {
   const platform = await getPlatform()
 
   try {
-    if (platform === 'android') {
+    const ua = String(navigator?.userAgent || '')
+    const uaIsAndroid = /Android/i.test(ua)
+    if (platform === 'android' || uaIsAndroid) {
       document.body.classList.add('platform-android')
     }
     if (isMobile() || platform === 'android') {

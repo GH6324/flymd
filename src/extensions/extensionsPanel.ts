@@ -1256,6 +1256,16 @@ function ensureExtensionsOverlayMounted(): void {
 
   async function browseLocalFolder() {
     try {
+      // 移动端：Tauri dialog 的 folder picker 未实现（会报 Folder picker is not implemented on mobile）
+      // 且 Android 上插件“本地文件夹路径”语义也与 SAF 不一致，因此直接禁用该入口。
+      try {
+        const ua = String(navigator?.userAgent || '')
+        if (/Android|iPhone|iPad|iPod|webOS|IEMobile|Opera Mini/i.test(ua)) {
+          alert('移动端暂不支持浏览本地插件目录，请在桌面端使用。')
+          return
+        }
+      } catch {}
+
       const selected = await open({
         directory: true,
         multiple: false,
