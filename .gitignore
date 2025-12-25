@@ -43,6 +43,12 @@ q.md
 .env.*
 !.env.example
 
+# Android 签名密钥（绝对不要提交）
+*.jks
+*.keystore
+flymd-release.jks
+flymd.keystore
+
 # 本地 AI/调试等与程序无关的目录/文件
 .claude/
 DEBUG_PATCH_MARKER.txt
