@@ -47,6 +47,7 @@ const dict = {
   zh: {
     'menu.file': '文件',
     'menu.mode': '模式',
+    'menu.more': '更多',
     'menu.recent': '最近',
     'menu.uploader': '图床',
     'menu.extensions': '扩展',
@@ -438,6 +439,7 @@ const dict = {
   en: {
     'menu.file': 'File',
     'menu.mode': 'Mode',
+    'menu.more': 'More',
     'menu.recent': 'Recent',
     'menu.uploader': 'Image Bed',
     'menu.extensions': 'Extensions',

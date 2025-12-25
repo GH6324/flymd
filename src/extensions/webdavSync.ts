@@ -1543,6 +1543,14 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
       clearStatus()
       return { uploaded: 0, downloaded: 0, skipped: true }
     }
+    if (String(localRoot).startsWith('content://')) {
+      // SAF 外置库：当前同步实现依赖 plugin-fs 的 readDir/stat，直接对 content:// 会炸。
+      // 实用主义：先明确禁用，避免用户误以为“同步成功”但实际没干活。
+      await syncLog('[skip] 外置库(SAF)暂不支持同步')
+      updateStatus('外置库（SAF）暂不支持 WebDAV 同步，请先导入为本地库或使用桌面端同步')
+      clearStatus()
+      return { uploaded: 0, downloaded: 0, skipped: true }
+    }
     updateStatus('正在同步… 准备中')
     const baseUrl = (cfg.baseUrl || '').trim()
     if (!baseUrl) {

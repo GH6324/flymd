@@ -29,7 +29,7 @@ import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { appLocalDataDir } from '@tauri-apps/api/path'
-import fileTree, { FOLDER_ICONS, folderIconModal } from './fileTree'
+import fileTree, { FOLDER_ICONS, folderIconModal, newFileSafe as newFileSafeInTree } from './fileTree'
 import { uploadImageToS3R2, type UploaderConfig } from './uploader/s3'
 import { openUploaderDialog as openUploaderDialogInternal, testUploaderConnectivity } from './uploader/uploaderDialog'
 import { uploadImageFromContextMenu } from './uploader/manualImageUpload'
@@ -47,7 +47,7 @@ import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConf
 // 平台适配层（Android 支持）
 import { initPlatformIntegration } from './platform-integration'
 import { ensureAndroidDefaultLibraryRoot } from './platform/androidLibrary'
-import { safListDir, persistSafUriPermission, safPickFolder } from './platform/androidSaf'
+import { safDelete, safListDir, persistSafUriPermission, safPickFolder } from './platform/androidSaf'
 import { createImageUploader } from './core/imageUpload'
 import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
 import type { InstallableItem } from './extensions/market'
@@ -1161,6 +1161,7 @@ app.innerHTML = `
       <div class="menu-item" id="btn-extensions" title="${t('menu.extensions')}">${t('menu.extensions')}</div>
     </div>
     <div class="filename" id="filename">${t('filename.untitled')}</div>
+    <div class="menu-item" id="btn-mobile-menu" title="${t('menu.more')}">${t('menu.more')}</div>
     <div class="window-controls" id="window-controls">
       <button class="window-btn window-minimize" id="window-minimize" title="最小化">-</button>
       <button class="window-btn window-maximize" id="window-maximize" title="最大化">+</button>
@@ -6053,6 +6054,28 @@ async function pickLibraryRoot(): Promise<string | null> {
     try {
       const p = await invoke<string>('get_platform')
       if (p === 'android') {
+        // 选择库类型：外置（SAF，卸载不删文档）或本地（应用私有目录，简单可靠）
+        const useSaf = await ask('是否选择外置文件夹作为库？\n确定：外置（SAF，卸载不会删除文档）\n取消：本地（应用私有目录）')
+        if (useSaf) {
+          let uri = ''
+          try {
+            uri = normalizePath(await safPickFolder()) || ''
+          } catch (e) {
+            const msg = String((e as any)?.message || e || '')
+            if (/cancel/i.test(msg) || /canceled/i.test(msg) || /cancellation/i.test(msg)) return null
+            throw e
+          }
+          if (!uri || !uri.startsWith('content://')) {
+            alert('请选择外置存储中的文件夹（SAF）')
+            return null
+          }
+          try { await persistSafUriPermission(uri) } catch {}
+          const rawName = await openRenameDialog('外置库', '')
+          const name = (rawName || '').trim() || '外置库'
+          await upsertLibrary({ id: `android-saf-${Date.now()}`, name, root: uri })
+          return uri
+        }
+
         const base = (await appLocalDataDir()).replace(/[\\/]+$/, '')
         const sep = base.includes('\\') ? '\\' : '/'
         const join = (a: string, b: string) => (a.endsWith(sep) ? a + b : a + sep + b)
@@ -6224,6 +6247,30 @@ async function renamePathWithDialog(path: string): Promise<string | null> {
     const newStem = await openRenameDialog(oldStem, oldExt)
     if (!newStem || newStem === oldStem) return null
     const name = newStem + oldExt
+
+    // SAF：content:// URI 只能走 android_saf_rename（renameFileSafe 已兜底）
+    if (String(path).startsWith('content://')) {
+      const next = await renameFileSafe(path, name)
+      if (currentFilePath === path) {
+        currentFilePath = next as any
+        refreshTitle()
+      }
+      // 通知其他模块：某个文件已从 path 重命名到 next
+      try {
+        window.dispatchEvent(new CustomEvent('flymd-file-renamed', { detail: { src: path, dst: next } }))
+      } catch {}
+      const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
+      if (treeEl && fileTreeReady) {
+        try { await fileTree.refresh() } catch {}
+      }
+      try {
+        const nodes = Array.from(((document.getElementById('lib-tree') || document.body).querySelectorAll('.lib-node') as any)) as HTMLElement[]
+        const node = nodes.find(n => (n as any).dataset?.path === next)
+        if (node) node.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      } catch {}
+      return next
+    }
+
     const dst = base + (base.includes('\\') ? '\\' : '/') + name
     if (await exists(dst)) {
       alert('同名已存在')
@@ -6277,6 +6324,24 @@ async function renamePathWithDialog(path: string): Promise<string | null> {
 // 安全删除：优先直接删除；若为目录或遇到占用异常，尝试递归删除目录内容后再删
 async function deleteFileSafe(p: string, permanent = false): Promise<void> {
   console.log('[deleteFileSafe] 开始删除:', { path: p, permanent })
+
+  // SAF：content:// URI 删除（目录需要递归清空）
+  if (String(p).startsWith('content://')) {
+    try { await persistSafUriPermission(p) } catch {}
+    try {
+      const children = await safListDir(p)
+      for (const it of children || []) {
+        const child = String((it as any)?.path || '').trim()
+        if (!child) continue
+        // eslint-disable-next-line no-await-in-loop
+        await deleteFileSafe(child, true)
+      }
+    } catch {
+      // 不是目录或列目录失败：按文件删除
+    }
+    await safDelete(p)
+    return
+  }
 
   // 第一步：尝试移至回收站（如果不是永久删除）
   if (!permanent && typeof invoke === 'function') {
@@ -6344,31 +6409,8 @@ async function deleteFileSafe(p: string, permanent = false): Promise<void> {
 
   throw lastError ?? new Error('删除失败')
 }
-async function newFileSafe(dir: string, name = '新建文档.md'): Promise<string> {
-  const sep = dir.includes('\\') ? '\\' : '/'
-  let n = name, i = 1
-  while (await exists(dir + sep + n)) {
-    const m = name.match(/^(.*?)(\.[^.]+)$/); const stem = m ? m[1] : name; const ext = m ? m[2] : ''
-    n = `${stem} ${++i}${ext}`
-  }
-  const full = dir + sep + n
-  await ensureDir(dir)
-  await writeTextFile(full, '# 标题\n\n', {} as any)
-  return full
-}
-async function newFolderSafe(dir: string, name = '新建文件夹'): Promise<string> {
-  const sep = dir.includes('\\') ? '\\' : '/'
-  let n = name, i = 1
-  while (await exists(dir + sep + n)) {
-    n = `${name} ${++i}`
-  }
-  const full = dir + sep + n
-  await mkdir(full, { recursive: true } as any)
-  // 创建一个占位文件，使文件夹在库侧栏中可见
-  const placeholder = full + sep + 'README.md'
-  await writeTextFile(placeholder, '# ' + n + '\n\n', {} as any)
-  return full
-}async function renderDir(container: HTMLDivElement, dir: string) {
+
+async function renderDir(container: HTMLDivElement, dir: string) {
   container.innerHTML = ''
   const entries = await listDirOnce(dir)
   for (const e of entries) {
@@ -6619,6 +6661,35 @@ function showModeMenu() {
   ])
 }
 
+function showMobileQuickMenu() {
+  const anchor = document.getElementById('btn-mobile-menu') as HTMLDivElement | null
+  if (!anchor) return
+  const isMobileUi = document.body.classList.contains('platform-mobile')
+  if (!isMobileUi) return
+
+  const clickById = (id: string) => {
+    try {
+      const el = document.getElementById(id) as HTMLElement | null
+      if (!el) return
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    } catch {}
+  }
+
+  const items: TopMenuItemSpec[] = [
+    { label: t('lib.menu'), action: () => { clickById('btn-library') } },
+    { label: t('file.new'), action: () => { clickById('btn-new') } },
+    { label: t('file.open'), action: () => { void openFile2() } },
+    { label: t('file.save'), action: () => { void saveFile() } },
+    { label: `${t('mode.edit')}/${t('mode.read')}`, action: () => { void handleToggleModeShortcut() } },
+    { label: t('sync.title'), action: () => { try { void openWebdavSyncDialog() } catch {} } },
+    { label: t('sync.now'), action: () => { void handleManualSyncFromMenu() } },
+    { label: t('sync.openlog'), action: () => { void handleOpenSyncLogFromMenu() } },
+    { label: t('menu.extensions'), action: () => { clickById('btn-extensions') } },
+    { label: t('menu.theme.tooltip') || t('menu.theme'), action: () => { clickById('btn-theme') } },
+  ]
+  showTopMenu(anchor, items)
+}
+
 function changeLocaleWithNotice(pref: LocalePref) {
   try {
     const prevLocale = getLocale()
@@ -6734,6 +6805,7 @@ function applyI18nUi() {
     const map: Array<[string, string]> = [
       ['btn-open', t('menu.file')],
       ['btn-mode', t('menu.mode')],
+      ['btn-mobile-menu', t('menu.more')],
       ['btn-recent', t('menu.recent')],
       ['btn-uploader', t('menu.uploader')],
       ['btn-extensions', t('menu.extensions')],
@@ -7139,6 +7211,7 @@ function bindEvents() {
   // 菜单项点击事件
   const btnOpen = document.getElementById('btn-open')
   const btnMode = document.getElementById('btn-mode')
+  const btnMobileMenu = document.getElementById('btn-mobile-menu')
   const btnSave = document.getElementById('btn-save')
   const btnSaveas = document.getElementById('btn-saveas')
   const btnToggle = document.getElementById('btn-toggle')
@@ -7153,6 +7226,7 @@ function bindEvents() {
 
   if (btnOpen) btnOpen.addEventListener('click', guard(() => showFileMenu()))
   if (btnMode) btnMode.addEventListener('click', guard(() => showModeMenu()))
+  if (btnMobileMenu) btnMobileMenu.addEventListener('click', guard(() => showMobileQuickMenu()))
   if (btnLang) btnLang.addEventListener('click', guard(() => showLangMenu()))
   if (btnSave) btnSave.addEventListener('click', guard(() => saveFile()))
   if (btnSaveas) btnSaveas.addEventListener('click', guard(() => saveAs()))
@@ -8122,12 +8196,20 @@ function bindEvents() {
       if (!p) return
       if (e.key === 'F2') {
         e.preventDefault()
-        const base = p.replace(/[\\/][^\\/]*$/, '')
         const oldName = p.split(/[\\/]+/).pop() || ''
         const name = window.prompt('重命名为：', oldName) || ''
         if (!name || name === oldName) return
         const root = await getLibraryRoot(); if (!root) return
         if (!isInside(root, p)) { alert('越权操作禁止'); return }
+        // SAF：content:// URI 只能走 android_saf_rename（renameFileSafe 已兜底）
+        if (String(p).startsWith('content://')) {
+          const next = await renameFileSafe(p, name)
+          if (currentFilePath === p) { currentFilePath = next as any; refreshTitle() }
+          const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
+          if (treeEl && fileTreeReady) { try { await fileTree.refresh() } catch {} }
+          return
+        }
+        const base = p.replace(/[\\/][^\\/]*$/, '')
         const dst = base + (base.includes('\\') ? '\\' : '/') + name
         if (await exists(dst)) { alert('同名已存在'); return }
         await moveFileSafe(p, dst)
@@ -8150,7 +8232,7 @@ function bindEvents() {
         if (!dir) dir = await pickLibraryRoot()
       }
       if (!dir) return
-      const p = await newFileSafe(dir)
+      const p = await newFileSafeInTree(dir)
       await openFile2(p)
       mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {}
       const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null

@@ -9,12 +9,25 @@ function isContentUriPath(p: string): boolean {
 
 // 统一路径分隔符（在当前平台风格下清洗多余分隔符）
 export function normSep(p: string): string {
+  // content:// URI 不能做“多斜杠归一化”，否则 content:// 会被压成 content:/ 直接炸
+  if (isContentUriPath(p)) return p
   return p.replace(/[\\/]+/g, p.includes('\\') ? '\\' : '/')
 }
 
 // 判断 p 是否位于 root 之内（大小写不敏感，按规范化路径前缀判断）
 export function isInside(root: string, p: string): boolean {
   try {
+    // SAF：URI 不具备可靠的“字符串前缀父子关系”，这里仅做最小防御（同 authority 视为同库）
+    if (isContentUriPath(root) || isContentUriPath(p)) {
+      if (!isContentUriPath(root) || !isContentUriPath(p)) return false
+      try {
+        const ru = new URL(root)
+        const pu = new URL(p)
+        return ru.protocol === pu.protocol && ru.host === pu.host
+      } catch {
+        return p.startsWith('content://')
+      }
+    }
     const r = normSep(root).toLowerCase()
     const q = normSep(p).toLowerCase()
     const base = r.endsWith('/') || r.endsWith('\\') ? r : r + (r.includes('\\') ? '\\' : '/')
@@ -33,6 +46,10 @@ export async function ensureDir(dir: string): Promise<void> {
 
 // 安全移动文件：优先尝试 rename，失败则回退到复制+删除
 export async function moveFileSafe(src: string, dst: string): Promise<void> {
+  if (isContentUriPath(src) || isContentUriPath(dst)) {
+    // SAF 不支持直接按“路径”移动：需要 DocumentsContract.moveDocument（尚未接入）
+    throw new Error('SAF URI 不支持 moveFileSafe')
+  }
   try {
     await rename(src, dst)
   } catch {
@@ -47,6 +64,10 @@ export async function moveFileSafe(src: string, dst: string): Promise<void> {
 
 // 安全重命名：在同一目录内构造新路径并调用 moveFileSafe
 export async function renameFileSafe(p: string, newName: string): Promise<string> {
+  if (isContentUriPath(p)) {
+    try { await invoke('android_persist_uri_permission', { uri: p }) } catch {}
+    return await invoke<string>('android_saf_rename', { uri: p, new_name: newName })
+  }
   const base = p.replace(/[\\/][^\\/]*$/, '')
   const dst = base + (base.includes('\\') ? '\\' : '/') + newName
   await moveFileSafe(p, dst)

@@ -4,12 +4,17 @@
 // - 默认跳过 .flymd / .git / node_modules 等目录，避免把索引/缓存当成内容
 
 import { readDir, stat } from '@tauri-apps/plugin-fs'
+import { persistSafUriPermission, safListDir } from '../platform/androidSaf'
 
 export type LibrarySearchResult = {
   path: string
   relative: string
   name: string
   mtime?: number
+}
+
+function isContentUriPath(p: string): boolean {
+  return typeof p === 'string' && p.startsWith('content://')
 }
 
 function isWindowsLikePath(p: string): boolean {
@@ -87,6 +92,59 @@ export async function searchLibraryFilesByName(
     typeof opt?.maxDepth === 'number' && Number.isFinite(opt.maxDepth)
       ? Math.max(0, Math.min(64, Math.floor(opt.maxDepth)))
       : 32
+
+  // Android SAF：root 是 content:// 目录 URI，不能使用 plugin-fs 的 readDir/stat
+  if (isContentUriPath(root)) {
+    const out: LibrarySearchResult[] = []
+    const stack: Array<{ dir: string; relDir: string; depth: number }> = [{ dir: root, relDir: '', depth: 0 }]
+    let step = 0
+    try { await persistSafUriPermission(root) } catch {}
+
+    while (stack.length) {
+      const cur = stack.pop()!
+      if (cur.depth > maxDepth) continue
+
+      let entries: any[] = []
+      try {
+        entries = (await safListDir(cur.dir)) as any[]
+      } catch {
+        entries = []
+      }
+
+      for (const it of entries || []) {
+        const name = String((it as any)?.name || '').trim()
+        const full = String((it as any)?.path || '').trim()
+        if (!name || !full) continue
+        const isDir = !!(it as any)?.isDir
+
+        if (isDir) {
+          const nextRel = cur.relDir ? (cur.relDir + '/' + name) : name
+          if (shouldSkipDir(name, nextRel)) continue
+          stack.push({ dir: full, relDir: nextRel, depth: cur.depth + 1 })
+          continue
+        }
+
+        const ext = (name.split('.').pop() || '').toLowerCase()
+        if (allow.size > 0 && !allow.has(ext)) continue
+
+        const rel = cur.relDir ? (cur.relDir + '/' + name) : name
+        const hay = (name + ' ' + rel).toLowerCase()
+        if (!hay.includes(termLower)) continue
+
+        out.push({ path: full, relative: rel, name })
+        if (out.length >= maxResults) return out
+      }
+
+      // 让出事件循环：避免大库搜索把 UI 卡死
+      step++
+      if ((step & 7) === 0) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise<void>((r) => setTimeout(r, 0))
+      }
+    }
+
+    return out
+  }
 
   const out: LibrarySearchResult[] = []
   const stack: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }]

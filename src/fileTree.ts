@@ -1,6 +1,25 @@
 import { readDir, stat, mkdir, rename, remove, exists, writeTextFile, writeFile, readFile, watch } from '@tauri-apps/plugin-fs'
 import { t } from './i18n'
+import { writeTextFileAnySafe } from './core/fsSafe'
+import { persistSafUriPermission, safCreateDir, safCreateFile, safListDir } from './platform/androidSaf'
 import appIconUrl from '../Flymdnew.png?url'
+
+function isContentUriPath(p: string): boolean {
+  return typeof p === 'string' && p.startsWith('content://')
+}
+
+function safPrettyName(uri: string): string {
+  try {
+    const last = (String(uri || '').split('/').pop() || '').trim()
+    if (!last) return uri
+    const decoded = decodeURIComponent(last)
+    const afterSlash = decoded.split('/').pop() || decoded
+    const afterColon = afterSlash.includes(':') ? (afterSlash.split(':').pop() || afterSlash) : afterSlash
+    return afterColon || uri
+  } catch {
+    return uri
+  }
+}
 
 export type FileTreeOptions = {
   // 获取库根目录（未设置时返回 null）
@@ -35,6 +54,10 @@ const state = {
   unwatch: null as null | (() => void),
   sortMode: 'name_asc' as 'name_asc' | 'name_desc' | 'mtime_asc' | 'mtime_desc',
   currentRoot: null as string | null,
+  // SAF：记录“子项 → 父目录 URI”，用于在 URI 模式下推导父目录（URI 不具备可靠的字符串层级关系）
+  parentOf: new Map<string, string>(),
+  // SAF/通用：记录“path → display name”，用于 UI 展示与推导名称
+  nameByPath: new Map<string, string>(),
 }
 
 // 文件监听回调可能非常频繁（尤其是 Linux/inotify），必须做去抖与串行化刷新
@@ -193,11 +216,42 @@ export function clearFolderOrderForParent(parent: string) {
 }
 
 function sep(p: string): string { return p.includes('\\') ? '\\' : '/' }
-function norm(p: string): string { return p.replace(/[\\/]+/g, sep(p)) }
+function norm(p: string): string {
+  // content:// URI 不能做“多斜杠归一化”，否则 content:// 会被压成 content:/ 直接炸
+  if (isContentUriPath(p)) return p
+  return p.replace(/[\\/]+/g, sep(p))
+}
 function join(a: string, b: string): string { const s = sep(a); return (a.endsWith(s) ? a : a + s) + b }
-function base(p: string): string { return p.split(/[\\/]+/).slice(0, -1).join(sep(p)) }
-function nameOf(p: string): string { const n = p.split(/[\\/]+/).pop() || p; return n }
-function isInside(root: string, p: string): boolean { const r = norm(root).toLowerCase(); const q = norm(p).toLowerCase(); const s = r.endsWith(sep(r)) ? r : r + sep(r); return q.startsWith(s) }
+function base(p: string): string {
+  if (isContentUriPath(p)) return state.parentOf.get(p) || p
+  return p.split(/[\\/]+/).slice(0, -1).join(sep(p))
+}
+function nameOf(p: string): string {
+  if (isContentUriPath(p)) return state.nameByPath.get(p) || safPrettyName(p) || p
+  const n = p.split(/[\\/]+/).pop() || p
+  return n
+}
+function isInside(root: string, p: string): boolean {
+  try {
+    // SAF：URI 不具备可靠的“字符串前缀父子关系”，这里仅做最小防御（同 authority 视为同库）
+    if (isContentUriPath(root) || isContentUriPath(p)) {
+      if (!isContentUriPath(root) || !isContentUriPath(p)) return false
+      try {
+        const ru = new URL(root)
+        const pu = new URL(p)
+        return ru.protocol === pu.protocol && ru.host === pu.host
+      } catch {
+        return p.startsWith('content://')
+      }
+    }
+    const r = norm(root).toLowerCase()
+    const q = norm(p).toLowerCase()
+    const s = r.endsWith(sep(r)) ? r : r + sep(r)
+    return q.startsWith(s)
+  } catch {
+    return false
+  }
+}
 
 async function ensureDir(dir: string) { try { await mkdir(dir, { recursive: true } as any) } catch {} }
 
@@ -211,6 +265,22 @@ async function moveFileSafe(src: string, dst: string): Promise<void> {
 }
 
 export async function newFileSafe(dir: string, hint = '新建文档.md'): Promise<string> {
+  if (isContentUriPath(dir)) {
+    try { await persistSafUriPermission(dir) } catch {}
+    let ents: any[] = []
+    try { ents = (await safListDir(dir)) as any[] } catch { ents = [] }
+    const existing = new Set((ents || []).map((x) => String((x as any)?.name || '').trim()).filter(Boolean))
+    let n = hint, i = 1
+    while (existing.has(n)) {
+      const m = hint.match(/^(.*?)(\.[^.]+)$/); const stem = m ? m[1] : hint; const ext = m ? m[2] : ''
+      n = `${stem} ${++i}${ext}`
+    }
+    const uri = await safCreateFile(dir, n, 'text/plain')
+    await writeTextFileAnySafe(uri, '# 标题\n\n')
+    try { state.parentOf.set(uri, dir) } catch {}
+    try { state.nameByPath.set(uri, n) } catch {}
+    return uri
+  }
   const s = sep(dir)
   let n = hint, i = 1
   while (await exists(dir + s + n)) {
@@ -224,6 +294,23 @@ export async function newFileSafe(dir: string, hint = '新建文档.md'): Promis
 }
 
 export async function newFolderSafe(dir: string, hint = '新建文件夹'): Promise<string> {
+  if (isContentUriPath(dir)) {
+    try { await persistSafUriPermission(dir) } catch {}
+    let ents: any[] = []
+    try { ents = (await safListDir(dir)) as any[] } catch { ents = [] }
+    const existing = new Set((ents || []).map((x) => String((x as any)?.name || '').trim()).filter(Boolean))
+    let n = hint, i = 1
+    while (existing.has(n)) { n = `${hint} ${++i}` }
+    const folderUri = await safCreateDir(dir, n)
+    // 创建一个占位文件，使文件夹在库侧栏中可见
+    const placeholderUri = await safCreateFile(folderUri, 'README.md', 'text/plain')
+    await writeTextFileAnySafe(placeholderUri, '# ' + n + '\n\n')
+    try { state.parentOf.set(folderUri, dir) } catch {}
+    try { state.nameByPath.set(folderUri, n) } catch {}
+    try { state.parentOf.set(placeholderUri, folderUri) } catch {}
+    try { state.nameByPath.set(placeholderUri, 'README.md') } catch {}
+    return folderUri
+  }
   const s = sep(dir)
   let n = hint, i = 1
   while (await exists(dir + s + n)) { n = `${hint} ${++i}` }
@@ -275,11 +362,72 @@ function toMtimeMs(meta: any): number {
 
 async function listDir(root: string, dir: string): Promise<{ name: string; path: string; isDir: boolean }[]> {
   const items: { name: string; path: string; isDir: boolean; mtime?: number; ext?: string }[] = []
-  let ents: any[] = []
-  try { ents = await readDir(dir, { recursive: false } as any) as any[] } catch { ents = [] }
   const dirs: { name: string; path: string; isDir: boolean; mtime?: number }[] = []
   // 仅展示指定后缀的文档（md / markdown / txt / pdf）
   const allow = new Set(['md', 'markdown', 'txt', 'pdf'])
+
+  // Android SAF：content:// URI 目录列举
+  if (isContentUriPath(dir)) {
+    let ents: any[] = []
+    try { await persistSafUriPermission(dir) } catch {}
+    try { ents = (await safListDir(dir)) as any[] } catch { ents = [] }
+    const needMtime = (state.sortMode === 'mtime_asc' || state.sortMode === 'mtime_desc')
+    for (const it of ents || []) {
+      const p: string = String((it as any)?.path || '').trim()
+      if (!p) continue
+      const nm = String((it as any)?.name || '').trim() || safPrettyName(p)
+      const isDir = !!(it as any)?.isDir
+      try { state.parentOf.set(p, dir) } catch {}
+      try { if (nm) state.nameByPath.set(p, nm) } catch {}
+      if (isDir) {
+        if (await dirHasSupportedDocRecursive(p, allow)) {
+          dirs.push({ name: nm || safPrettyName(p), path: p, isDir: true, mtime: needMtime ? 0 : undefined })
+        }
+      } else {
+        const ext = (nm.split('.').pop() || '').toLowerCase()
+        if (allow.has(ext)) {
+          items.push({ name: nm, path: p, isDir: false, mtime: needMtime ? 0 : undefined, ext })
+        }
+      }
+    }
+
+    const isPdf = (e: any) => (e.ext || '').toLowerCase() === 'pdf'
+    const pdfGrouped = (base: (a: any, b: any) => number) => (a: any, b: any) => {
+      const ap = isPdf(a)
+      const bp = isPdf(b)
+      // pdf 永远成组：非 pdf 在前，pdf 在后
+      if (ap && !bp) return 1
+      if (!ap && bp) return -1
+      return base(a, b)
+    }
+
+    const byNameAsc = (a: any, b: any) => a.name.localeCompare(b.name)
+    const byNameDesc = (a: any, b: any) => -a.name.localeCompare(b.name)
+    const byMtimeAsc = (a: any, b: any) => ((a.mtime ?? 0) - (b.mtime ?? 0)) || a.name.localeCompare(b.name)
+    const byMtimeDesc = (a: any, b: any) => ((b.mtime ?? 0) - (a.mtime ?? 0)) || a.name.localeCompare(b.name)
+
+    // 目录排序：手动顺序 + 原有规则
+    const dirManualFirst = (cmp: (a: any, b: any) => number) => (a: any, b: any) => {
+      const oa = getFolderOrder(dir, a.path)
+      const ob = getFolderOrder(dir, b.path)
+      const da = Number.isFinite(oa)
+      const db = Number.isFinite(ob)
+      if (da && !db) return -1
+      if (!da && db) return 1
+      if (da && db && oa !== ob) return oa - ob
+      return cmp(a, b)
+    }
+
+    if (state.sortMode === 'name_asc') { dirs.sort(dirManualFirst(byNameAsc)); items.sort(pdfGrouped(byNameAsc)) }
+    else if (state.sortMode === 'name_desc') { dirs.sort(dirManualFirst(byNameDesc)); items.sort(pdfGrouped(byNameDesc)) }
+    else if (state.sortMode === 'mtime_asc') { dirs.sort(dirManualFirst(byMtimeAsc)); items.sort(pdfGrouped(byMtimeAsc)) }
+    else if (state.sortMode === 'mtime_desc') { dirs.sort(dirManualFirst(byMtimeDesc)); items.sort(pdfGrouped(byMtimeDesc)) }
+    else { dirs.sort(dirManualFirst(byNameAsc)); items.sort(pdfGrouped(byNameAsc)) }
+    return [...dirs, ...items]
+  }
+
+  let ents: any[] = []
+  try { ents = await readDir(dir, { recursive: false } as any) as any[] } catch { ents = [] }
   for (const it of ents) {
     const needMtime = (state.sortMode === 'mtime_asc' || state.sortMode === 'mtime_desc')
     const p: string = typeof it?.path === 'string' ? it.path : join(dir, it?.name || '')
@@ -303,6 +451,9 @@ async function listDir(root: string, dir: string): Promise<{ name: string; path:
         items.push({ name: nm, path: p, isDir: false, mtime: needMtime ? toMtimeMs(st) : undefined, ext })
       }
     }
+    // 记录父子关系（用于后续“推导父目录/显示名称”的兜底）
+    try { state.parentOf.set(p, dir) } catch {}
+    try { state.nameByPath.set(p, nameOf(p)) } catch {}
   }
   const isPdf = (e: any) => (e.ext || '').toLowerCase() === 'pdf'
   const pdfGrouped = (base: (a: any, b: any) => number) => (a: any, b: any) => {
@@ -347,6 +498,39 @@ async function dirHasSupportedDocRecursive(dir: string, allow: Set<string>, dept
 
     const p = (async (): Promise<boolean> => {
       if (depth <= 0) { hasDocCache.set(dir, false); return false }
+
+      // SAF：content:// 目录递归扫描（只看扩展名，避免打开大文件）
+      if (isContentUriPath(dir)) {
+        let entries: any[] = []
+        try { await persistSafUriPermission(dir) } catch {}
+        try { entries = (await safListDir(dir)) as any[] } catch { entries = [] }
+        // 先扫描本层文件
+        for (const it of (entries || [])) {
+          const full: string = String((it as any)?.path || '').trim()
+          if (!full) continue
+          const isDir = !!(it as any)?.isDir
+          const nm = String((it as any)?.name || '').trim() || safPrettyName(full)
+          try { state.parentOf.set(full, dir) } catch {}
+          try { if (nm) state.nameByPath.set(full, nm) } catch {}
+          if (!isDir) {
+            const ext = (nm.split('.').pop() || '').toLowerCase()
+            if (allow.has(ext)) { hasDocCache.set(dir, true); return true }
+          }
+        }
+        // 再递归子目录
+        for (const it of (entries || [])) {
+          const full: string = String((it as any)?.path || '').trim()
+          if (!full) continue
+          const isDir = !!(it as any)?.isDir
+          if (isDir) {
+            const ok = await dirHasSupportedDocRecursive(full, allow, depth - 1)
+            if (ok) { hasDocCache.set(dir, true); return true }
+          }
+        }
+        hasDocCache.set(dir, false)
+        return false
+      }
+
       let entries: any[] = []
       try { entries = await readDir(dir, { recursive: false } as any) as any[] } catch { entries = [] }
       // 先扫描本层文件
@@ -548,46 +732,48 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
         }, true)
       })()
 
-      row.addEventListener('dragover', (ev) => {
-        ev.preventDefault()
-        if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
-        row.classList.add('selected')
-        console.log('[拖动] 拖动到文件夹:', e.path)
-      })
-      // 一些平台需要在 dragenter 同样 preventDefault，才能从“禁止”光标切到可放置
-      row.addEventListener('dragenter', (ev) => { try { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; row.classList.add('selected') } catch {} })
-      row.addEventListener('dragleave', () => { row.classList.remove('selected') })
-      row.addEventListener('drop', async (ev) => {
-        try {
-          ev.preventDefault(); row.classList.remove('selected')
-          console.log('[拖动] Drop事件触发，目标文件夹:', e.path)
-          const src = ev.dataTransfer?.getData('text/plain') || ''
-          if (!src) return
-          const dst = join(e.path, nameOf(src))
-          if (src === dst) return
-          if (!isInside(root, src) || !isInside(root, dst)) return alert(t('ft.move.within'))
-          let finalDst = dst
-          if (await exists(dst)) {
-            const choice = await conflictModal(t('ft.exists'), [t('action.overwrite'), t('action.renameAuto'), t('action.cancel')], 1)
-            if (choice === 2) return
-            if (choice === 1) {
-              const nm = nameOf(src)
-              const stem = nm.replace(/(\.[^.]+)$/,''); const ext = nm.match(/(\.[^.]+)$/)?.[1] || ''
-              let i=1, cand=''
-              do { cand = `${stem} ${++i}${ext}` } while (await exists(join(e.path, cand)))
-              finalDst = join(e.path, cand)
-              await moveFileSafe(src, finalDst)
+      if (!isContentUriPath(root)) {
+        row.addEventListener('dragover', (ev) => {
+          ev.preventDefault()
+          if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
+          row.classList.add('selected')
+          console.log('[拖动] 拖动到文件夹:', e.path)
+        })
+        // 一些平台需要在 dragenter 同样 preventDefault，才能从“禁止”光标切到可放置
+        row.addEventListener('dragenter', (ev) => { try { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; row.classList.add('selected') } catch {} })
+        row.addEventListener('dragleave', () => { row.classList.remove('selected') })
+        row.addEventListener('drop', async (ev) => {
+          try {
+            ev.preventDefault(); row.classList.remove('selected')
+            console.log('[拖动] Drop事件触发，目标文件夹:', e.path)
+            const src = ev.dataTransfer?.getData('text/plain') || ''
+            if (!src) return
+            const dst = join(e.path, nameOf(src))
+            if (src === dst) return
+            if (!isInside(root, src) || !isInside(root, dst)) return alert(t('ft.move.within'))
+            let finalDst = dst
+            if (await exists(dst)) {
+              const choice = await conflictModal(t('ft.exists'), [t('action.overwrite'), t('action.renameAuto'), t('action.cancel')], 1)
+              if (choice === 2) return
+              if (choice === 1) {
+                const nm = nameOf(src)
+                const stem = nm.replace(/(\.[^.]+)$/,''); const ext = nm.match(/(\.[^.]+)$/)?.[1] || ''
+                let i=1, cand=''
+                do { cand = `${stem} ${++i}${ext}` } while (await exists(join(e.path, cand)))
+                finalDst = join(e.path, cand)
+                await moveFileSafe(src, finalDst)
+              } else {
+                await moveFileSafe(src, dst)
+              }
             } else {
               await moveFileSafe(src, dst)
             }
-          } else {
-            await moveFileSafe(src, dst)
-          }
-          try { await state.opts?.onMoved?.(src, finalDst) } catch {}
-          await refresh()
-          console.log('[拖动] 移动完成:', src, '→', finalDst)
-        } catch (err) { console.error('[拖动] 移动失败:', err) }
-      })
+            try { await state.opts?.onMoved?.(src, finalDst) } catch {}
+            await refresh()
+            console.log('[拖动] 移动完成:', src, '→', finalDst)
+          } catch (err) { console.error('[拖动] 移动失败:', err) }
+        })
+      }
     } else {
       // 为文件显示类型化图标：
       // - markdown/txt 使用简洁的“文档形状”图标，并显示 MD/TXT 标识
@@ -616,174 +802,182 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
         try { img.setAttribute('src', appIconUrl) } catch {}
         iconEl = img
       }
-      // 让图标与文字都成为可拖拽起点（某些内核仅触发“被按住元素”的拖拽，不会透传到父元素）
-      try { iconEl.setAttribute('draggable', 'true') } catch {}
-      try { label.setAttribute('draggable', 'true') } catch {}
-      // 统一的拖拽启动处理（Edge/WebView2 兼容：设置 dataTransfer 与拖拽影像）
-      let nativeDragStarted = false
-      const startDrag = (ev: DragEvent) => {
-        try {
-          ev.stopPropagation()
-          const dt = ev.dataTransfer
-          if (!dt) return
-          nativeDragStarted = true
-          // 必须至少写入一种类型的数据，否则某些内核会判定为“无效拖拽”
-          dt.setData('text/plain', e.path)
-          // 兼容某些解析器：附带 URI 列表
+      const allowDnd = !isContentUriPath(root)
+      if (allowDnd) {
+        // 让图标与文字都成为可拖拽起点（某些内核仅触发“被按住元素”的拖拽，不会透传到父元素）
+        try { iconEl.setAttribute('draggable', 'true') } catch {}
+        try { label.setAttribute('draggable', 'true') } catch {}
+        // 统一的拖拽启动处理（Edge/WebView2 兼容：设置 dataTransfer 与拖拽影像）
+        let nativeDragStarted = false
+        const startDrag = (ev: DragEvent) => {
           try {
-            const fileUrl = (() => {
-              try {
-                const p = e.path.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, 'file:///$1:/')
-                return p.startsWith('file:///') ? p : ('file:///' + p.replace(/^\//, ''))
-              } catch { return '' }
-            })()
-            if (fileUrl) dt.setData('text/uri-list', fileUrl)
+            ev.stopPropagation()
+            const dt = ev.dataTransfer
+            if (!dt) return
+            nativeDragStarted = true
+            // 必须至少写入一种类型的数据，否则某些内核会判定为“无效拖拽”
+            dt.setData('text/plain', e.path)
+            // 兼容某些解析器：附带 URI 列表
+            try {
+              const fileUrl = (() => {
+                try {
+                  const p = e.path.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, 'file:///$1:/')
+                  return p.startsWith('file:///') ? p : ('file:///' + p.replace(/^\//, ''))
+                } catch { return '' }
+              })()
+              if (fileUrl) dt.setData('text/uri-list', fileUrl)
+            } catch {}
+            // 允许移动/复制（由目标决定 dropEffect）
+            dt.effectAllowed = 'copyMove'
+            // 提供拖拽影像，避免出现无预览时的“禁止”提示
+            try { dt.setDragImage(row, 4, 4) } catch {}
           } catch {}
-          // 允许移动/复制（由目标决定 dropEffect）
-          dt.effectAllowed = 'copyMove'
-          // 提供拖拽影像，避免出现无预览时的“禁止”提示
-          try { dt.setDragImage(row, 4, 4) } catch {}
-        } catch {}
-      }
-      row.addEventListener('dragstart', startDrag)
-      iconEl.addEventListener('dragstart', startDrag as any)
-      label.addEventListener('dragstart', startDrag as any)
-      // 自绘拖拽兜底：在某些 WebView2 场景下，原生 DnD 会一直显示禁止图标，
-      // 我们在移动阈值触发后启用自绘拖拽，模拟“拖到文件夹释放即可移动”。
-      const setupFallbackDrag = (host: HTMLElement) => {
-        let down = false, sx = 0, sy = 0, moved = false
-        let ghost: HTMLDivElement | null = null
-        let hoverEl: HTMLElement | null = null
-        let prevRowDraggable: string | null = null
-        let prevIconDraggable: string | null = null
-        let prevLabelDraggable: string | null = null
-        const suppressClick = (ev: MouseEvent) => { if (moved) { ev.stopImmediatePropagation(); ev.preventDefault() } }
-        const restoreDraggable = () => {
-          try { if (prevRowDraggable !== null) row.setAttribute('draggable', prevRowDraggable); else row.removeAttribute('draggable') } catch {}
-          try { if (prevIconDraggable !== null) (iconEl as any).setAttribute('draggable', prevIconDraggable); else (iconEl as any).removeAttribute('draggable') } catch {}
-          try { if (prevLabelDraggable !== null) label.setAttribute('draggable', prevLabelDraggable); else label.removeAttribute('draggable') } catch {}
         }
-        const onMove = (ev: MouseEvent) => {
-          if (!down) return
-          // 若原生拖拽已经启动，放弃兜底
-          if (nativeDragStarted) { cleanup(); return }
-          const dx = ev.clientX - sx, dy = ev.clientY - sy
-          if (!moved && Math.hypot(dx, dy) > 6) {
-            moved = true
-            ghost = document.createElement('div')
-            ghost.className = 'ft-ghost'
-            // 图标
-            const gico = document.createElement('img')
-            try { gico.setAttribute('src', appIconUrl) } catch {}
-            gico.style.width = '16px'
-            gico.style.height = '16px'
-            gico.style.borderRadius = '3px'
-            gico.style.objectFit = 'cover'
-            gico.style.marginRight = '6px'
-            // 文本
-            const glab = document.createElement('span')
-            glab.textContent = e.name
-            glab.style.fontSize = '12px'
-            // 组合
-            ghost.appendChild(gico)
-            ghost.appendChild(glab)
-            // 位置与通用样式（兜底）
-            ghost.style.position = 'fixed'
-            ghost.style.left = ev.clientX + 8 + 'px'
-            ghost.style.top = ev.clientY + 8 + 'px'
-            ghost.style.padding = '6px 10px'
-            ghost.style.background = 'rgba(17,17,17,0.85)'
-            ghost.style.color = '#fff'
-            ghost.style.borderRadius = '8px'
-            ghost.style.boxShadow = '0 4px 12px rgba(0,0,0,0.35)'
-            ghost.style.pointerEvents = 'none'
-            ghost.style.zIndex = '99999'
-            document.body.appendChild(ghost)
-            try { document.body.style.cursor = 'grabbing' } catch {}
-            try { document.body.style.userSelect = 'none' } catch {}
+        row.addEventListener('dragstart', startDrag)
+        iconEl.addEventListener('dragstart', startDrag as any)
+        label.addEventListener('dragstart', startDrag as any)
+        // 自绘拖拽兜底：在某些 WebView2 场景下，原生 DnD 会一直显示禁止图标，
+        // 我们在移动阈值触发后启用自绘拖拽，模拟“拖到文件夹释放即可移动”。
+        const setupFallbackDrag = (host: HTMLElement) => {
+          let down = false, sx = 0, sy = 0, moved = false
+          let ghost: HTMLDivElement | null = null
+          let hoverEl: HTMLElement | null = null
+          let prevRowDraggable: string | null = null
+          let prevIconDraggable: string | null = null
+          let prevLabelDraggable: string | null = null
+          const suppressClick = (ev: MouseEvent) => { if (moved) { ev.stopImmediatePropagation(); ev.preventDefault() } }
+          const restoreDraggable = () => {
+            try { if (prevRowDraggable !== null) row.setAttribute('draggable', prevRowDraggable); else row.removeAttribute('draggable') } catch {}
+            try { if (prevIconDraggable !== null) (iconEl as any).setAttribute('draggable', prevIconDraggable); else (iconEl as any).removeAttribute('draggable') } catch {}
+            try { if (prevLabelDraggable !== null) label.setAttribute('draggable', prevLabelDraggable); else label.removeAttribute('draggable') } catch {}
           }
-          if (moved && ghost) {
-            ghost.style.left = ev.clientX + 8 + 'px'
-            ghost.style.top = ev.clientY + 8 + 'px'
-            // 命中测试：查找鼠标下的目录节点
-            let el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
-            let tgt = el?.closest?.('.lib-node.lib-dir') as HTMLElement | null
-            if (hoverEl && hoverEl !== tgt) hoverEl.classList.remove('selected')
-            if (tgt) tgt.classList.add('selected')
-            hoverEl = tgt
+          const onMove = (ev: MouseEvent) => {
+            if (!down) return
+            // 若原生拖拽已经启动，放弃兜底
+            if (nativeDragStarted) { cleanup(); return }
+            const dx = ev.clientX - sx, dy = ev.clientY - sy
+            if (!moved && Math.hypot(dx, dy) > 6) {
+              moved = true
+              ghost = document.createElement('div')
+              ghost.className = 'ft-ghost'
+              // 图标
+              const gico = document.createElement('img')
+              try { gico.setAttribute('src', appIconUrl) } catch {}
+              gico.style.width = '16px'
+              gico.style.height = '16px'
+              gico.style.borderRadius = '3px'
+              gico.style.objectFit = 'cover'
+              gico.style.marginRight = '6px'
+              // 文本
+              const glab = document.createElement('span')
+              glab.textContent = e.name
+              glab.style.fontSize = '12px'
+              // 组合
+              ghost.appendChild(gico)
+              ghost.appendChild(glab)
+              // 位置与通用样式（兜底）
+              ghost.style.position = 'fixed'
+              ghost.style.left = ev.clientX + 8 + 'px'
+              ghost.style.top = ev.clientY + 8 + 'px'
+              ghost.style.padding = '6px 10px'
+              ghost.style.background = 'rgba(17,17,17,0.85)'
+              ghost.style.color = '#fff'
+              ghost.style.borderRadius = '8px'
+              ghost.style.boxShadow = '0 4px 12px rgba(0,0,0,0.35)'
+              ghost.style.pointerEvents = 'none'
+              ghost.style.zIndex = '99999'
+              document.body.appendChild(ghost)
+              try { document.body.style.cursor = 'grabbing' } catch {}
+              try { document.body.style.userSelect = 'none' } catch {}
+            }
+            if (moved && ghost) {
+              ghost.style.left = ev.clientX + 8 + 'px'
+              ghost.style.top = ev.clientY + 8 + 'px'
+              // 命中测试：查找鼠标下的目录节点
+              let el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
+              let tgt = el?.closest?.('.lib-node.lib-dir') as HTMLElement | null
+              if (hoverEl && hoverEl !== tgt) hoverEl.classList.remove('selected')
+              if (tgt) tgt.classList.add('selected')
+              hoverEl = tgt
+            }
+            try { ev.preventDefault() } catch {}
           }
-          try { ev.preventDefault() } catch {}
-        }
-        const finish = async () => {
-          try {
-            const base = (hoverEl as any)?.dataset?.path as string | undefined
-            if (!moved || !base) return
-            const root = await state.opts!.getRoot()
-            if (!root) return
-            const dst = join(base, nameOf(e.path))
-            if (e.path === dst) return
-            if (!isInside(root, e.path) || !isInside(root, dst)) { alert(t('ft.move.within')); return }
-            let finalDst = dst
-            if (await exists(dst)) {
-              try { if (ghost) ghost.style.display = 'none' } catch {}
-              const choice = await conflictModal(t('ft.exists'), [t('action.overwrite'), t('action.renameAuto'), t('action.cancel')], 1)
-              if (choice === 2) return
-              if (choice === 1) {
-                const nm = nameOf(e.path)
-                const stem = nm.replace(/(\.[^.]+)$/,''); const ext = nm.match(/(\.[^.]+)$/)?.[1] || ''
-                let i=1, cand=''
-                do { cand = `${stem} ${++i}${ext}` } while (await exists(join(base, cand)))
-                finalDst = join(base, cand)
-                await moveFileSafe(e.path, finalDst)
+          const finish = async () => {
+            try {
+              const base = (hoverEl as any)?.dataset?.path as string | undefined
+              if (!moved || !base) return
+              const root = await state.opts!.getRoot()
+              if (!root) return
+              const dst = join(base, nameOf(e.path))
+              if (e.path === dst) return
+              if (!isInside(root, e.path) || !isInside(root, dst)) { alert(t('ft.move.within')); return }
+              let finalDst = dst
+              if (await exists(dst)) {
+                try { if (ghost) ghost.style.display = 'none' } catch {}
+                const choice = await conflictModal(t('ft.exists'), [t('action.overwrite'), t('action.renameAuto'), t('action.cancel')], 1)
+                if (choice === 2) return
+                if (choice === 1) {
+                  const nm = nameOf(e.path)
+                  const stem = nm.replace(/(\.[^.]+)$/,''); const ext = nm.match(/(\.[^.]+)$/)?.[1] || ''
+                  let i=1, cand=''
+                  do { cand = `${stem} ${++i}${ext}` } while (await exists(join(base, cand)))
+                  finalDst = join(base, cand)
+                  await moveFileSafe(e.path, finalDst)
+                } else {
+                  await moveFileSafe(e.path, dst)
+                }
               } else {
                 await moveFileSafe(e.path, dst)
               }
-            } else {
-              await moveFileSafe(e.path, dst)
-            }
-            try { await state.opts?.onMoved?.(e.path, finalDst) } catch {}
-            await refresh()
-          } catch (err) { console.error('[拖动] 兜底移动失败:', err) }
+              try { await state.opts?.onMoved?.(e.path, finalDst) } catch {}
+              await refresh()
+            } catch (err) { console.error('[拖动] 兜底移动失败:', err) }
+          }
+          const cleanup = () => {
+            document.removeEventListener('mousemove', onMove)
+            down = false
+            moved = false
+            try { if (ghost && ghost.parentElement) ghost.parentElement.removeChild(ghost) } catch {}
+            try { document.querySelectorAll('.ft-ghost').forEach((el) => { try { (el as any).parentElement?.removeChild(el) } catch {} }) } catch {}
+            try { document.body.style.cursor = '' } catch {}
+            try { document.body.style.userSelect = '' } catch {}
+            ghost = null
+            if (hoverEl) hoverEl.classList.remove('selected')
+            hoverEl = null
+            try { host.removeEventListener('click', suppressClick, true) } catch {}
+            restoreDraggable()
+          }
+          const onDown = (ev: MouseEvent) => {
+            if (ev.button !== 0) return
+            // 允许文本选择/点击，不阻止默认；兜底触发依靠移动阈值
+            down = true; sx = ev.clientX; sy = ev.clientY; moved = false; nativeDragStarted = false
+            try { ev.stopPropagation() } catch {}
+            // 暂时禁用原生 DnD，避免阻断 mousemove
+            try {
+              prevRowDraggable = row.getAttribute('draggable')
+              prevIconDraggable = (iconEl as any).getAttribute?.('draggable') ?? null
+              prevLabelDraggable = label.getAttribute('draggable')
+              row.removeAttribute('draggable')
+              // 注意：<img> 默认 draggable=true，removeAttribute 会回到默认值，反而禁不掉；
+              // 这里必须显式设置为 false 才能阻止原生拖拽抢走 mousemove。
+              ;(iconEl as any).setAttribute?.('draggable', 'false')
+              label.removeAttribute('draggable')
+            } catch {}
+            try { host.addEventListener('click', suppressClick, true) } catch {}
+            document.addEventListener('mousemove', onMove)
+            const onUp = async () => { document.removeEventListener('mouseup', onUp); if (!nativeDragStarted) { await finish() } cleanup() }
+            document.addEventListener('mouseup', onUp, { once: true })
+          }
+          host.addEventListener('mousedown', onDown, true)
         }
-        const cleanup = () => {
-          document.removeEventListener('mousemove', onMove)
-          down = false
-          moved = false
-          try { if (ghost && ghost.parentElement) ghost.parentElement.removeChild(ghost) } catch {}
-          try { document.querySelectorAll('.ft-ghost').forEach((el) => { try { (el as any).parentElement?.removeChild(el) } catch {} }) } catch {}
-          try { document.body.style.cursor = '' } catch {}
-          try { document.body.style.userSelect = '' } catch {}
-          ghost = null
-          if (hoverEl) hoverEl.classList.remove('selected')
-          hoverEl = null
-          try { host.removeEventListener('click', suppressClick, true) } catch {}
-          restoreDraggable()
-        }
-        const onDown = (ev: MouseEvent) => {
-          if (ev.button !== 0) return
-          // 允许文本选择/点击，不阻止默认；兜底触发依靠移动阈值
-          down = true; sx = ev.clientX; sy = ev.clientY; moved = false; nativeDragStarted = false
-          try { ev.stopPropagation() } catch {}
-          // 暂时禁用原生 DnD，避免阻断 mousemove
-          try {
-            prevRowDraggable = row.getAttribute('draggable')
-            prevIconDraggable = (iconEl as any).getAttribute?.('draggable') ?? null
-            prevLabelDraggable = label.getAttribute('draggable')
-            row.removeAttribute('draggable')
-            // 注意：<img> 默认 draggable=true，removeAttribute 会回到默认值，反而禁不掉；
-            // 这里必须显式设置为 false 才能阻止原生拖拽抢走 mousemove。
-            ;(iconEl as any).setAttribute?.('draggable', 'false')
-            label.removeAttribute('draggable')
-          } catch {}
-          try { host.addEventListener('click', suppressClick, true) } catch {}
-          document.addEventListener('mousemove', onMove)
-          const onUp = async () => { document.removeEventListener('mouseup', onUp); if (!nativeDragStarted) { await finish() } cleanup() }
-          document.addEventListener('mouseup', onUp, { once: true })
-        }
-        host.addEventListener('mousedown', onDown, true)
+        // 将兜底拖拽仅绑定到整行，避免多次绑定造成多个“幽灵”遗留
+        setupFallbackDrag(row)
+        try { row.setAttribute('draggable','true') } catch {}
+      } else {
+        try { iconEl.setAttribute('draggable', 'false') } catch {}
+        try { label.setAttribute('draggable', 'false') } catch {}
+        try { row.setAttribute('draggable', 'false') } catch {}
       }
-      // 将兜底拖拽仅绑定到整行，避免多次绑定造成多个“幽灵”遗留
-      setupFallbackDrag(row)
       row.appendChild(iconEl); row.appendChild(label)
       try { if (ext) row.classList.add('file-ext-' + ext) } catch {}
 
@@ -863,7 +1057,9 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
         }
       })
 
-      row.setAttribute('draggable','true')
+      if (allowDnd) {
+        try { row.setAttribute('draggable','true') } catch {}
+      }
 
       parent.appendChild(row)
     }
@@ -897,44 +1093,46 @@ async function renderRoot(root: string) {
   } catch {}
 
   // 根节点的拖放处理
-  topRow.addEventListener('dragover', (ev) => {
-    ev.preventDefault()
-    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
-    topRow.classList.add('selected')
-    console.log('[拖动] 拖动到根文件夹:', root)
-  })
-  topRow.addEventListener('dragenter', (ev) => { try { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; topRow.classList.add('selected') } catch {} })
-  topRow.addEventListener('dragleave', () => { topRow.classList.remove('selected') })
-  topRow.addEventListener('drop', async (ev) => {
-    try {
-      ev.preventDefault(); topRow.classList.remove('selected')
-      const src = ev.dataTransfer?.getData('text/plain') || ''
-      if (!src) return
-      const dst = join(root, nameOf(src))
-      if (src === dst) return
-      if (!isInside(root, src) || !isInside(root, dst)) return alert(t('ft.move.within'))
-      let finalDst = dst
-      if (await exists(dst)) {
-        const choice = await conflictModal(t('ft.exists'), [t('action.overwrite'), t('action.renameAuto'), t('action.cancel')], 1)
-        if (choice === 2) return
-        if (choice === 1) {
-          const nm = nameOf(src)
-          const stem = nm.replace(/(\.[^.]+)$/,''); const ext = nm.match(/(\.[^.]+)$/)?.[1] || ''
-          let i=1, cand=''
-          do { cand = `${stem} ${++i}${ext}` } while (await exists(join(root, cand)))
-          finalDst = join(root, cand)
-          await moveFileSafe(src, finalDst)
+  if (!isContentUriPath(root)) {
+    topRow.addEventListener('dragover', (ev) => {
+      ev.preventDefault()
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
+      topRow.classList.add('selected')
+      console.log('[拖动] 拖动到根文件夹:', root)
+    })
+    topRow.addEventListener('dragenter', (ev) => { try { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; topRow.classList.add('selected') } catch {} })
+    topRow.addEventListener('dragleave', () => { topRow.classList.remove('selected') })
+    topRow.addEventListener('drop', async (ev) => {
+      try {
+        ev.preventDefault(); topRow.classList.remove('selected')
+        const src = ev.dataTransfer?.getData('text/plain') || ''
+        if (!src) return
+        const dst = join(root, nameOf(src))
+        if (src === dst) return
+        if (!isInside(root, src) || !isInside(root, dst)) return alert(t('ft.move.within'))
+        let finalDst = dst
+        if (await exists(dst)) {
+          const choice = await conflictModal(t('ft.exists'), [t('action.overwrite'), t('action.renameAuto'), t('action.cancel')], 1)
+          if (choice === 2) return
+          if (choice === 1) {
+            const nm = nameOf(src)
+            const stem = nm.replace(/(\.[^.]+)$/,''); const ext = nm.match(/(\.[^.]+)$/)?.[1] || ''
+            let i=1, cand=''
+            do { cand = `${stem} ${++i}${ext}` } while (await exists(join(root, cand)))
+            finalDst = join(root, cand)
+            await moveFileSafe(src, finalDst)
+          } else {
+            await moveFileSafe(src, dst)
+          }
         } else {
           await moveFileSafe(src, dst)
         }
-      } else {
-        await moveFileSafe(src, dst)
-      }
-      try { await state.opts?.onMoved?.(src, finalDst) } catch {}
-      await refresh()
-      console.log('[拖动] 移动完成:', src, '→', finalDst)
-    } catch (err) { console.error('[拖动] 移动失败:', err) }
-  })
+        try { await state.opts?.onMoved?.(src, finalDst) } catch {}
+        await refresh()
+        console.log('[拖动] 移动完成:', src, '→', finalDst)
+      } catch (err) { console.error('[拖动] 移动失败:', err) }
+    })
+  }
 
   topRow.addEventListener('click', async () => {
     const was = state.expanded.has(root)
@@ -951,12 +1149,14 @@ async function refreshTree() {
   const root = await state.opts!.getRoot()
   if (!root) {
     if (state.container) state.container.innerHTML = ''
+    try { state.parentOf.clear(); state.nameByPath.clear() } catch {}
     return
   }
   state.currentRoot = root
   restoreExpandedState(root)
   // 刷新前清理目录缓存，确保显示与实际文件状态一致
   try { hasDocCache.clear(); hasDocPending.clear() } catch {}
+  try { state.parentOf.clear(); state.nameByPath.clear() } catch {}
   await renderRoot(root)
 }
 
@@ -967,6 +1167,7 @@ async function refresh() {
     state.currentRoot = null
     state.expanded = new Set<string>()
     if (state.container) state.container.innerHTML = ''
+    try { state.parentOf.clear(); state.nameByPath.clear() } catch {}
     // 清理旧的监听器
     if (state.unwatch) {
       try { state.unwatch() } catch {}
@@ -991,27 +1192,29 @@ async function refresh() {
   restoreExpandedState(root)
   // 刷新前清理目录缓存，确保显示与实际文件状态一致
   try { hasDocCache.clear(); hasDocPending.clear() } catch {}
+  try { state.parentOf.clear(); state.nameByPath.clear() } catch {}
   await renderRoot(root)
 
-    // 设置文件监听（如果还未设置或根目录改变了）
-    if (!state.watching) {
-      try {
-        const u = await watch(root, async (event) => {
-          if (!isRelevantWatchEvent(event)) return
-          scheduleRefreshTreeFromWatch()
-        }, { recursive: true, delayMs: 250 } as any)
-        state.unwatch = () => { try { u(); } catch {} }
-        state.watching = true
-        console.log('[文件树] 已启动文件监听:', root)
-      } catch (err) {
-        console.error('[文件树] 启动文件监听失败:', err)
-        console.log('[文件树] 注意: 文件系统监听不可用，需要手动刷新或使用插件提供的刷新功能')
-        // 监听失败时不要把 watching 置为 true，保持为 false，方便后续 refresh() 重试
-        state.watching = false
-        resetWatchRefreshScheduler()
-      }
+  // 设置文件监听（如果还未设置或根目录改变了）
+  // SAF(content://) 不支持文件系统监听：跳过即可
+  if (!state.watching && !isContentUriPath(root)) {
+    try {
+      const u = await watch(root, async (event) => {
+        if (!isRelevantWatchEvent(event)) return
+        scheduleRefreshTreeFromWatch()
+      }, { recursive: true, delayMs: 250 } as any)
+      state.unwatch = () => { try { u(); } catch {} }
+      state.watching = true
+      console.log('[文件树] 已启动文件监听:', root)
+    } catch (err) {
+      console.error('[文件树] 启动文件监听失败:', err)
+      console.log('[文件树] 注意: 文件系统监听不可用，需要手动刷新或使用插件提供的刷新功能')
+      // 监听失败时不要把 watching 置为 true，保持为 false，方便后续 refresh() 重试
+      state.watching = false
+      resetWatchRefreshScheduler()
     }
   }
+}
 
 async function init(container: HTMLElement, opts: FileTreeOptions) {
   state.container = container; state.opts = opts
