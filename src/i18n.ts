@@ -58,6 +58,14 @@ const dict = {
     'menu.theme': '主题',
     'menu.plugins.tooltip': '扩展插件菜单',
     'menu.theme.tooltip': '主题设置',
+
+    // 移动端：选区工具条
+    'mst.bold': '加粗',
+    'mst.italic': '斜体',
+    'mst.link': '链接',
+    'mst.copy': '复制',
+    'mst.copied': '已复制',
+    'mst.copyFail': '复制失败',
     'theme.panel.title': '主题设置',
     'theme.panel.close': '关闭',
     'theme.focusMode': '专注模式',
@@ -450,6 +458,14 @@ const dict = {
     'menu.theme': 'Theme',
     'menu.plugins.tooltip': 'Plugin menu',
     'menu.theme.tooltip': 'Theme settings',
+
+    // Mobile: selection toolbar
+    'mst.bold': 'Bold',
+    'mst.italic': 'Italic',
+    'mst.link': 'Link',
+    'mst.copy': 'Copy',
+    'mst.copied': 'Copied',
+    'mst.copyFail': 'Copy failed',
     'theme.panel.title': 'Theme Settings',
     'theme.panel.close': 'Close',
     'theme.focusMode': 'Focus mode',

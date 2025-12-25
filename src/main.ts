@@ -53,6 +53,7 @@ import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } fr
 import type { InstallableItem } from './extensions/market'
 import { isSupportedDoc, listDirOnce, type LibEntry } from './core/libraryFs'
 import { normSep, isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe } from './core/fsSafe'
+import { initMobileSelectionToolbar } from './mobileSelectionToolbar'
 import { getLibrarySort, setLibrarySort, type LibSortMode } from './core/librarySort'
 import { searchLibraryFilesByName, type LibrarySearchResult } from './core/librarySearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
@@ -6977,6 +6978,26 @@ function applyI18nUi() {
 }
 
 function bindEvents() {
+  // 移动端：选区工具条（仅在选中时显示）
+  try {
+    initMobileSelectionToolbar({
+      enabled: () => {
+        try {
+          if (document.body.classList.contains('platform-mobile')) return true
+          return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+        } catch {
+          return false
+        }
+      },
+      isReadingMode: () => mode === 'preview',
+      getEditor: () => editor,
+      getWysiwygRoot: () => document.getElementById('md-wysiwyg-root') as HTMLElement | null,
+      onBold: () => formatBold(),
+      onItalic: () => formatItalic(),
+      onLink: () => insertLink(),
+      notice: (msg, level, ms) => pluginNotice(msg, level as any, ms as any),
+    })
+  } catch {}
   try { ensureEditorKeyHooksBound() } catch {}
 // 全局：确保编辑器键盘钩子仅绑定一次（切换文档/重开窗也生效）
   function ensureEditorKeyHooksBound() {
