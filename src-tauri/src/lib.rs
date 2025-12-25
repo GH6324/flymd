@@ -1926,6 +1926,18 @@ mod android_saf {
     JavaVM,
   };
 
+  fn clear_java_exception<'local>(env: &mut jni::JNIEnv<'local>) {
+    // Android/JNI：Java 侧抛异常后，如果不清理，后续 JNI 调用/线程 detach 可能直接触发致命崩溃。
+    // 这里选择“清理 +（仅 debug）输出”，避免线上用户无故闪退。
+    if let Ok(true) = env.exception_check() {
+      #[cfg(debug_assertions)]
+      {
+        let _ = env.exception_describe();
+      }
+      let _ = env.exception_clear();
+    }
+  }
+
   fn new_string_array<'local>(
     env: &mut jni::JNIEnv<'local>,
     values: &[&str],
@@ -2046,8 +2058,14 @@ mod android_saf {
         "(Landroid/net/Uri;)Ljava/lang/String;",
         &[JValue::from(uri)],
       )
-      .map_err(|e| format!("DocumentsContract.getTreeDocumentId 失败: {e}"))?;
-    jstring_to_string(env, v.l().map_err(|e| format!("getTreeDocumentId 返回类型异常: {e}"))?)
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("DocumentsContract.getTreeDocumentId 失败: {e}")
+      })?;
+    jstring_to_string(env, v.l().map_err(|e| {
+      clear_java_exception(env);
+      format!("getTreeDocumentId 返回类型异常: {e}")
+    })?)
   }
 
   fn get_doc_id<'local>(
@@ -2062,8 +2080,14 @@ mod android_saf {
         "(Landroid/net/Uri;)Ljava/lang/String;",
         &[JValue::from(uri)],
       )
-      .map_err(|e| format!("DocumentsContract.getDocumentId 失败: {e}"))?;
-    jstring_to_string(env, v.l().map_err(|e| format!("getDocumentId 返回类型异常: {e}"))?)
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("DocumentsContract.getDocumentId 失败: {e}")
+      })?;
+    jstring_to_string(env, v.l().map_err(|e| {
+      clear_java_exception(env);
+      format!("getDocumentId 返回类型异常: {e}")
+    })?)
   }
 
   fn build_tree_uri<'local>(
@@ -2085,9 +2109,15 @@ mod android_saf {
         "(Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;",
         &[JValue::from(&j_authority), JValue::from(&j_doc_id)],
       )
-      .map_err(|e| format!("DocumentsContract.buildTreeDocumentUri 失败: {e}"))?;
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("DocumentsContract.buildTreeDocumentUri 失败: {e}")
+      })?;
     v.l()
-      .map_err(|e| format!("buildTreeDocumentUri 返回类型异常: {e}"))
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("buildTreeDocumentUri 返回类型异常: {e}")
+      })
   }
 
   fn build_doc_uri_using_tree<'local>(
@@ -2106,9 +2136,15 @@ mod android_saf {
         "(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
         &[JValue::from(tree_uri), JValue::from(&j_doc_id)],
       )
-      .map_err(|e| format!("DocumentsContract.buildDocumentUriUsingTree 失败: {e}"))?;
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("DocumentsContract.buildDocumentUriUsingTree 失败: {e}")
+      })?;
     v.l()
-      .map_err(|e| format!("buildDocumentUriUsingTree 返回类型异常: {e}"))
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("buildDocumentUriUsingTree 返回类型异常: {e}")
+      })
   }
 
   fn build_children_uri_using_tree<'local>(
@@ -2127,9 +2163,15 @@ mod android_saf {
         "(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
         &[JValue::from(tree_uri), JValue::from(&j_doc_id)],
       )
-      .map_err(|e| format!("DocumentsContract.buildChildDocumentsUriUsingTree 失败: {e}"))?;
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("DocumentsContract.buildChildDocumentsUriUsingTree 失败: {e}")
+      })?;
     v.l()
-      .map_err(|e| format!("buildChildDocumentsUriUsingTree 返回类型异常: {e}"))
+      .map_err(|e| {
+        clear_java_exception(env);
+        format!("buildChildDocumentsUriUsingTree 返回类型异常: {e}")
+      })
   }
 
   pub fn persist_uri_permission(uri: &str) -> Result<(), String> {
@@ -2139,14 +2181,18 @@ mod android_saf {
 
       // Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
       let flags: jint = 3;
-      env
-        .call_method(
-          &resolver,
-          "takePersistableUriPermission",
-          "(Landroid/net/Uri;I)V",
-          &[JValue::from(&uri_obj), JValue::Int(flags)],
-        )
-        .map_err(|e| format!("takePersistableUriPermission 失败: {e}"))?;
+      match env.call_method(
+        &resolver,
+        "takePersistableUriPermission",
+        "(Landroid/net/Uri;I)V",
+        &[JValue::from(&uri_obj), JValue::Int(flags)],
+      ) {
+        Ok(_) => {}
+        Err(e) => {
+          clear_java_exception(env);
+          return Err(format!("takePersistableUriPermission 失败: {e}"));
+        }
+      }
       Ok(())
     })
   }
@@ -2163,9 +2209,15 @@ mod android_saf {
           "(Landroid/net/Uri;)Ljava/io/InputStream;",
           &[JValue::from(&uri_obj)],
         )
-        .map_err(|e| format!("openInputStream 失败: {e}"))?
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("openInputStream 失败: {e}")
+        })?
         .l()
-        .map_err(|e| format!("openInputStream 返回类型异常: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("openInputStream 返回类型异常: {e}")
+        })?;
 
       if input.is_null() {
         return Err("openInputStream 返回 null（可能没有权限或 URI 无效）".into());
@@ -2180,16 +2232,25 @@ mod android_saf {
       loop {
         let n = env
           .call_method(&input, "read", "([B)I", &[JValue::from(&jbuf)])
-          .map_err(|e| format!("InputStream.read 失败: {e}"))?
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("InputStream.read 失败: {e}")
+          })?
           .i()
-          .map_err(|e| format!("InputStream.read 返回类型异常: {e}"))?;
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("InputStream.read 返回类型异常: {e}")
+          })?;
         if n <= 0 {
           break;
         }
         let mut chunk = vec![0i8; n as usize];
         env
           .get_byte_array_region(&jbuf, 0, &mut chunk)
-          .map_err(|e| format!("GetByteArrayRegion 失败: {e}"))?;
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("GetByteArrayRegion 失败: {e}")
+          })?;
         out.extend(chunk.into_iter().map(|b| b as u8));
       }
 
@@ -2248,7 +2309,7 @@ mod android_saf {
           .map_err(|e| format!("openOutputStream 返回类型异常: {e}"))?,
         Err(e) => {
           // 若出现 Java 异常，必须清理后才能继续 JNI 调用
-          let _ = env.exception_clear();
+          clear_java_exception(env);
           let v = env
             .call_method(
               &resolver,
@@ -2256,8 +2317,14 @@ mod android_saf {
               "(Landroid/net/Uri;)Ljava/io/OutputStream;",
               &[JValue::from(&uri_obj)],
             )
-            .map_err(|e2| format!("openOutputStream 失败: {e}; fallback 也失败: {e2}"))?;
-          v.l().map_err(|e2| format!("openOutputStream fallback 返回类型异常: {e2}"))?
+            .map_err(|e2| {
+              clear_java_exception(env);
+              format!("openOutputStream 失败: {e}; fallback 也失败: {e2}")
+            })?;
+          v.l().map_err(|e2| {
+            clear_java_exception(env);
+            format!("openOutputStream fallback 返回类型异常: {e2}")
+          })?
         }
       };
 
@@ -2270,7 +2337,10 @@ mod android_saf {
         .map_err(|e| format!("byte_array_from_slice 失败: {e}"))?;
       env
         .call_method(&out, "write", "([B)V", &[JValue::from(&bytes)])
-        .map_err(|e| format!("OutputStream.write 失败: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("OutputStream.write 失败: {e}")
+        })?;
       let _ = env.call_method(&out, "flush", "()V", &[]);
       let _ = env.call_method(&out, "close", "()V", &[]);
       Ok(())
@@ -2312,9 +2382,15 @@ mod android_saf {
             JValue::from(&null_obj),
           ],
         )
-        .map_err(|e| format!("ContentResolver.query 失败: {e}"))?
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("ContentResolver.query 失败: {e}")
+        })?
         .l()
-        .map_err(|e| format!("query 返回类型异常: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("query 返回类型异常: {e}")
+        })?;
 
       if cursor.is_null() {
         return Ok(Vec::new());
@@ -2327,19 +2403,37 @@ mod android_saf {
 
       let idx_doc = env
         .call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::from(&col_doc)])
-        .map_err(|e| format!("Cursor.getColumnIndex(document_id) 失败: {e}"))?
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("Cursor.getColumnIndex(document_id) 失败: {e}")
+        })?
         .i()
-        .map_err(|e| format!("getColumnIndex(document_id) 返回类型异常: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("getColumnIndex(document_id) 返回类型异常: {e}")
+        })?;
       let idx_name = env
         .call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::from(&col_name)])
-        .map_err(|e| format!("Cursor.getColumnIndex(display_name) 失败: {e}"))?
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("Cursor.getColumnIndex(display_name) 失败: {e}")
+        })?
         .i()
-        .map_err(|e| format!("getColumnIndex(display_name) 返回类型异常: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("getColumnIndex(display_name) 返回类型异常: {e}")
+        })?;
       let idx_mime = env
         .call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::from(&col_mime)])
-        .map_err(|e| format!("Cursor.getColumnIndex(mime_type) 失败: {e}"))?
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("Cursor.getColumnIndex(mime_type) 失败: {e}")
+        })?
         .i()
-        .map_err(|e| format!("getColumnIndex(mime_type) 返回类型异常: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("getColumnIndex(mime_type) 返回类型异常: {e}")
+        })?;
 
       if idx_doc < 0 || idx_name < 0 || idx_mime < 0 {
         let _ = env.call_method(&cursor, "close", "()V", &[]);
@@ -2352,18 +2446,30 @@ mod android_saf {
       loop {
         let has_next = env
           .call_method(&cursor, "moveToNext", "()Z", &[])
-          .map_err(|e| format!("Cursor.moveToNext 失败: {e}"))?
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("Cursor.moveToNext 失败: {e}")
+          })?
           .z()
-          .map_err(|e| format!("moveToNext 返回类型异常: {e}"))?;
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("moveToNext 返回类型异常: {e}")
+          })?;
         if !has_next {
           break;
         }
 
         let doc_id_obj = env
           .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValue::Int(idx_doc)])
-          .map_err(|e| format!("Cursor.getString(document_id) 失败: {e}"))?
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("Cursor.getString(document_id) 失败: {e}")
+          })?
           .l()
-          .map_err(|e| format!("getString(document_id) 返回类型异常: {e}"))?;
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("getString(document_id) 返回类型异常: {e}")
+          })?;
         let child_doc_id = jstring_to_string(env, doc_id_obj)?;
         if child_doc_id.is_empty() {
           continue;
@@ -2371,9 +2477,15 @@ mod android_saf {
 
         let name_obj = env
           .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValue::Int(idx_name)])
-          .map_err(|e| format!("Cursor.getString(display_name) 失败: {e}"))?
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("Cursor.getString(display_name) 失败: {e}")
+          })?
           .l()
-          .map_err(|e| format!("getString(display_name) 返回类型异常: {e}"))?;
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("getString(display_name) 返回类型异常: {e}")
+          })?;
         let mut name = jstring_to_string(env, name_obj)?;
         if name.is_empty() {
           name = child_doc_id.clone();
@@ -2381,9 +2493,15 @@ mod android_saf {
 
         let mime_obj = env
           .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValue::Int(idx_mime)])
-          .map_err(|e| format!("Cursor.getString(mime_type) 失败: {e}"))?
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("Cursor.getString(mime_type) 失败: {e}")
+          })?
           .l()
-          .map_err(|e| format!("getString(mime_type) 返回类型异常: {e}"))?;
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("getString(mime_type) 返回类型异常: {e}")
+          })?;
         let mime = jstring_to_string(env, mime_obj)?;
         let is_dir = mime == mime_dir;
 
@@ -2439,11 +2557,17 @@ mod android_saf {
             JValue::from(&j_name),
           ],
         )
-        .map_err(|e| format!("DocumentsContract.createDocument 失败: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("DocumentsContract.createDocument 失败: {e}")
+        })?;
 
       let new_uri = v
         .l()
-        .map_err(|e| format!("createDocument 返回类型异常: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("createDocument 返回类型异常: {e}")
+        })?;
       if new_uri.is_null() {
         return Err("createDocument 返回 null（可能没有写权限或 provider 不支持）".into());
       }
@@ -2476,9 +2600,15 @@ mod android_saf {
           "(Landroid/content/ContentResolver;Landroid/net/Uri;)Z",
           &[JValue::from(&resolver), JValue::from(&doc_uri)],
         )
-        .map_err(|e| format!("DocumentsContract.deleteDocument 失败: {e}"))?
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("DocumentsContract.deleteDocument 失败: {e}")
+        })?
         .z()
-        .map_err(|e| format!("deleteDocument 返回类型异常: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("deleteDocument 返回类型异常: {e}")
+        })?;
       if !ok {
         return Err("deleteDocument 返回 false（可能 provider 不支持删除）".into());
       }
@@ -2514,10 +2644,16 @@ mod android_saf {
           "(Landroid/content/ContentResolver;Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
           &[JValue::from(&resolver), JValue::from(&doc_uri), JValue::from(&j_new)],
         )
-        .map_err(|e| format!("DocumentsContract.renameDocument 失败: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("DocumentsContract.renameDocument 失败: {e}")
+        })?;
       let new_uri = v
         .l()
-        .map_err(|e| format!("renameDocument 返回类型异常: {e}"))?;
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("renameDocument 返回类型异常: {e}")
+        })?;
       if new_uri.is_null() {
         // 部分 provider 可能返回 null，语义上仍然当作成功
         return uri_to_string(env, &doc_uri);

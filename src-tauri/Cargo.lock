@@ -1626,6 +1626,8 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
+ "jni",
+ "ndk-context",
  "percent-encoding",
  "reqwest",
  "serde",

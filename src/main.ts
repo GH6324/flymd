@@ -15,7 +15,7 @@ import { t, fmtStatus, getLocalePref, setLocalePref, getLocale, tLocale } from '
 import type MarkdownIt from 'markdown-it'
 import type { LocalePref } from './i18n'
 // WYSIWYG: 锚点插件与锚点同步（用于替换纯比例同步）
-import { enableWysiwygV2, disableWysiwygV2, wysiwygV2ToggleBold, wysiwygV2ToggleItalic, wysiwygV2ApplyLink, wysiwygV2GetSelectedText, wysiwygV2FindNext, wysiwygV2FindPrev, wysiwygV2ReplaceOne as wysiwygV2ReplaceOneSel, wysiwygV2ReplaceAllInDoc, wysiwygV2ReplaceAll } from './wysiwyg/v2/index'
+import { enableWysiwygV2, disableWysiwygV2, wysiwygV2ToggleBold, wysiwygV2ToggleItalic, wysiwygV2ApplyLink, wysiwygV2InsertImage, wysiwygV2ToggleBulletList, wysiwygV2ApplyHeading, wysiwygV2GetSelectedText, wysiwygV2FindNext, wysiwygV2FindPrev, wysiwygV2ReplaceOne as wysiwygV2ReplaceOneSel, wysiwygV2ReplaceAllInDoc, wysiwygV2ReplaceAll } from './wysiwyg/v2/index'
 // Tauri 插件（v2）
 // Tauri 对话框：使用 ask 提供原生确认，避免浏览器 confirm 在关闭事件中失效
 import { open, save, ask } from '@tauri-apps/plugin-dialog'
@@ -53,7 +53,7 @@ import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } fr
 import type { InstallableItem } from './extensions/market'
 import { isSupportedDoc, listDirOnce, type LibEntry } from './core/libraryFs'
 import { normSep, isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe } from './core/fsSafe'
-import { initMobileSelectionToolbar } from './mobileSelectionToolbar'
+import { initBuiltInFloatingToolbar } from './mobileFloatingToolbarBuiltIn'
 import { getLibrarySort, setLibrarySort, type LibSortMode } from './core/librarySort'
 import { searchLibraryFilesByName, type LibrarySearchResult } from './core/librarySearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
@@ -6978,24 +6978,38 @@ function applyI18nUi() {
 }
 
 function bindEvents() {
-  // 移动端：选区工具条（仅在选中时显示）
+  // 移动端：内置“悬浮工具条”（照搬 floating-toolbar 插件，只在选中时出现）
   try {
-    initMobileSelectionToolbar({
+    initBuiltInFloatingToolbar({
       enabled: () => {
-        try {
-          if (document.body.classList.contains('platform-mobile')) return true
-          return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
-        } catch {
-          return false
-        }
+        try { return document.body.classList.contains('platform-mobile') } catch { return false }
       },
       isReadingMode: () => mode === 'preview',
       getEditor: () => editor,
-      getWysiwygRoot: () => document.getElementById('md-wysiwyg-root') as HTMLElement | null,
-      onBold: () => formatBold(),
-      onItalic: () => formatItalic(),
-      onLink: () => insertLink(),
-      notice: (msg, level, ms) => pluginNotice(msg, level as any, ms as any),
+      isWysiwygActive: () => !!wysiwygV2Active,
+      getDoc: () => editor.value,
+      setDoc: (next) => {
+        try {
+          editor.value = String(next ?? '')
+          dirty = true
+          refreshTitle()
+          refreshStatus()
+          // 触发既有 input 监听，确保预览/分屏同步
+          try { editor.dispatchEvent(new Event('input', { bubbles: true })) } catch {}
+        } catch {}
+      },
+      notice: (msg, level, ms) => pluginNotice(String(msg || ''), level as any, ms as any),
+      wysiwyg: {
+        applyHeading: (lv) => wysiwygV2ApplyHeading(lv),
+        toggleBold: () => wysiwygV2ToggleBold(),
+        toggleItalic: () => wysiwygV2ToggleItalic(),
+        toggleBulletList: () => wysiwygV2ToggleBulletList(),
+        applyLink: (url, label) => wysiwygV2ApplyLink(url, label),
+        insertImage: (src, alt) => wysiwygV2InsertImage(src, alt),
+        getSelectedText: () => {
+          try { return wysiwygV2GetSelectedText() } catch { return '' }
+        },
+      },
     })
   } catch {}
   try { ensureEditorKeyHooksBound() } catch {}

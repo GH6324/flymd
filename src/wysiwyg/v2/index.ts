@@ -2120,6 +2120,73 @@ export async function wysiwygV2ApplyLink(href: string, labelOrTitle?: string, ma
   })
 }
 
+// =============== 所见模式内编辑快捷：标题 / 无序列表 / 图片 ===============
+export async function wysiwygV2ApplyHeading(level: number) {
+  if (!_editor) return
+  const { wrapInHeadingCommand } = await import('@milkdown/preset-commonmark')
+  const lv = Math.max(1, Math.min(6, (level | 0) || 1))
+  await _editor.action((ctx) => {
+    const commands = ctx.get(commandsCtx)
+    const view = ctx.get(editorViewCtx)
+    const { state } = view
+    const hadRange = !state.selection.empty
+    commands.call((wrapInHeadingCommand as any).key, lv)
+    if (hadRange) {
+      try {
+        const st2 = view.state
+        const pos = st2.selection.to >>> 0
+        const safePos = Math.max(0, Math.min(st2.doc.content.size, pos))
+        let tr = st2.tr.setSelection(TextSelection.create(st2.doc, safePos))
+        try { (tr as any).setStoredMarks([]) } catch {}
+        view.dispatch(tr.scrollIntoView())
+      } catch {}
+    }
+  })
+}
+
+export async function wysiwygV2ToggleBulletList() {
+  if (!_editor) return
+  const { wrapInBulletListCommand } = await import('@milkdown/preset-commonmark')
+  await _editor.action((ctx) => {
+    const commands = ctx.get(commandsCtx)
+    const view = ctx.get(editorViewCtx)
+    const { state } = view
+    const hadRange = !state.selection.empty
+    commands.call((wrapInBulletListCommand as any).key)
+    if (hadRange) {
+      try {
+        const st2 = view.state
+        const pos = st2.selection.to >>> 0
+        const safePos = Math.max(0, Math.min(st2.doc.content.size, pos))
+        let tr = st2.tr.setSelection(TextSelection.create(st2.doc, safePos))
+        try { (tr as any).setStoredMarks([]) } catch {}
+        view.dispatch(tr.scrollIntoView())
+      } catch {}
+    }
+  })
+}
+
+export async function wysiwygV2InsertImage(src: string, alt?: string) {
+  if (!_editor) return
+  const u = String(src || '').trim()
+  if (!u) return
+  const { insertImageCommand } = await import('@milkdown/preset-commonmark')
+  await _editor.action((ctx) => {
+    const commands = ctx.get(commandsCtx)
+    const view = ctx.get(editorViewCtx)
+    const { state } = view
+    commands.call((insertImageCommand as any).key, { src: u, alt: String(alt || '') })
+    try {
+      const st2 = view.state
+      const pos = st2.selection.to >>> 0
+      const safePos = Math.max(0, Math.min(st2.doc.content.size, pos))
+      let tr = st2.tr.setSelection(TextSelection.create(st2.doc, safePos))
+      try { (tr as any).setStoredMarks([]) } catch {}
+      view.dispatch(tr.scrollIntoView())
+    } catch {}
+  })
+}
+
 // 获取当前选中的文本
 export function wysiwygV2GetSelectedText(): string {
   if (!_editor) return ''
