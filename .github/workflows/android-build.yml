@@ -211,7 +211,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flymd-android-bundle
-          path: src-tauri/gen/android/app/build/outputs/bundle/**/release/*.aab
+          # Gradle 的 AAB 输出目录为 outputs/bundle/<variant>/，例如：bundle/universalRelease/app-universal-release.aab
+          # 这里用更宽松的 glob，避免因变体目录命名（universalRelease 等）导致匹配不到产物。
+          path: src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
           if-no-files-found: warn
 
       - name: 失败时结束（保持 CI 红灯）
@@ -224,7 +226,7 @@ jobs:
         with:
           files: |
             src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/**/release/*.aab
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
           draft: true
           generate_release_notes: true
         env:

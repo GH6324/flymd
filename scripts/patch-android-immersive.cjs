@@ -41,13 +41,101 @@ function findMainActivityKotlin(projectRoot) {
 function patchMainActivity(filePath) {
   const original = fs.readFileSync(filePath, 'utf8')
   const hasImmersive = original.includes('flymd:immersive-fullscreen-v2')
-  const hasFolderPicker = original.includes('flymd:saf-folder-picker-v1')
-  if (hasImmersive && hasFolderPicker) {
-    console.log(`[patch-android-immersive] 已打过补丁(v2)，跳过: ${filePath}`)
-    return true
-  }
+  // SAF folder picker：兼容 v1/v2 标记
+  const hasFolderPicker = original.includes('flymd:saf-folder-picker-v1') || original.includes('flymd:saf-folder-picker-v2')
+  const hasFlymdPickFolder = /fun\s+flymdPickFolder\s*\(/.test(original)
 
   let content = original
+
+  function findMatchingBrace(s, openIdx) {
+    let depth = 0
+    for (let i = openIdx; i < s.length; i += 1) {
+      const ch = s[i]
+      if (ch === '{') depth += 1
+      else if (ch === '}') {
+        depth -= 1
+        if (depth === 0) return i
+      }
+    }
+    return -1
+  }
+
+  function parseParamNames(paramList) {
+    try {
+      const parts = String(paramList || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+      const out = []
+      for (const p of parts) {
+        const name = (p.split(':')[0] || '').trim()
+        if (name) out.push(name)
+      }
+      return out
+    } catch {
+      return []
+    }
+  }
+
+  function ensureKeepNearFun(funName) {
+    try {
+      const re = new RegExp(`^(\\s*)(override\\s+)?fun\\s+${funName}\\b`, 'm')
+      const m = content.match(re)
+      if (!m || m.index == null) return
+      const idx = m.index
+      const indent = m[1] || ''
+      // 只检查函数定义前最近几行，避免误判别处 @Keep
+      const head = content.slice(0, idx)
+      const prev = head.split(/\r?\n/).slice(-6).join('\n')
+      if (prev.includes('@androidx.annotation.Keep')) return
+      content = content.slice(0, idx) + `${indent}@androidx.annotation.Keep\n` + content.slice(idx)
+    } catch {}
+  }
+
+  function injectFolderPickerHookIntoExistingOnActivityResult() {
+    if (content.includes('flymd:saf-folder-picker-hook-v1')) return false
+    const m = content.match(/^(\s*)override\s+fun\s+onActivityResult\s*\(([^)]*)\)\s*\{/m)
+    if (!m || m.index == null) return false
+    const indent = m[1] || ''
+    const params = m[2] || ''
+    const openIdx = (m.index + m[0].length) - 1 // '{'
+    const closeIdx = findMatchingBrace(content, openIdx)
+    if (openIdx < 0 || closeIdx < 0) return false
+
+    const names = parseParamNames(params)
+    const reqName = names[0] || 'requestCode'
+    const resName = names[1] || 'resultCode'
+    const dataName = names[2] || 'data'
+    const bodyIndent = indent + '  '
+
+    const hook = `
+${bodyIndent}// flymd:saf-folder-picker-hook-v1
+${bodyIndent}if (${reqName} == flymdFolderPickerReqCode) {
+${bodyIndent}  synchronized(flymdFolderPickerLock) {
+${bodyIndent}    if (${resName} != android.app.Activity.RESULT_OK) {
+${bodyIndent}      flymdFolderPickerError = "canceled"
+${bodyIndent}      flymdFolderPickerDone = true
+${bodyIndent}      flymdFolderPickerLock.notifyAll()
+${bodyIndent}      return
+${bodyIndent}    }
+${bodyIndent}    val uri = ${dataName}?.data
+${bodyIndent}    if (uri == null) {
+${bodyIndent}      flymdFolderPickerError = "empty uri"
+${bodyIndent}      flymdFolderPickerDone = true
+${bodyIndent}      flymdFolderPickerLock.notifyAll()
+${bodyIndent}      return
+${bodyIndent}    }
+${bodyIndent}    flymdFolderPickerResult = uri.toString()
+${bodyIndent}    flymdFolderPickerDone = true
+${bodyIndent}    flymdFolderPickerLock.notifyAll()
+${bodyIndent}    return
+${bodyIndent}  }
+${bodyIndent}}
+`
+    const insertPos = openIdx + 1
+    content = content.slice(0, insertPos) + hook + content.slice(insertPos)
+    return true
+  }
 
   const mainClassLine = content.match(/^(\s*class\s+MainActivity\b[^\n]*)$/m)?.[1]
   if (!mainClassLine) {
@@ -130,18 +218,26 @@ ${hasOnWindowFocusChanged ? '' : `
 `)
   }
 
-  if (!hasFolderPicker) {
-    if (hasOnActivityResult) {
-      console.warn(`[patch-android-immersive] MainActivity 已存在 onActivityResult，暂不注入 SAF folder picker（需要手工合并）: ${filePath}`)
-    } else {
-      blocks.push(`
-  // flymd:saf-folder-picker-v1
+  // SAF folder picker：release 场景下也要可用（避免因模板已存在 onActivityResult 而跳过注入）
+  // 1) 如果已有 onActivityResult，则往现有方法里打 hook；2) 如果没有，则注入 override；3) 统一确保 flymdPickFolder 存在。
+  const needFolderPickerCore = !/fun\s+flymdPickFolder\s*\(/.test(content)
+  const needFolderPickerHook = hasOnActivityResult && !content.includes('flymd:saf-folder-picker-hook-v1')
+  if (needFolderPickerHook) {
+    const hooked = injectFolderPickerHookIntoExistingOnActivityResult()
+    if (!hooked) {
+      console.warn(`[patch-android-immersive] 注入 SAF hook 失败（未找到 onActivityResult 方法体），后续可能无法接收目录选择结果: ${filePath}`)
+    }
+  }
+  if (needFolderPickerCore) {
+    blocks.push(`
+  // flymd:saf-folder-picker-v2
   private val flymdFolderPickerLock = java.lang.Object()
   @Volatile private var flymdFolderPickerDone: Boolean = false
   @Volatile private var flymdFolderPickerResult: String? = null
   @Volatile private var flymdFolderPickerError: String? = null
   private val flymdFolderPickerReqCode: Int = 61706
 
+  @androidx.annotation.Keep
   @Suppress("DEPRECATION")
   fun flymdPickFolder(timeoutMs: Long): String {
     synchronized(flymdFolderPickerLock) {
@@ -184,8 +280,11 @@ ${hasOnWindowFocusChanged ? '' : `
     }
   }
 
+${hasOnActivityResult ? '' : `
+  @androidx.annotation.Keep
   @Suppress("DEPRECATION")
   override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+    // flymd:saf-folder-picker-hook-v1
     super.onActivityResult(requestCode, resultCode, data)
     if (requestCode != flymdFolderPickerReqCode) return
     synchronized(flymdFolderPickerLock) {
@@ -206,29 +305,38 @@ ${hasOnWindowFocusChanged ? '' : `
       flymdFolderPickerDone = true
       flymdFolderPickerLock.notifyAll()
     }
-  }
+  }`}
 `)
-    }
   }
 
-  if (!blocks.length) {
+  // 兜底：如果文件里已有 v1/v2 folder picker，但未标记 @Keep，则补上，防止 release 混淆/裁剪导致 JNI 找不到方法
+  if (hasFolderPicker || hasFlymdPickFolder) {
+    ensureKeepNearFun('flymdPickFolder')
+    // 仅在我们已打过 hook 时，才尝试给 onActivityResult 加 Keep（避免误改用户自定义方法）
+    if (content.includes('flymd:saf-folder-picker-hook-v1')) ensureKeepNearFun('onActivityResult')
+  }
+
+  const mutatedBeforeBlocks = content !== original
+  if (!blocks.length && !mutatedBeforeBlocks) {
     console.warn(`[patch-android-immersive] 没有需要写入的补丁内容，跳过: ${filePath}`)
     return true
   }
 
   const patchBlock = blocks.join('\n')
 
-  if (!classHasBody) {
-    // 我们刚把 MainActivity 从一行 class 补成了 `{`，现在补上内容与结尾 `}`
-    content = `${content.trimEnd()}\n${patchBlock}\n}\n`
-  } else {
-    // 简单定位最后一个顶层 '}' 作为 class 结束符插入点（模板 MainActivity 通常只有一个顶层 class）
-    const idx = content.lastIndexOf('}')
-    if (idx < 0) {
-      console.warn(`[patch-android-immersive] 未找到类结束符 '}'，跳过: ${filePath}`)
-      return false
+  if (blocks.length) {
+    if (!classHasBody) {
+      // 我们刚把 MainActivity 从一行 class 补成了 `{`，现在补上内容与结尾 `}`
+      content = `${content.trimEnd()}\n${patchBlock}\n}\n`
+    } else {
+      // 简单定位最后一个顶层 '}' 作为 class 结束符插入点（模板 MainActivity 通常只有一个顶层 class）
+      const idx = content.lastIndexOf('}')
+      if (idx < 0) {
+        console.warn(`[patch-android-immersive] 未找到类结束符 '}'，跳过: ${filePath}`)
+        return false
+      }
+      content = content.slice(0, idx) + patchBlock + '\n}\n'
     }
-    content = content.slice(0, idx) + patchBlock + '\n}\n'
   }
 
   fs.writeFileSync(filePath, content, 'utf8')

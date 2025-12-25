@@ -2087,6 +2087,22 @@ mod android_saf {
     }
   }
 
+  fn take_java_exception_string<'local>(env: &mut jni::JNIEnv<'local>) -> Option<String> {
+    // 说明：当 JNI 调用返回 JavaException 时，直接 stringify 只会得到 “Java exception was thrown”，
+    // 这对线上排障几乎没用；这里把 Throwable.toString() 抽出来，作为错误信息返回给前端。
+    if let Ok(true) = env.exception_check() {
+      let throwable = env.exception_occurred().ok()?;
+      let _ = env.exception_clear();
+      let v = env.call_method(&throwable, "toString", "()Ljava/lang/String;", &[]).ok()?;
+      let obj = v.l().ok()?;
+      if obj.is_null() {
+        return None;
+      }
+      return jstring_to_string(env, obj).ok();
+    }
+    None
+  }
+
   fn new_string_array<'local>(
     env: &mut jni::JNIEnv<'local>,
     values: &[&str],
@@ -2430,6 +2446,14 @@ mod android_saf {
       ) {
         Ok(v) => v,
         Err(e) => {
+          let detail = take_java_exception_string(env).unwrap_or_default();
+          if !detail.is_empty() {
+            let mut msg = format!("flymdPickFolder 调用失败（Android 补丁/混淆/实现异常）: {detail}");
+            if detail.contains("NoSuchMethod") {
+              msg.push_str("（请确认已执行 Android patch：scripts/patch-android-immersive.cjs，并避免 release 混淆裁剪该方法）");
+            }
+            return Err(msg);
+          }
           let _ = env.exception_clear();
           return Err(format!("flymdPickFolder 调用失败（可能未打 Android patch）: {e}"));
         }
