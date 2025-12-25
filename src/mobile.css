@@ -8,6 +8,11 @@
     --mobile-titlebar-total-h: calc(var(--mobile-titlebar-h) + env(safe-area-inset-top));
   }
 
+  /* Android：部分 WebView/窗口配置下，页面已经被系统状态栏下移；再叠加 safe-area 会导致顶部留白过大 */
+  body.platform-android {
+    --mobile-titlebar-total-h: var(--mobile-titlebar-h);
+  }
+
   /* 隐藏桌面端文件库侧边栏，改为抽屉式 */
   #library {
     position: fixed !important;
@@ -177,6 +182,12 @@ body.platform-mobile #mobile-selection-toolbar .mst-btn:active {
     align-items: stretch !important;
     justify-content: flex-start !important;
     gap: 6px;
+  }
+
+  body.platform-android .titlebar {
+    padding-top: 0 !important;
+    height: var(--mobile-titlebar-total-h, var(--mobile-titlebar-h, 32px)) !important;
+    min-height: var(--mobile-titlebar-total-h, var(--mobile-titlebar-h, 32px)) !important;
   }
 
   body.platform-mobile .menubar {

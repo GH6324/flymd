@@ -6321,8 +6321,12 @@ async function pickLibraryRoot(): Promise<string | null> {
     // Android：不再直接让用户选“系统目录作为库”（Scoped Storage + SAF 目录遍历还没全量接入）。
     // 先用应用私有目录下的子文件夹作为库根目录：能浏览/搜索/编辑，并可用 WebDAV 与桌面共享库。
     try {
-      const p = await invoke<string>('get_platform')
-      if (p === 'android') {
+      const p = await (async () => {
+        try { return await invoke<string>('get_platform') } catch { return '' }
+      })()
+      const ua = String(navigator?.userAgent || '')
+      const isAndroid = p === 'android' || /Android/i.test(ua)
+      if (isAndroid) {
         // 选择库类型：外置（SAF）或本地（应用私有目录）
         // 注意：外置库如果误选到 Android/data 或 Android/obb 下，系统会在卸载时清空该目录（事故）
         const useSaf = await ask('是否选择外置文件夹作为库？\n确定：外置（SAF，不要选 Android/data/obb，否则卸载会删除）\n取消：本地（应用私有目录）')
@@ -6374,6 +6378,15 @@ async function pickLibraryRoot(): Promise<string | null> {
         await mkdir(root as any, { recursive: true } as any)
         await upsertLibrary({ id: `android-${Date.now()}`, name, root })
         return root
+      }
+    } catch {}
+
+    // 兜底：移动端不走桌面“选目录”弹窗（Android 需要走 SAF；iOS/其他移动端暂未实现）
+    try {
+      const ua = String(navigator?.userAgent || '')
+      if (/Android|iPhone|iPad|iPod|webOS|IEMobile|Opera Mini/i.test(ua)) {
+        alert('移动端不支持通过“系统目录选择”来新增库。\nAndroid 请使用“外置（SAF）/本地（应用私有目录）”方式创建库。')
+        return null
       }
     } catch {}
 

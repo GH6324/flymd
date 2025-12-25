@@ -21,6 +21,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { appLocalDataDir } from '@tauri-apps/api/path'
 import { getHttpClient } from './runtime'
 import type { InstalledPlugin } from './runtime'
+import { safPickFolder } from '../platform/androidSaf'
 import {
   watchPathsAbs,
   type PluginWatchEvent,
@@ -1719,6 +1720,31 @@ export function createPluginHost(
       },
       pickDirectory: async (opt?: { defaultPath?: string }) => {
         try {
+          const platform = await (async () => {
+            try { return await invoke<string>('get_platform') } catch { return '' }
+          })()
+          const ua = String(navigator?.userAgent || '')
+          const isAndroid = platform === 'android' || /Android/i.test(ua)
+          const isMobile = /Android|iPhone|iPad|iPod|webOS|IEMobile|Opera Mini/i.test(ua)
+
+          // Android：plugin-dialog 的“选文件夹”在移动端未实现，走 SAF
+          if (isAndroid) {
+            try {
+              const uri = await safPickFolder()
+              return uri ? String(uri) : ''
+            } catch (e) {
+              const msg = String((e as any)?.message || e || '')
+              if (/cancel/i.test(msg) || /canceled/i.test(msg) || /cancellation/i.test(msg)) return ''
+              throw e
+            }
+          }
+
+          // 其他移动端：暂不支持目录选择
+          if (isMobile) {
+            alert('移动端暂不支持选择目录，请在桌面端使用该功能。')
+            return ''
+          }
+
           if (typeof open !== 'function') {
             alert('目录选择功能需要在桌面版中使用')
             return ''
