@@ -88,6 +88,9 @@ jobs:
             npx tauri android init
           fi
 
+      - name: Android 补丁：同步 Launcher 图标
+        run: node scripts/patch-android-icons.cjs
+
       - name: Android 补丁：Gradle settings 兜底
         run: node scripts/patch-android-tauri-settings.cjs
 
