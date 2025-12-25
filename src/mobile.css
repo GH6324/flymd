@@ -5,12 +5,14 @@
   /* 移动端顶部栏高度：只比文字高一点，同时预留 safe-area */
   body.platform-mobile {
     --mobile-titlebar-h: 32px;
-    --mobile-titlebar-total-h: calc(var(--mobile-titlebar-h) + env(safe-area-inset-top));
+    --mobile-titlebar-pad-top: env(safe-area-inset-top);
+    --mobile-titlebar-total-h: calc(var(--mobile-titlebar-h) + var(--mobile-titlebar-pad-top));
   }
 
-  /* Android：部分 WebView/窗口配置下，页面已经被系统状态栏下移；再叠加 safe-area 会导致顶部留白过大 */
+  /* Android：部分 WebView/窗口配置下，页面已经被系统状态栏下移；避免叠加完整 safe-area，但仍保留一点点顶部留白 */
   body.platform-android {
-    --mobile-titlebar-total-h: var(--mobile-titlebar-h);
+    --mobile-titlebar-pad-top: 6px;
+    --mobile-titlebar-total-h: calc(var(--mobile-titlebar-h) + var(--mobile-titlebar-pad-top));
   }
 
   /* 隐藏桌面端文件库侧边栏，改为抽屉式 */
@@ -174,7 +176,7 @@ body.platform-mobile #mobile-selection-toolbar .mst-btn:active {
   body.platform-mobile .titlebar {
     box-sizing: border-box !important;
     /* 让内容避开刘海/摄像头区域（沉浸式全屏时很关键） */
-    padding-top: env(safe-area-inset-top) !important;
+    padding-top: var(--mobile-titlebar-pad-top, env(safe-area-inset-top)) !important;
     padding-left: env(safe-area-inset-left) !important;
     padding-right: env(safe-area-inset-right) !important;
     height: var(--mobile-titlebar-total-h, calc(36px + env(safe-area-inset-top))) !important;
@@ -185,7 +187,7 @@ body.platform-mobile #mobile-selection-toolbar .mst-btn:active {
   }
 
   body.platform-android .titlebar {
-    padding-top: 0 !important;
+    padding-top: var(--mobile-titlebar-pad-top, 6px) !important;
     height: var(--mobile-titlebar-total-h, var(--mobile-titlebar-h, 32px)) !important;
     min-height: var(--mobile-titlebar-total-h, var(--mobile-titlebar-h, 32px)) !important;
   }
@@ -238,6 +240,7 @@ body.platform-mobile #mobile-selection-toolbar .mst-btn:active {
 /* 左侧组：库 + 插件（在 menubar 内） */
 body.platform-mobile #btn-library {
   order: 1;
+  margin-left: 8px;
 }
 
 body.platform-mobile #btn-plugins {

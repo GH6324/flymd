@@ -1871,6 +1871,8 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
     let safRoot: string | null = null
     let safMirrorRoot: string | null = null
     let localRoot = activeRoot
+    // SAF：仅当同步过程中确实修改过 mirror（下载/恢复等写入）才需要导出回外置库
+    let safMirrorDirty = false
     if (isContentUriPath(String(activeRoot))) {
       safRoot = String(activeRoot)
       const libId = (await getActiveLibraryId()) || ('android-saf-' + (await hashProfileKey(safRoot)))
@@ -2383,6 +2385,7 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
             const dir = full.split(/\\|\//).slice(0, -1).join(localRoot.includes('\\') ? '\\' : '/')
             if (!(await exists(dir as any))) { try { await mkdir(dir as any, { recursive: true } as any) } catch {} }
             await writeFile(full as any, data as any)
+            if (safRoot && safMirrorRoot) safMirrorDirty = true
               // 记录到元数据
             const meta = await stat(full)
             const remote = remoteIdx.get(act.rel)
@@ -2411,6 +2414,7 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
             const dir = full.split(/\\|\//).slice(0, -1).join(localRoot.includes('\\') ? '\\' : '/')
             if (!(await exists(dir as any))) { try { await mkdir(dir as any, { recursive: true } as any) } catch {} }
             await writeFile(full as any, data as any)
+            if (safRoot && safMirrorRoot) safMirrorDirty = true
               await syncLog('[ok] download ' + act.rel)
             // 记录到元数据
             const meta = await stat(full)
@@ -2499,6 +2503,7 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
               const dir = full.split(/\\|\//).slice(0, -1).join(localRoot.includes('\\') ? '\\' : '/')
               if (!(await exists(dir as any))) { try { await mkdir(dir as any, { recursive: true } as any) } catch {} }
               await writeFile(full as any, data as any)
+              if (safRoot && safMirrorRoot) safMirrorDirty = true
                   await syncLog('[ok] recover ' + act.rel)
               // 记录到元数据
               const meta = await stat(full)
@@ -2630,8 +2635,8 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
       await syncLog('[save-hint] 已更新本地结构快照')
     } catch {}
 
-    // SAF：如果本次把远程内容下载到了镜像目录，则将结果导回外置库
-    if (safRoot && safMirrorRoot && down > 0) {
+    // SAF：如果本次确实修改了镜像目录（下载/恢复等写入），则将结果导回外置库
+    if (safRoot && safMirrorRoot && safMirrorDirty) {
       try {
         updateStatus('外置库：导出同步结果…')
         await syncLog('[saf] 开始导出到外置库: root=' + safRoot)
