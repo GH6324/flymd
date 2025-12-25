@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2025-12-17T00:00:00Z",
+  "updatedAt": "2025-12-25T00:00:00Z",
   "ttlSeconds": 3600,
   "items": [
     {
@@ -99,6 +99,18 @@
       "category": "发布/同步",
       "install": {
         "ref": "https://raw.githubusercontent.com/gerrampard/dinox-sync/main/manifest.json",
+        "type": "manifest"
+      }
+    },
+    {
+      "homepage": "https://github.com/gerrampard/flymd-wenyan-plugin",
+      "name": "微信公众号格式化",
+      "description": "将 Markdown 转换为微信公众号适配的美化格式，支持多种主题选择",
+      "author": "saimax",
+      "id": "flymd-wenyan",
+      "category": "发布/同步",
+      "install": {
+        "ref": "https://raw.githubusercontent.com/gerrampard/flymd-wenyan-plugin/main/manifest.json",
         "type": "manifest"
       }
     },
