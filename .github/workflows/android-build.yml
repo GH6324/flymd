@@ -142,7 +142,8 @@ jobs:
             exit 0
           fi
           OUT="$GITHUB_WORKSPACE/src-tauri/gen/android/app/flymd-release.jks"
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | tr -d '\n' | base64 -d > "$OUT"
+          # 去掉所有空白字符，避免复制 secrets 时夹带换行/空格导致解码失败
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | tr -d '\n\r\t ' | base64 -d > "$OUT"
           chmod 600 "$OUT" || true
           echo "KEYSTORE_PATH=$OUT" >> "$GITHUB_ENV"
 
