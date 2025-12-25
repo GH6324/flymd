@@ -452,14 +452,25 @@ export function createPluginHost(
         const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
         const label =
           'ai-assistant-' + Math.random().toString(36).slice(2, 8)
+        const isMobileUi = (() => {
+          try {
+            if (document?.body?.classList?.contains('platform-mobile')) return true
+            return Number(window?.innerWidth || 0) > 0 && Number(window?.innerWidth || 0) <= 768
+          } catch {
+            return false
+          }
+        })()
+        const vw = Math.max(320, Math.round(Number(window?.innerWidth || 0) || 360))
+        const vh = Math.max(360, Math.round(Number(window?.innerHeight || 0) || 640))
         // 独立 AI 窗口，仅供 AI 助手插件使用
         // 这里完全保持原有行为
         // eslint-disable-next-line no-new
         new WebviewWindow(label, {
           url: 'index.html#ai-assistant',
-          width: 860,
-          height: 640,
+          width: isMobileUi ? vw : 860,
+          height: isMobileUi ? vh : 640,
           title: 'AI 助手',
+          fullscreen: isMobileUi ? true : undefined,
         })
       } catch (e) {
         console.error('openAiWindow 失败', e)

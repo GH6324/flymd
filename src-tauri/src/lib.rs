@@ -986,6 +986,7 @@ pub fn run() {
       android_read_uri,
       android_write_uri,
       android_persist_uri_permission,
+      android_saf_pick_folder,
       android_saf_list_dir,
       android_saf_create_file,
       android_saf_create_dir,
@@ -1921,7 +1922,7 @@ async fn run_installer(path: String) -> Result<(), String> {
 mod android_saf {
   use jni::{
     objects::{JByteArray, JObject, JString, JValue},
-    sys::{jint, jobject, jsize},
+    sys::{jint, jlong, jobject, jsize},
     JavaVM,
   };
 
@@ -2176,6 +2177,36 @@ mod android_saf {
 
       let _ = env.call_method(&input, "close", "()V", &[]);
       Ok(String::from_utf8_lossy(&out).to_string())
+    })
+  }
+
+  pub fn pick_folder(timeout_ms: u64) -> Result<String, String> {
+    with_env(|env, activity| {
+      let t: jlong = if timeout_ms > i64::MAX as u64 {
+        i64::MAX as jlong
+      } else {
+        timeout_ms as jlong
+      };
+
+      let v = match env.call_method(
+        &activity,
+        "flymdPickFolder",
+        "(J)Ljava/lang/String;",
+        &[JValue::Long(t)],
+      ) {
+        Ok(v) => v,
+        Err(e) => {
+          let _ = env.exception_clear();
+          return Err(format!("flymdPickFolder 调用失败（可能未打 Android patch）: {e}"));
+        }
+      };
+      let obj = v
+        .l()
+        .map_err(|e| format!("flymdPickFolder 返回类型异常: {e}"))?;
+      if obj.is_null() {
+        return Err("flymdPickFolder 返回 null（用户取消或实现异常）".into());
+      }
+      jstring_to_string(env, obj)
     })
   }
 
@@ -2559,6 +2590,22 @@ async fn android_persist_uri_permission(uri: String) -> Result<(), String> {
   {
     let _ = uri;
     Err("android_persist_uri_permission only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_saf_pick_folder(timeout_ms: Option<u64>) -> Result<String, String> {
+  #[cfg(target_os = "android")]
+  {
+    let t = timeout_ms.unwrap_or(60_000);
+    return tauri::async_runtime::spawn_blocking(move || android_saf::pick_folder(t))
+      .await
+      .map_err(|e| format!("android_saf_pick_folder join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = timeout_ms;
+    Err("android_saf_pick_folder only available on Android".into())
   }
 }
 

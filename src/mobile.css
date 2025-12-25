@@ -372,6 +372,20 @@ body.platform-mobile .context-menu-label {
   white-space: normal !important;
 }
 
+/* ========== AI 助手（移动端：避免停靠左右把工作区挤没） ========== */
+body.platform-mobile #ai-assist-win.dock-left,
+body.platform-mobile #ai-assist-win.dock-right {
+  left: 0 !important;
+  right: 0 !important;
+  top: auto !important;
+  bottom: env(safe-area-inset-bottom) !important;
+  width: 100% !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-top: 1px solid #e5e7eb !important;
+  border-radius: 14px 14px 0 0 !important;
+}
+
 /* ========== 触摸滚动优化 ========== */
 @media (max-width: 768px) {
   #editor,
@@ -380,6 +394,70 @@ body.platform-mobile .context-menu-label {
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
   }
+}
+
+/* ========== 扩展面板（移动端） ========== */
+body.platform-mobile .ext-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+body.platform-mobile .ext-dialog {
+  width: calc(100vw - 16px) !important;
+  max-width: none !important;
+  height: calc(100vh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  max-height: none !important;
+  border-radius: 12px !important;
+}
+
+@supports (height: 100dvh) {
+  body.platform-mobile .ext-dialog {
+    height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  }
+}
+
+body.platform-mobile .ext-body {
+  max-height: none !important;
+  height: calc(100% - 56px) !important;
+  padding: 12px 14px 16px !important;
+}
+
+body.platform-mobile .ext-install {
+  flex-direction: column;
+}
+
+body.platform-mobile .ext-install input[type="text"],
+body.platform-mobile .ext-install button {
+  width: 100%;
+  min-height: 44px;
+}
+
+/* Android：folder picker 不可用，先隐藏“浏览本地”入口避免误导 */
+body.platform-android #ext-browse-local-btn {
+  display: none !important;
+}
+
+body.platform-mobile .ext-list {
+  grid-template-columns: 1fr !important;
+  gap: 10px !important;
+}
+
+body.platform-mobile .ext-market-channel {
+  margin-left: 0 !important;
+  flex-wrap: wrap;
+}
+
+body.platform-mobile .ext-market-search {
+  margin-left: 0 !important;
+  width: 100%;
+}
+
+body.platform-mobile .ext-market-search-input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
 }
 
 /* ========== 暗色模式适配 ========== */

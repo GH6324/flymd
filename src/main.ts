@@ -47,7 +47,7 @@ import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConf
 // 平台适配层（Android 支持）
 import { initPlatformIntegration } from './platform-integration'
 import { ensureAndroidDefaultLibraryRoot } from './platform/androidLibrary'
-import { safListDir, persistSafUriPermission } from './platform/androidSaf'
+import { safListDir, persistSafUriPermission, safPickFolder } from './platform/androidSaf'
 import { createImageUploader } from './core/imageUpload'
 import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
 import type { InstallableItem } from './extensions/market'
@@ -6076,9 +6076,14 @@ async function importAndroidSafFolderAsLocalLibrary(): Promise<void> {
       return
     }
 
-    const sel = await open({ directory: true, multiple: false } as any)
-    if (!sel) return
-    const uri = normalizePath(sel)
+    let uri = ''
+    try {
+      uri = normalizePath(await safPickFolder()) || ''
+    } catch (e) {
+      const msg = String((e as any)?.message || e || '')
+      if (/cancel/i.test(msg) || /canceled/i.test(msg) || /cancellation/i.test(msg)) return
+      throw e
+    }
     if (!uri || !uri.startsWith('content://')) {
       alert('请选择外置存储中的文件夹（SAF）')
       return

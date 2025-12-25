@@ -300,7 +300,7 @@ async function loadCfg(context) {
           cfg.dock = 'bottom'
         }
         const vh = Number(WIN().innerHeight || 720)
-        const targetH = Math.max(320, Math.min(560, Math.round(vh * 0.55)))
+        const targetH = Math.max(280, Math.min(420, Math.round(vh * 0.42)))
         cfg.win = { ...(cfg.win || {}), h: targetH, w: Math.min(520, Number((cfg.win && cfg.win.w) || 400) || 400) }
       }
     } catch {}
@@ -3614,7 +3614,7 @@ async function mountWindow(context){
   const isMobileUi = aiIsMobileUi()
   const dockWidth = Math.max(MIN_WIDTH, Number((cfg && cfg.win && cfg.win.w) || MIN_WIDTH))
   const dockHeight = isMobileUi
-    ? Math.max(320, Math.min(560, Math.round(Number(WIN().innerHeight || 720) * 0.55)))
+    ? Math.max(280, Math.min(420, Math.round(Number(WIN().innerHeight || 720) * 0.42)))
     : Math.max(300, Number((cfg && cfg.win && cfg.win.h) || 440))
   if (cfg && cfg.dock === 'left') {
     // 左侧停靠：紧挨库侧栏右侧

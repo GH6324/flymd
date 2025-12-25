@@ -24,6 +24,10 @@ export async function persistSafUriPermission(uri: string): Promise<void> {
   await invoke('android_persist_uri_permission', { uri })
 }
 
+export async function safPickFolder(timeoutMs = 60_000): Promise<string> {
+  return await invoke<string>('android_saf_pick_folder', { timeout_ms: timeoutMs })
+}
+
 export async function safListDir(uri: string): Promise<AndroidSafDirEntry[]> {
   return await invoke<AndroidSafDirEntry[]>('android_saf_list_dir', { uri })
 }
@@ -51,4 +55,3 @@ export async function safDelete(uri: string): Promise<void> {
 export async function safRename(uri: string, newName: string): Promise<string> {
   return await invoke<string>('android_saf_rename', { uri, new_name: newName })
 }
-
