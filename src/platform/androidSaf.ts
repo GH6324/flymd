@@ -36,7 +36,7 @@ async function invokeSaf<T>(cmd: string, args?: any, opt?: { retries?: number; b
     } catch (e) {
       lastErr = e
       const msg = String((e as any)?.message || e || '')
-      // 用户取消：不重试，交给上层按“取消选择”处理
+      // 用户取消：不重试，直接抛给上层按“取消选择”处理
       if (isCancelErrorMessage(msg)) throw e
       // 明确不可用：不重试（例如非 Android、命令不存在）
       if (/only available on android/i.test(msg) || /unknown command/i.test(msg)) throw e
