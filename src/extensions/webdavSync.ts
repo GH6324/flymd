@@ -208,9 +208,30 @@ function isContentUriPath(p: string): boolean {
   return typeof p === 'string' && p.startsWith('content://')
 }
 
+// Android release: 部分环境下 fs 插件会拒绝创建/写入以 "." 开头的目录（会报 forbidden path）
+// SAF 镜像目录是“中转站”，因此将隐藏目录编码为普通目录名，逻辑路径仍保持 .flymd/xxx 不变。
+const MIRROR_HIDDEN_PREFIX = '__flymd_hidden__'
+
+function encodeMirrorSegment(name: string): string {
+  const n = String(name || '').trim()
+  if (!n) return ''
+  if (n === '.' || n === '..') return n
+  if (n.startsWith('.')) return MIRROR_HIDDEN_PREFIX + n.slice(1)
+  return n
+}
+
+function decodeMirrorSegment(name: string): string {
+  const n = String(name || '').trim()
+  if (!n) return ''
+  if (n.startsWith(MIRROR_HIDDEN_PREFIX)) return '.' + n.slice(MIRROR_HIDDEN_PREFIX.length)
+  return n
+}
+
 function sanitizeMirrorName(name: string): string {
   // 只做最小清洗：避免把 / \ 这种路径分隔符带进本地镜像路径
-  return String(name || '').replace(/[\\/]+/g, '_').trim()
+  // 同时把隐藏目录名编码，绕过 Android fs scope 对 ".xxx" 的拒绝
+  const encoded = encodeMirrorSegment(String(name || '').trim())
+  return encoded.replace(/[\\/]+/g, '_').trim()
 }
 
 function joinFsPath(base: string, child: string): string {
@@ -218,6 +239,15 @@ function joinFsPath(base: string, child: string): string {
   const sep = b.includes('\\') ? '\\' : '/'
   const c = String(child || '').replace(/^[/\\]+/, '')
   return b ? (b + sep + c) : c
+}
+
+function resolveLocalFilePath(localRoot: string, relUnix: string, mirrorMap: boolean): string {
+  const root = String(localRoot || '').replace(/[\\/]+$/, '')
+  const sep = root.includes('\\') ? '\\' : '/'
+  const rel = String(relUnix || '').replace(/\\/g, '/').replace(/^\/+/, '')
+  const parts = rel.split('/').filter(Boolean)
+  const mapped = mirrorMap ? parts.map(encodeMirrorSegment) : parts
+  return root + (mapped.length ? (sep + mapped.join(sep)) : '')
 }
 
 function isSafTextLikeFile(relUnix: string, name: string): boolean {
@@ -334,9 +364,11 @@ async function safMirrorPullToLocal(
     let ents: any[] = []
     try { ents = await readDir(dir as any, { recursive: false } as any) as any[] } catch { ents = [] }
     for (const e of ents || []) {
-      const name = String(e?.name || '').trim()
+      const phyName = String(e?.name || '').trim()
+      if (!phyName) continue
+      const name = decodeMirrorSegment(phyName)
       if (!name) continue
-      const abs = joinFsPath(dir, name)
+      const abs = joinFsPath(dir, phyName)
       const rel = relDirUnix ? (relDirUnix + '/' + name) : name
 
       let isDir = !!(e as any)?.isDirectory
@@ -437,9 +469,11 @@ async function safMirrorExportToSaf(
     try { ents = await readDir(localDir as any, { recursive: false } as any) as any[] } catch { ents = [] }
 
     for (const e of ents || []) {
-      const name = String(e?.name || '').trim()
+      const phyName = String(e?.name || '').trim()
+      if (!phyName) continue
+      const name = decodeMirrorSegment(phyName)
       if (!name) continue
-      const abs = joinFsPath(localDir, name)
+      const abs = joinFsPath(localDir, phyName)
       const rel = relDirUnix ? (relDirUnix + '/' + name) : name
 
       let isDir = !!(e as any)?.isDirectory
@@ -823,6 +857,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 // 本地结构快照（存放于库根目录），用于快速短路“无变化”的同步
 // 注意：仅作为性能优化的提示，真实一致性仍由常规流程保障
 const LOCAL_HINT_FILENAME = '.flymd-sync-hint.json'
+const LOCAL_HINT_FILENAME_FALLBACK = 'flymd-sync-hint.json'
 
 type LocalStructureHint = {
   totalDirs: number
@@ -834,16 +869,27 @@ type LocalStructureHint = {
 async function readLocalStructureHint(root: string): Promise<LocalStructureHint | null> {
   try {
     const sep = root.includes('\\') ? '\\' : '/'
-    const hintPath = root.replace(/[\\/]+$/, '') + sep + LOCAL_HINT_FILENAME
-    if (!(await exists(hintPath as any))) return null
-    const data = await readFile(hintPath as any)
-    const text = new TextDecoder().decode(data)
-    if (!text.trim()) return null
-    const obj = JSON.parse(text)
-    if (typeof obj.totalFiles === 'number' && typeof obj.totalDirs === 'number' && typeof obj.maxMtime === 'number') {
-      return obj as LocalStructureHint
+    const base = root.replace(/[\\/]+$/, '')
+    const tryRead = async (name: string): Promise<LocalStructureHint | null> => {
+      const hintPath = base + sep + name
+      if (!(await exists(hintPath as any))) return null
+      const data = await readFile(hintPath as any)
+      const text = new TextDecoder().decode(data)
+      if (!text.trim()) return null
+      const obj = JSON.parse(text)
+      if (typeof obj.totalFiles === 'number' && typeof obj.totalDirs === 'number' && typeof obj.maxMtime === 'number') {
+        return obj as LocalStructureHint
+      }
+      return null
     }
-    return null
+    try {
+      const v = await tryRead(LOCAL_HINT_FILENAME)
+      if (v) return v
+    } catch (e) {
+      const msg = String((e as any)?.message || e || '')
+      if (!/forbidden\s*path/i.test(msg) && !/not\s*allowed/i.test(msg)) return null
+    }
+    try { return await tryRead(LOCAL_HINT_FILENAME_FALLBACK) } catch { return null }
   } catch { return null }
 }
 
@@ -851,10 +897,19 @@ async function readLocalStructureHint(root: string): Promise<LocalStructureHint 
 async function writeLocalStructureHint(root: string, hint: LocalStructureHint): Promise<void> {
   try {
     const sep = root.includes('\\') ? '\\' : '/'
-    const hintPath = root.replace(/[\\/]+$/, '') + sep + LOCAL_HINT_FILENAME
+    const base = root.replace(/[\\/]+$/, '')
+    const hintPath = base + sep + LOCAL_HINT_FILENAME
     const text = JSON.stringify(hint)
     const data = new TextEncoder().encode(text)
-    await writeFile(hintPath as any, data as any)
+    try {
+      await writeFile(hintPath as any, data as any)
+      return
+    } catch (e) {
+      const msg = String((e as any)?.message || e || '')
+      if (!/forbidden\s*path/i.test(msg) && !/not\s*allowed/i.test(msg)) return
+    }
+    const fallbackPath = base + sep + LOCAL_HINT_FILENAME_FALLBACK
+    try { await writeFile(fallbackPath as any, data as any) } catch {}
   } catch {}
 }
 
@@ -868,9 +923,11 @@ async function quickSummarizeLocal(root: string): Promise<LocalStructureHint> {
     let ents: any[] = []
     try { ents = await readDir(dir, { recursive: false } as any) as any[] } catch { ents = [] }
     for (const e of ents) {
-      const name = String(e.name || '')
+      const phyName = String(e.name || '')
+      if (!phyName) continue
+      const name = decodeMirrorSegment(phyName)
       if (!name) continue
-      const full = dir + (dir.includes('\\') ? '\\' : '/') + name
+      const full = dir + (dir.includes('\\') ? '\\' : '/') + phyName
       const relp = rel ? rel + '/' + name : name
       try {
         let isDir = !!(e as any)?.isDirectory
@@ -1316,9 +1373,11 @@ async function scanLocal(root: string, lastMeta?: SyncMetadata): Promise<Map<str
     let ents: any[] = []
     try { ents = await readDir(dir, { recursive: false } as any) as any[] } catch { ents = [] }
     for (const e of ents) {
-      const name = String(e.name || '')
+      const phyName = String(e.name || '')
+      if (!phyName) continue
+      const name = decodeMirrorSegment(phyName)
       if (!name) continue
-      const full = dir + (dir.includes('\\') ? '\\' : '/') + name
+      const full = dir + (dir.includes('\\') ? '\\' : '/') + phyName
       const relp = rel ? rel + '/' + name : name
       try {
         // 正确判断是否为目录
@@ -1892,6 +1951,9 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
       localRoot = safMirrorRoot
     }
 
+    const isSafMirror = !!(safRoot && safMirrorRoot && localRoot === safMirrorRoot)
+    const localFullPath = (relUnix: string) => resolveLocalFilePath(localRoot, relUnix, isSafMirror)
+
     updateStatus('正在同步… 准备中')
     const auth = { username: cfg.username, password: cfg.password }; await syncLog('[prep] root=' + activeRoot + (safMirrorRoot ? (' mirror=' + localRoot) : '') + ' remoteRoot=' + cfg.rootPath)
     try { await ensureRemoteDir(baseUrl, auth, (cfg.rootPath || '').replace(/\/+$/, '')) } catch {}
@@ -2308,7 +2370,7 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
           // 更新元数据
           const local = localIdx.get(act.rel)
           if (local) {
-            const full = localRoot + (localRoot.includes('\\') ? '\\' : '/') + act.rel.replace(/\//g, localRoot.includes('\\') ? '\\' : '/')
+            const full = localFullPath(act.rel)
             const meta = await stat(full)
             newMeta.files[act.rel] = {
               hash: local.hash || '',
@@ -2354,7 +2416,7 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
           if (chooseLocal) {
             // 保留本地 → 上传
             await syncLog('[conflict-resolve] ' + act.rel + ' 保留本地版本')
-            const full = localRoot + (localRoot.includes('\\') ? '\\' : '/') + act.rel.replace(/\//g, localRoot.includes('\\') ? '\\' : '/')
+            const full = localFullPath(act.rel)
             const buf = await readFile(full as any)
             const encBuf = await encryptBytesIfEnabled(buf as any, cfg)
             const relPath = encodePath(act.rel)
@@ -2381,8 +2443,8 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
             const raw = await downloadFile(baseUrl, auth, cfg.rootPath.replace(/\/+$/,'') + '/' + encodePath(act.rel))
             const data = await decryptBytesIfNeeded(raw, cfg)
             const hash = await calculateFileHash(data as any)
-            const full = localRoot + (localRoot.includes('\\') ? '\\' : '/') + act.rel.replace(/\//g, localRoot.includes('\\') ? '\\' : '/')
-            const dir = full.split(/\\|\//).slice(0, -1).join(localRoot.includes('\\') ? '\\' : '/')
+            const full = localFullPath(act.rel)
+            const dir = full.replace(/[\\/][^\\/]*$/, '')
             if (!(await exists(dir as any))) { try { await mkdir(dir as any, { recursive: true } as any) } catch {} }
             await writeFile(full as any, data as any)
             if (safRoot && safMirrorRoot) safMirrorDirty = true
@@ -2410,8 +2472,8 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
             const raw = await downloadFile(baseUrl, auth, cfg.rootPath.replace(/\/+$/,'') + '/' + encodePath(act.rel))
             const data = await decryptBytesIfNeeded(raw, cfg)
             const hash = await calculateFileHash(data as any)
-            const full = localRoot + (localRoot.includes('\\') ? '\\' : '/') + act.rel.replace(/\//g, localRoot.includes('\\') ? '\\' : '/')
-            const dir = full.split(/\\|\//).slice(0, -1).join(localRoot.includes('\\') ? '\\' : '/')
+            const full = localFullPath(act.rel)
+            const dir = full.replace(/[\\/][^\\/]*$/, '')
             if (!(await exists(dir as any))) { try { await mkdir(dir as any, { recursive: true } as any) } catch {} }
             await writeFile(full as any, data as any)
             if (safRoot && safMirrorRoot) safMirrorDirty = true
@@ -2431,7 +2493,7 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
           }
         } else if (act.type === 'upload') {
           await syncLog('[upload] ' + act.rel + ' (' + act.reason + ')')
-          const full = localRoot + (localRoot.includes('\\') ? '\\' : '/') + act.rel.replace(/\//g, localRoot.includes('\\') ? '\\' : '/')
+          const full = localFullPath(act.rel)
           const buf = await readFile(full as any)
           const encBuf = await encryptBytesIfEnabled(buf as any, cfg)
           const relPath = encodePath(act.rel)
@@ -2499,8 +2561,8 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
               const raw = await downloadFile(baseUrl, auth, cfg.rootPath.replace(/\/+$/,'') + '/' + encodePath(act.rel))
               const data = await decryptBytesIfNeeded(raw, cfg)
               const hash = await calculateFileHash(data as any)
-              const full = localRoot + (localRoot.includes('\\') ? '\\' : '/') + act.rel.replace(/\//g, localRoot.includes('\\') ? '\\' : '/')
-              const dir = full.split(/\\|\//).slice(0, -1).join(localRoot.includes('\\') ? '\\' : '/')
+              const full = localFullPath(act.rel)
+              const dir = full.replace(/[\\/][^\\/]*$/, '')
               if (!(await exists(dir as any))) { try { await mkdir(dir as any, { recursive: true } as any) } catch {} }
               await writeFile(full as any, data as any)
               if (safRoot && safMirrorRoot) safMirrorDirty = true
@@ -2529,7 +2591,7 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
           // 删除本地文件（通常是因为远程已删除且本地未修改）
           await syncLog('[delete-local] ' + act.rel + ' 删除本地文件（远程已删除）')
           try {
-            const full = localRoot + (localRoot.includes('\\') ? '\\' : '/') + act.rel.replace(/\//g, localRoot.includes('\\') ? '\\' : '/')
+            const full = localFullPath(act.rel)
             // 检查文件是否存在
             if (await exists(full as any)) {
               await remove(full as any)
@@ -2554,7 +2616,7 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
             if (userChoice) {
               // 用户选择删除本地文件
               await syncLog('[remote-deleted-ask-action] ' + act.rel + ' 用户选择删除本地文件')
-              const full = localRoot + (localRoot.includes('\\') ? '\\' : '/') + act.rel.replace(/\//g, localRoot.includes('\\') ? '\\' : '/')
+              const full = localFullPath(act.rel)
               if (await exists(full as any)) {
                 await remove(full as any)
                 await syncLog('[ok] delete-local ' + act.rel)
