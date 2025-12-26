@@ -173,15 +173,16 @@ export async function safCreateFile(
   name: string,
   mimeType?: string,
 ): Promise<string> {
+  // 注意：Tauri 2.0 自动将 Rust 的 snake_case 参数名转换为 camelCase
   return await invokeSaf<string>('android_saf_create_file', {
-    parent_uri: parentUri,
+    parentUri,
     name,
-    mime_type: mimeType,
+    mimeType,
   })
 }
 
 export async function safCreateDir(parentUri: string, name: string): Promise<string> {
-  return await invokeSaf<string>('android_saf_create_dir', { parent_uri: parentUri, name })
+  return await invokeSaf<string>('android_saf_create_dir', { parentUri, name })
 }
 
 export async function safDelete(uri: string): Promise<void> {
@@ -189,5 +190,5 @@ export async function safDelete(uri: string): Promise<void> {
 }
 
 export async function safRename(uri: string, newName: string): Promise<string> {
-  return await invokeSaf<string>('android_saf_rename', { uri, new_name: newName })
+  return await invokeSaf<string>('android_saf_rename', { uri, newName })
 }
