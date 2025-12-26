@@ -428,6 +428,22 @@ body.platform-mobile #ai-assist-win.dock-right {
   border-radius: 14px 14px 0 0 !important;
 }
 
+/* ========== 移动端预览区域居中修复 ========== */
+@media (max-width: 768px) {
+  /* 修复：移动端预览正文靠右问题 - 重置 workspace gap 为 0，确保 padding 对称 */
+  body.platform-mobile .preview {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  /* 确保预览正文在移动端正确居中 */
+  body.platform-mobile .preview-body {
+    max-width: 100%;
+    margin: 0 auto;
+    padding: 14px 12px 20px 12px;
+  }
+}
+
 /* ========== 触摸滚动优化 ========== */
 @media (max-width: 768px) {
   #editor,
