@@ -366,7 +366,30 @@ function ensureStyle() {
     '.tm-typecho-row-menu{position:fixed;z-index:90020;min-width:150px;background:var(--bg);color:var(--fg);border-radius:8px;border:1px solid var(--border);box-shadow:0 14px 36px rgba(0,0,0,.35);font-size:12px;padding:4px 0;}',
     '.tm-typecho-row-menu-item{padding:6px 12px;cursor:pointer;white-space:nowrap;}',
     '.tm-typecho-row-menu-item:hover{background:rgba(127,127,127,.10);}',
-    '.tm-typecho-row-menu-sep{margin:4px 0;border-top:1px solid var(--border);}'
+    '.tm-typecho-row-menu-sep{margin:4px 0;border-top:1px solid var(--border);}',
+    // 移动端卡片式布局
+    '@media (max-width:600px){',
+    '  .tm-typecho-dialog{width:100vw;height:100vh;max-width:100vw;max-height:100vh;border-radius:0;}',
+    '  .tm-typecho-body{padding:8px;}',
+    '  .tm-typecho-header-right{flex-wrap:wrap;gap:4px;}',
+    '  .tm-typecho-header-right button{padding:4px 8px;font-size:12px;}',
+    '  .tm-typecho-filters{flex-direction:column;align-items:stretch;}',
+    '  .tm-typecho-filters input,.tm-typecho-filters select{width:100%;font-size:16px;}',
+    '  .tm-typecho-table-head{display:none;}',
+    '  .tm-typecho-row{grid-template-columns:1fr;grid-template-rows:auto;gap:8px;padding:12px;border:1px solid rgba(0,0,0,.08);border-radius:8px;margin-bottom:8px;background:#fff;}',
+    '  .tm-typecho-row>div{width:100%;word-break:break-word;}',
+    '  .tm-typecho-row>div:nth-child(1)::before{content:"标题: ";font-weight:600;color:rgba(0,0,0,.6);}',
+    '  .tm-typecho-row>div:nth-child(2)::before{content:"分类: ";font-weight:600;color:rgba(0,0,0,.6);}',
+    '  .tm-typecho-row>div:nth-child(3)::before{content:"发布时间: ";font-weight:600;color:rgba(0,0,0,.6);}',
+    '  .tm-typecho-row>div:nth-child(4)::before{content:"状态: ";font-weight:600;color:rgba(0,0,0,.6);}',
+    '  .tm-typecho-row>div:nth-child(5)::before{content:"操作: ";font-weight:600;color:rgba(0,0,0,.6);}',
+    '  .tm-typecho-row>div:nth-child(5){display:flex;flex-direction:column;gap:6px;}',
+    '  .tm-typecho-row>div:nth-child(5) button{width:100%;min-height:44px;font-size:14px;}',
+    '  .tm-typecho-footer{flex-direction:column;gap:10px;align-items:stretch;}',
+    '  .tm-typecho-footer-left,.tm-typecho-footer-right{width:100%;}',
+    '  .tm-typecho-footer-right{justify-content:space-between;}',
+    '  .tm-typecho-settings-dialog,.tm-typecho-related-dialog,.tm-typecho-stats-dialog,.tm-typecho-rollback-dialog{width:100vw;height:auto;max-height:90vh;border-radius:0;}',
+    '}'
   ].join('\n')
   const style = document.createElement('style')
   style.id = 'tm-typecho-style'
