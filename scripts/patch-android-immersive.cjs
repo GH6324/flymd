@@ -38,6 +38,40 @@ function findMainActivityKotlin(projectRoot) {
   return candidates
 }
 
+function patchAndroidManifestPermissions(projectRoot) {
+  try {
+    const manifest = path.join(projectRoot, 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
+    if (!fs.existsSync(manifest)) {
+      console.warn('[patch-android-immersive] 未找到 AndroidManifest.xml（可能还没执行 tauri android init），跳过麦克风权限注入')
+      return false
+    }
+    const s = fs.readFileSync(manifest, 'utf8')
+    if (s.includes('android.permission.RECORD_AUDIO')) {
+      return true
+    }
+
+    // flymd:audio-permission-v1
+    // 说明：WebView getUserMedia 需要 Manifest 声明 RECORD_AUDIO，否则前端永远 Permission denied。
+    const block = `  <!-- flymd:audio-permission-v1 -->\n  <uses-permission android:name="android.permission.RECORD_AUDIO" />\n  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n`
+
+    const m = s.match(/<manifest\\b[^>]*>/)
+    if (!m || m.index == null) {
+      console.warn(`[patch-android-immersive] AndroidManifest.xml 未找到 <manifest>，跳过: ${manifest}`)
+      return false
+    }
+
+    // 在 <manifest ...> 后插入 uses-permission（尽量不碰 <application>）
+    const insertPos = m.index + m[0].length
+    const next = s.slice(0, insertPos) + '\n' + block + s.slice(insertPos)
+    fs.writeFileSync(manifest, next, 'utf8')
+    console.log(`[patch-android-immersive] 已写入麦克风权限声明: ${manifest}`)
+    return true
+  } catch (e) {
+    console.warn(`[patch-android-immersive] 写入 AndroidManifest 麦克风权限失败: ${e?.message || e}`)
+    return false
+  }
+}
+
 function patchMainActivity(filePath) {
   const original = fs.readFileSync(filePath, 'utf8')
   const hasImmersive = original.includes('flymd:immersive-fullscreen-v2')
@@ -378,6 +412,8 @@ function main() {
   const files = findMainActivityKotlin(root)
   if (!files.length) {
     console.warn('[patch-android-immersive] 未找到 MainActivity.kt（可能还没执行 tauri android init），跳过')
+    // 即使没找到 MainActivity，也尝试补丁 Manifest 权限（可能模板路径变化）
+    patchAndroidManifestPermissions(root)
     return
   }
   let ok = false
@@ -394,6 +430,9 @@ function main() {
 
   // release 兜底：确保 JNI 调用的方法不会被 R8/Proguard 裁剪/改名
   patchProguardKeepRules(root)
+
+  // 麦克风权限（录音）：注入 AndroidManifest uses-permission
+  patchAndroidManifestPermissions(root)
 }
 
 main()

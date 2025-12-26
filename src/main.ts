@@ -867,7 +867,8 @@ function fnv1a32Hex(str: string): string {
     let hash = 0x811c9dc5
     for (let i = 0; i < str.length; i++) {
       hash ^= str.charCodeAt(i) & 0xff
-      hash = (hash * 0x01000193) >>> 0
+      // 关键：必须用 imul 做 32-bit 乘法
+      hash = Math.imul(hash, 0x01000193) >>> 0
     }
     return hash.toString(16).padStart(8, '0')
   } catch {
@@ -1056,91 +1057,112 @@ async function maybeOrganizeTranscription(rawText: string): Promise<void> {
 }
 
 async function transcribeFromAudioFileMenu(): Promise<void> {
-  const sel = await open({
-    multiple: false,
-    filters: [
-      { name: 'Audio', extensions: ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'webm'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
-  })
-  if (!sel) return
-  const path = typeof sel === 'string' ? sel : ((sel as any)?.path ?? (sel as any)?.filePath ?? String(sel))
-  const name = (() => {
-    const p = String(path || '')
-    const base = p.split(/[/\\]/).pop() || ''
-    return base || 'audio'
-  })()
-  pluginNotice('正在转写音频…', 'ok', 1800)
-  const { blob, mimeType } = await readAudioBlobFromPickedPath(path, name)
-  const out = await transcribeAudioBlob(blob, name, mimeType)
-  insertAtCursor(out)
-  try { renderPreview() } catch {}
-  await maybeOrganizeTranscription(out)
+  try {
+    const sel = await open({
+      multiple: false,
+      filters: [
+        { name: 'Audio', extensions: ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'webm'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    })
+    if (!sel) return
+    const path = typeof sel === 'string' ? sel : ((sel as any)?.path ?? (sel as any)?.filePath ?? String(sel))
+    const name = (() => {
+      const p = String(path || '')
+      const base = p.split(/[/\\]/).pop() || ''
+      return base || 'audio'
+    })()
+    pluginNotice('正在转写音频…', 'ok', 1800)
+    const { blob, mimeType } = await readAudioBlobFromPickedPath(path, name)
+    const out = await transcribeAudioBlob(blob, name, mimeType)
+    insertAtCursor(out)
+    try { renderPreview() } catch {}
+    await maybeOrganizeTranscription(out)
+  } catch (e) {
+    console.error('录音文件转写失败', e)
+    pluginNotice('转写失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+  }
 }
 
 async function toggleRecordAndTranscribeMenu(): Promise<void> {
-  // 停止并转写
-  if (activeSpeechRecorder) {
-    const r = activeSpeechRecorder
-    activeSpeechRecorder = null
-    try {
-      r.recorder.stop()
-    } catch {}
-    return
-  }
-
-  // 开始录音
-  if (!(navigator as any)?.mediaDevices?.getUserMedia) {
-    pluginNotice('当前环境不支持录音（缺少 getUserMedia）', 'err', 2500)
-    return
-  }
-  if (typeof (window as any).MediaRecorder !== 'function') {
-    pluginNotice('当前环境不支持录音（缺少 MediaRecorder）', 'err', 2500)
-    return
-  }
-
-  // Android：先确保兜底目录可用（用户取消则不开始录音）
   try {
-    const platform = await getPlatform()
-    if (platform === 'android') {
-      const folder = await ensureAndroidRecordFolderUri()
-      if (!folder) return
+    // 停止并转写
+    if (activeSpeechRecorder) {
+      const r = activeSpeechRecorder
+      activeSpeechRecorder = null
+      try { r.recorder.stop() } catch {}
+      return
     }
-  } catch {}
 
-  const stream = await (navigator as any).mediaDevices.getUserMedia({ audio: true })
-  const mimeType = pickRecorderMimeType()
-  const chunks: BlobPart[] = []
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    // 开始录音
+    if (!window.isSecureContext) {
+      pluginNotice('当前环境不是安全上下文：WebView 禁止录音（isSecureContext=false）', 'err', 3500)
+      return
+    }
+    if (!(navigator as any)?.mediaDevices?.getUserMedia) {
+      pluginNotice('当前环境不支持录音（缺少 getUserMedia）', 'err', 2500)
+      return
+    }
+    if (typeof (window as any).MediaRecorder !== 'function') {
+      pluginNotice('当前环境不支持录音（缺少 MediaRecorder）', 'err', 2500)
+      return
+    }
 
-  activeSpeechRecorder = { recorder, stream, chunks, mimeType: mimeType || '', startedAt: Date.now() }
-
-  recorder.addEventListener('dataavailable', (ev: any) => {
-    try { if (ev?.data && ev.data.size > 0) chunks.push(ev.data) } catch {}
-  })
-
-  recorder.addEventListener('stop', () => {
-    void (async () => {
-      const local = { chunks: chunks.slice(), mimeType: mimeType || recorder.mimeType || 'audio/webm' }
-      try { stream.getTracks().forEach(t => { try { t.stop() } catch {} }) } catch {}
-      try {
-        const blob = new Blob(local.chunks, { type: local.mimeType })
-        const name = makeRecordingFileName(local.mimeType)
-        pluginNotice('录音已停止：正在保存并转写…', 'ok', 2200)
-        await saveRecordingBackupIfNeeded(blob, name, local.mimeType)
-        const out = await transcribeAudioBlob(blob, name, local.mimeType)
-        insertAtCursor(out)
-        try { renderPreview() } catch {}
-        await maybeOrganizeTranscription(out)
-      } catch (e) {
-        console.error('录音转写失败', e)
-        pluginNotice('录音转写失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+    // Android：先确保兜底目录可用（用户取消则不开始录音）
+    try {
+      const platform = await getPlatform()
+      if (platform === 'android') {
+        const folder = await ensureAndroidRecordFolderUri()
+        if (!folder) return
       }
-    })()
-  })
+    } catch {}
 
-  recorder.start()
-  pluginNotice('已开始录音。录完后再次打开“更多”并点击“停止录音并转写”。', 'ok', 3500)
+    let stream: MediaStream
+    try {
+      stream = await (navigator as any).mediaDevices.getUserMedia({ audio: true })
+    } catch (e) {
+      const msg = String((e as any)?.message || e || '')
+      // Android/WebView 常见：未声明 RECORD_AUDIO 或用户拒绝授权
+      pluginNotice('录音权限被拒绝：请到系统设置开启麦克风权限后重试。' + (msg ? `（${msg}）` : ''), 'err', 4000)
+      return
+    }
+
+    const mimeType = pickRecorderMimeType()
+    const chunks: BlobPart[] = []
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+
+    activeSpeechRecorder = { recorder, stream, chunks, mimeType: mimeType || '', startedAt: Date.now() }
+
+    recorder.addEventListener('dataavailable', (ev: any) => {
+      try { if (ev?.data && ev.data.size > 0) chunks.push(ev.data) } catch {}
+    })
+
+    recorder.addEventListener('stop', () => {
+      void (async () => {
+        const local = { chunks: chunks.slice(), mimeType: mimeType || recorder.mimeType || 'audio/webm' }
+        try { stream.getTracks().forEach(t => { try { t.stop() } catch {} }) } catch {}
+        try {
+          const blob = new Blob(local.chunks, { type: local.mimeType })
+          const name = makeRecordingFileName(local.mimeType)
+          pluginNotice('录音已停止：正在保存并转写…', 'ok', 2200)
+          await saveRecordingBackupIfNeeded(blob, name, local.mimeType)
+          const out = await transcribeAudioBlob(blob, name, local.mimeType)
+          insertAtCursor(out)
+          try { renderPreview() } catch {}
+          await maybeOrganizeTranscription(out)
+        } catch (e) {
+          console.error('录音转写失败', e)
+          pluginNotice('录音转写失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+        }
+      })()
+    })
+
+    recorder.start()
+    pluginNotice('已开始录音。录完后点顶栏“更多”→“停止录音并转写”。', 'ok', 3500)
+  } catch (e) {
+    console.error('录音流程异常', e)
+    pluginNotice('录音失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+  }
 }
 
 async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<ContextMenuItemConfig[]> {
