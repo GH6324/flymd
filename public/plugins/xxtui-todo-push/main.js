@@ -162,7 +162,19 @@ function ensureXxtuiCss() {
             '.xt-help-text strong{font-weight:600;color:#0f172a;}',
             '#xtui-set-actions{display:flex;gap:10px;justify-content:flex-end;padding:10px 12px;border-top:1px solid #e5e7eb;background:#fafafa;}',
             '#xtui-set-actions button{padding:6px 12px;border-radius:8px;border:1px solid #e5e7eb;background:#ffffff;color:#0f172a;font-size:13px;cursor:pointer;}',
-            '#xtui-set-actions button.primary{background:#2563eb;border-color:#2563eb;color:#fff;}'
+            '#xtui-set-actions button.primary{background:#2563eb;border-color:#2563eb;color:#fff;}',
+            // 移动端适配
+            '@media (max-width:600px){',
+            '  #xtui-set-dialog{width:100vw;height:100vh;max-width:100vw;max-height:100vh;border-radius:0;}',
+            '  #xtui-set-body{flex-direction:column;}',
+            '  #xtui-set-nav{width:100%;flex-direction:row;overflow-x:auto;border-right:none;border-bottom:1px solid #e5e7eb;padding:6px;gap:4px;}',
+            '  .xtui-nav-btn{white-space:nowrap;padding:6px 10px;font-size:12px;}',
+            '  #xtui-set-panel{padding:10px;}',
+            '  .xt-row{flex-direction:column;align-items:stretch;gap:6px;}',
+            '  .xt-row label{width:auto;}',
+            '  .xt-key-item{grid-template-columns:1fr;gap:6px;}',
+            '  .xt-key-item .xt-radio{justify-content:space-between;}',
+            '}'
         ].join('')
         doc.head.appendChild(css)
     } catch {
