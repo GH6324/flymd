@@ -50,6 +50,26 @@ function renderPluginMenuItem(item: any, callbacks: Map<string, () => void>, idC
 
   // 子菜单
   if (item.children && item.children.length > 0) {
+    // 检测移动端环境
+    const isMobileUi = document.body.classList.contains('platform-mobile')
+    const isCoarsePointer = (() => {
+      try {
+        return !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches
+      } catch {
+        return false
+      }
+    })()
+
+    // 移动端：扁平化为分组标题 + 子项列表
+    if (isMobileUi || isCoarsePointer) {
+      let out = `<div class="plugin-menu-group-title">${item.label || ''}</div>`
+      for (const child of item.children) {
+        out += renderPluginMenuItem(child, callbacks, idCounter)
+      }
+      return out
+    }
+
+    // 桌面端：保持原有悬停子菜单逻辑
     const id = `menu-item-${idCounter.value++}`
     const disabled = item.disabled ? ' disabled' : ''
     const note = item.note ? `<span class="plugin-menu-note">${item.note}</span>` : ''

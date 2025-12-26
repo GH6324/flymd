@@ -537,6 +537,19 @@ body.compact-titlebar .window-btn.window-close:hover {
   .plugin-menu-submenu.expand-left {
     right: auto;
   }
+
+  /* 移动端分组标题样式优化（扁平化后的菜单分隔） */
+  .plugin-menu-group-title {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .plugin-menu-group-title:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
 }
 
 .titlebar .filename {
