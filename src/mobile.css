@@ -430,6 +430,17 @@ body.platform-mobile #ai-assist-win.dock-right {
 
 /* ========== 移动端预览区域居中修复 ========== */
 @media (max-width: 768px) {
+  /* 移动端侧栏是“抽屉覆盖层”，不应推挤工作区；强制清零侧边占位，避免阅读模式出现“左侧留白更大”。 */
+  body.platform-mobile .container,
+  body.platform-mobile .container.with-library,
+  body.platform-mobile .container.with-library-left,
+  body.platform-mobile .container.with-library-right {
+    --gap-left-library: 0px !important;
+    --gap-right-library: 0px !important;
+    --workspace-left-gap: 0px !important;
+    --workspace-right-gap: 0px !important;
+  }
+
   /* 修复：移动端预览正文靠右问题 - 重置 workspace gap 为 0，确保 padding 对称 */
   body.platform-mobile .preview {
     padding-left: 16px !important;
