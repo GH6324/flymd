@@ -984,12 +984,14 @@ pub fn run() {
       // Android SAF 命令
       android_pick_document,
       android_create_document,
-      android_read_uri,
-      android_write_uri,
-      android_persist_uri_permission,
-      android_saf_pick_folder,
-      android_saf_list_dir,
-      android_saf_create_file,
+       android_read_uri,
+       android_write_uri,
+       android_read_uri_base64,
+       android_write_uri_base64,
+       android_persist_uri_permission,
+       android_saf_pick_folder,
+       android_saf_list_dir,
+       android_saf_create_file,
       android_saf_create_dir,
       android_saf_delete,
       android_saf_rename,
@@ -2430,6 +2432,68 @@ mod android_saf {
     })
   }
 
+  pub fn read_uri_bytes(uri: &str) -> Result<Vec<u8>, String> {
+    with_env(|env, activity| {
+      let uri_obj = parse_uri(env, uri)?;
+      let resolver = get_content_resolver(env, &activity)?;
+
+      let input = env
+        .call_method(
+          &resolver,
+          "openInputStream",
+          "(Landroid/net/Uri;)Ljava/io/InputStream;",
+          &[JValue::from(&uri_obj)],
+        )
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("openInputStream 失败: {e}")
+        })?
+        .l()
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("openInputStream 返回类型异常: {e}")
+        })?;
+
+      if input.is_null() {
+        return Err("openInputStream 返回 null（可能没有权限或 URI 无效）".into());
+      }
+
+      let buf_len: jsize = 16 * 1024;
+      let jbuf: JByteArray = env
+        .new_byte_array(buf_len)
+        .map_err(|e| format!("new_byte_array 失败: {e}"))?;
+
+      let mut out: Vec<u8> = Vec::new();
+      loop {
+        let n = env
+          .call_method(&input, "read", "([B)I", &[JValue::from(&jbuf)])
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("InputStream.read 失败: {e}")
+          })?
+          .i()
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("InputStream.read 返回类型异常: {e}")
+          })?;
+        if n <= 0 {
+          break;
+        }
+        let mut chunk = vec![0i8; n as usize];
+        env
+          .get_byte_array_region(&jbuf, 0, &mut chunk)
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("GetByteArrayRegion 失败: {e}")
+          })?;
+        out.extend(chunk.into_iter().map(|b| b as u8));
+      }
+
+      let _ = env.call_method(&input, "close", "()V", &[]);
+      Ok(out)
+    })
+  }
+
   pub fn pick_folder(timeout_ms: u64) -> Result<String, String> {
     with_env(|env, activity| {
       let t: jlong = if timeout_ms > i64::MAX as u64 {
@@ -2513,6 +2577,61 @@ mod android_saf {
 
       let bytes = env
         .byte_array_from_slice(content.as_bytes())
+        .map_err(|e| format!("byte_array_from_slice 失败: {e}"))?;
+      env
+        .call_method(&out, "write", "([B)V", &[JValue::from(&bytes)])
+        .map_err(|e| {
+          clear_java_exception(env);
+          format!("OutputStream.write 失败: {e}")
+        })?;
+      let _ = env.call_method(&out, "flush", "()V", &[]);
+      let _ = env.call_method(&out, "close", "()V", &[]);
+      Ok(())
+    })
+  }
+
+  pub fn write_uri_bytes(uri: &str, bytes_in: &[u8]) -> Result<(), String> {
+    with_env(|env, activity| {
+      let uri_obj = parse_uri(env, uri)?;
+      let resolver = get_content_resolver(env, &activity)?;
+
+      let mode = env
+        .new_string("wt")
+        .map_err(|e| format!("new_string(mode) 失败: {e}"))?;
+
+      let out = match env.call_method(
+        &resolver,
+        "openOutputStream",
+        "(Landroid/net/Uri;Ljava/lang/String;)Ljava/io/OutputStream;",
+        &[JValue::from(&uri_obj), JValue::from(&mode)],
+      ) {
+        Ok(v) => v.l().map_err(|e| format!("openOutputStream 返回类型异常: {e}"))?,
+        Err(e) => {
+          clear_java_exception(env);
+          let v = env
+            .call_method(
+              &resolver,
+              "openOutputStream",
+              "(Landroid/net/Uri;)Ljava/io/OutputStream;",
+              &[JValue::from(&uri_obj)],
+            )
+            .map_err(|e2| {
+              clear_java_exception(env);
+              format!("openOutputStream 失败: {e}; fallback 也失败: {e2}")
+            })?;
+          v.l().map_err(|e2| {
+            clear_java_exception(env);
+            format!("openOutputStream fallback 返回类型异常: {e2}")
+          })?
+        }
+      };
+
+      if out.is_null() {
+        return Err("openOutputStream 返回 null（可能没有写权限或 URI 无效）".into());
+      }
+
+      let bytes = env
+        .byte_array_from_slice(bytes_in)
         .map_err(|e| format!("byte_array_from_slice 失败: {e}"))?;
       env
         .call_method(&out, "write", "([B)V", &[JValue::from(&bytes)])
@@ -2905,6 +3024,55 @@ async fn android_write_uri(uri: String, content: String) -> Result<(), String> {
   {
     let _ = (uri, content);
     Err("android_write_uri only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_read_uri_base64(uri: String) -> Result<String, String> {
+  #[cfg(target_os = "android")]
+  {
+    use base64::{engine::general_purpose, Engine as _};
+    let u = uri.trim().to_string();
+    if u.is_empty() {
+      return Err("android_read_uri_base64: uri 为空".into());
+    }
+    let bytes = tauri::async_runtime::spawn_blocking(move || android_saf::read_uri_bytes(&u))
+      .await
+      .map_err(|e| format!("android_read_uri_base64 join 失败: {e}"))??;
+    Ok(general_purpose::STANDARD.encode(bytes))
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = uri;
+    Err("android_read_uri_base64 only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_write_uri_base64(uri: String, base64: String) -> Result<(), String> {
+  #[cfg(target_os = "android")]
+  {
+    use base64::{engine::general_purpose, Engine as _};
+    let u = uri.trim().to_string();
+    if u.is_empty() {
+      return Err("android_write_uri_base64: uri 为空".into());
+    }
+    let b64 = base64.trim().to_string();
+    if b64.is_empty() {
+      return Err("android_write_uri_base64: base64 为空".into());
+    }
+    let bytes = general_purpose::STANDARD
+      .decode(b64.as_bytes())
+      .map_err(|e| format!("base64 decode 失败: {e}"))?;
+    tauri::async_runtime::spawn_blocking(move || android_saf::write_uri_bytes(&u, &bytes))
+      .await
+      .map_err(|e| format!("android_write_uri_base64 join 失败: {e}"))??;
+    Ok(())
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = (uri, base64);
+    Err("android_write_uri_base64 only available on Android".into())
   }
 }
 

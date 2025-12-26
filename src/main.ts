@@ -845,6 +845,304 @@ async function togglePortableModeFromMenu(): Promise<void> {
   }
 }
 
+// ============ 语音转文本（Android：录完再出字） ============
+
+const AUDIO_TRANSCRIBE_PROXY_URL = 'https://flymd.llingfei.com/ai/audio_proxy.php'
+const AUDIO_RECORD_FOLDER_URI_KEY = 'flymd_audio_record_folder_uri'
+const FLYMD_CLIENT_TOKEN_SECRET = 'flymd-rolling-secret-v1'
+const FLYMD_CLIENT_TOKEN_WINDOW_SECONDS = 120
+
+type ActiveSpeechRecorder = {
+  recorder: MediaRecorder
+  stream: MediaStream
+  chunks: BlobPart[]
+  mimeType: string
+  startedAt: number
+}
+
+let activeSpeechRecorder: ActiveSpeechRecorder | null = null
+
+function fnv1a32Hex(str: string): string {
+  try {
+    let hash = 0x811c9dc5
+    for (let i = 0; i < str.length; i++) {
+      hash ^= str.charCodeAt(i) & 0xff
+      hash = (hash * 0x01000193) >>> 0
+    }
+    return hash.toString(16).padStart(8, '0')
+  } catch {
+    return '00000000'
+  }
+}
+
+function buildRollingClientToken(): string {
+  const slice = Math.floor(Date.now() / 1000 / FLYMD_CLIENT_TOKEN_WINDOW_SECONDS)
+  const base = `${FLYMD_CLIENT_TOKEN_SECRET}:${slice}:2pai`
+  const partA = fnv1a32Hex(base)
+  const partB = fnv1a32Hex(`${base}:${slice % 97}`)
+  return `flymd-${partA}${partB}`
+}
+
+function guessAudioMimeType(name: string): string {
+  const n = String(name || '').toLowerCase()
+  if (n.endsWith('.mp3')) return 'audio/mpeg'
+  if (n.endsWith('.m4a')) return 'audio/mp4'
+  if (n.endsWith('.aac')) return 'audio/aac'
+  if (n.endsWith('.wav')) return 'audio/wav'
+  if (n.endsWith('.ogg')) return 'audio/ogg'
+  if (n.endsWith('.webm')) return 'audio/webm'
+  return 'application/octet-stream'
+}
+
+function pickRecorderMimeType(): string {
+  try {
+    const mr = (window as any).MediaRecorder
+    if (!mr || typeof mr.isTypeSupported !== 'function') return ''
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+      'audio/mp4',
+    ]
+    for (const t of candidates) {
+      try { if (mr.isTypeSupported(t)) return t } catch {}
+    }
+  } catch {}
+  return ''
+}
+
+function makeRecordingFileName(mimeType: string): string {
+  const now = new Date()
+  const pad = (x: number) => String(x).padStart(2, '0')
+  const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  const ext =
+    mimeType.includes('ogg') ? 'ogg'
+      : mimeType.includes('mp4') ? 'm4a'
+        : 'webm'
+  return `flymd-record-${ts}.${ext}`
+}
+
+async function blobToBase64Payload(blob: Blob): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    try {
+      const reader = new FileReader()
+      reader.onerror = () => reject(new Error('读取录音失败'))
+      reader.onload = () => {
+        const s = String(reader.result || '')
+        const idx = s.indexOf('base64,')
+        if (idx < 0) return reject(new Error('base64 编码失败'))
+        resolve(s.slice(idx + 'base64,'.length))
+      }
+      reader.readAsDataURL(blob)
+    } catch (e) {
+      reject(e instanceof Error ? e : new Error(String(e || 'blobToBase64 failed')))
+    }
+  })
+}
+
+async function ensureAndroidRecordFolderUri(): Promise<string | null> {
+  try {
+    const platform = await getPlatform()
+    if (platform !== 'android') return null
+  } catch {
+    return null
+  }
+
+  const existing = String(localStorage.getItem(AUDIO_RECORD_FOLDER_URI_KEY) || '').trim()
+  if (existing) return existing
+
+  const ok = await confirmNative('首次使用需要选择一个目录用于保存录音兜底文件（建议选择“Download/下载”）。是否现在选择？', '录音保存目录')
+  if (!ok) return null
+
+  while (true) {
+    let folder = ''
+    try {
+      folder = await safPickFolder(60_000)
+    } catch (e) {
+      const msg = String((e as any)?.message || e || '')
+      if (/cancel/i.test(msg)) return null
+      throw e
+    }
+    folder = String(folder || '').trim()
+    if (!folder) return null
+
+    try {
+      if (isSafUninstallUnsafeFolder(folder)) {
+        pluginNotice('你选的是 Android/data 或 Android/obb 这类目录：卸载应用会被系统清空。请重新选择 Download/下载。', 'err', 3500)
+        continue
+      }
+    } catch {}
+
+    try { await persistSafUriPermission(folder) } catch {}
+    localStorage.setItem(AUDIO_RECORD_FOLDER_URI_KEY, folder)
+    try {
+      const hint = safLocationHint(folder) || safPrettyName(folder)
+      if (hint) pluginNotice('录音保存目录已设置：' + hint, 'ok', 2500)
+    } catch {}
+    return folder
+  }
+}
+
+async function saveRecordingBackupIfNeeded(blob: Blob, fileName: string, mimeType: string): Promise<void> {
+  try {
+    const platform = await getPlatform()
+    if (platform !== 'android') return
+  } catch {
+    return
+  }
+
+  const folderUri = await ensureAndroidRecordFolderUri()
+  if (!folderUri) {
+    pluginNotice('未设置录音保存目录：将不会生成本地兜底文件。', 'err', 2600)
+    return
+  }
+
+  const b64 = await blobToBase64Payload(blob)
+  const uri = await safCreateFile(folderUri, fileName, mimeType)
+  try { await persistSafUriPermission(uri) } catch {}
+  await invoke('android_write_uri_base64', { uri, base64: b64 })
+}
+
+async function readAudioBlobFromPickedPath(path: string, nameHint: string): Promise<{ blob: Blob; mimeType: string; name: string }> {
+  const p = String(path || '').trim()
+  const name = String(nameHint || '').trim() || 'audio'
+  const mimeType = guessAudioMimeType(name)
+  if (!p) throw new Error('未选择音频文件')
+  if (p.startsWith('content://')) {
+    try { await invoke('android_persist_uri_permission', { uri: p }) } catch {}
+    const b64 = await invoke<string>('android_read_uri_base64', { uri: p })
+    const dataUrl = `data:${mimeType};base64,${b64}`
+    const blob = await (await fetch(dataUrl)).blob()
+    return { blob, mimeType, name }
+  }
+  const bytes = await readFile(p as any)
+  return { blob: new Blob([bytes as any], { type: mimeType }), mimeType, name }
+}
+
+async function transcribeAudioBlob(blob: Blob, name: string, mimeType: string): Promise<string> {
+  const file = new File([blob], name, { type: mimeType || 'application/octet-stream' })
+  const form = new FormData()
+  form.append('file', file)
+  const headers: Record<string, string> = { 'X-Flymd-Token': buildRollingClientToken() }
+  const resp = await fetch(AUDIO_TRANSCRIBE_PROXY_URL, { method: 'POST', headers, body: form })
+  const text = await resp.text()
+  if (!resp.ok) {
+    throw new Error(`转写失败（HTTP ${resp.status}）：${text || 'unknown'}`)
+  }
+  const data = (() => { try { return JSON.parse(text) } catch { return null } })()
+  const out = String((data && (data.text ?? data?.data?.text)) || '').trim()
+  if (!out) throw new Error('转写结果为空')
+  return out
+}
+
+async function maybeOrganizeTranscription(rawText: string): Promise<void> {
+  const api = pluginHost?.getPluginAPI?.('ai-assistant')
+  if (!api || typeof api.callAI !== 'function') return
+  const ok = await confirmNative('检测到已安装 AI 助手：是否整理刚刚的录音文本？', '整理录音文本')
+  if (!ok) return
+  const prompt =
+    '请把下面这段“语音转写文本”整理成可读的中文内容：\n' +
+    '- 补全标点与分段\n' +
+    '- 修正常见口语/同音错字（不要编造不存在的信息）\n' +
+    '- 输出尽量简洁，可包含：标题（可选）、要点、行动项（如有）\n\n' +
+    '原文：\n' + rawText
+  const organized = String(await api.callAI(prompt, {
+    system: '你是专业的中文文字整理助手，输出要清晰、保守、不要臆造事实。',
+  }) || '').trim()
+  if (!organized) return
+  insertAtCursor('\n\n' + organized)
+  try { renderPreview() } catch {}
+}
+
+async function transcribeFromAudioFileMenu(): Promise<void> {
+  const sel = await open({
+    multiple: false,
+    filters: [
+      { name: 'Audio', extensions: ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'webm'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  })
+  if (!sel) return
+  const path = typeof sel === 'string' ? sel : ((sel as any)?.path ?? (sel as any)?.filePath ?? String(sel))
+  const name = (() => {
+    const p = String(path || '')
+    const base = p.split(/[/\\]/).pop() || ''
+    return base || 'audio'
+  })()
+  pluginNotice('正在转写音频…', 'ok', 1800)
+  const { blob, mimeType } = await readAudioBlobFromPickedPath(path, name)
+  const out = await transcribeAudioBlob(blob, name, mimeType)
+  insertAtCursor(out)
+  try { renderPreview() } catch {}
+  await maybeOrganizeTranscription(out)
+}
+
+async function toggleRecordAndTranscribeMenu(): Promise<void> {
+  // 停止并转写
+  if (activeSpeechRecorder) {
+    const r = activeSpeechRecorder
+    activeSpeechRecorder = null
+    try {
+      r.recorder.stop()
+    } catch {}
+    return
+  }
+
+  // 开始录音
+  if (!(navigator as any)?.mediaDevices?.getUserMedia) {
+    pluginNotice('当前环境不支持录音（缺少 getUserMedia）', 'err', 2500)
+    return
+  }
+  if (typeof (window as any).MediaRecorder !== 'function') {
+    pluginNotice('当前环境不支持录音（缺少 MediaRecorder）', 'err', 2500)
+    return
+  }
+
+  // Android：先确保兜底目录可用（用户取消则不开始录音）
+  try {
+    const platform = await getPlatform()
+    if (platform === 'android') {
+      const folder = await ensureAndroidRecordFolderUri()
+      if (!folder) return
+    }
+  } catch {}
+
+  const stream = await (navigator as any).mediaDevices.getUserMedia({ audio: true })
+  const mimeType = pickRecorderMimeType()
+  const chunks: BlobPart[] = []
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+
+  activeSpeechRecorder = { recorder, stream, chunks, mimeType: mimeType || '', startedAt: Date.now() }
+
+  recorder.addEventListener('dataavailable', (ev: any) => {
+    try { if (ev?.data && ev.data.size > 0) chunks.push(ev.data) } catch {}
+  })
+
+  recorder.addEventListener('stop', () => {
+    void (async () => {
+      const local = { chunks: chunks.slice(), mimeType: mimeType || recorder.mimeType || 'audio/webm' }
+      try { stream.getTracks().forEach(t => { try { t.stop() } catch {} }) } catch {}
+      try {
+        const blob = new Blob(local.chunks, { type: local.mimeType })
+        const name = makeRecordingFileName(local.mimeType)
+        pluginNotice('录音已停止：正在保存并转写…', 'ok', 2200)
+        await saveRecordingBackupIfNeeded(blob, name, local.mimeType)
+        const out = await transcribeAudioBlob(blob, name, local.mimeType)
+        insertAtCursor(out)
+        try { renderPreview() } catch {}
+        await maybeOrganizeTranscription(out)
+      } catch (e) {
+        console.error('录音转写失败', e)
+        pluginNotice('录音转写失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+      }
+    })()
+  })
+
+  recorder.start()
+  pluginNotice('已开始录音。录完后再次打开“更多”并点击“停止录音并转写”。', 'ok', 3500)
+}
+
 async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<ContextMenuItemConfig[]> {
   const items: ContextMenuItemConfig[] = []
   const syncCfg = await (async () => { try { return await getWebdavSyncConfig() } catch { return null as any } })()
@@ -916,6 +1214,29 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
         onClick: async (c) => {
           await uploadImageFromContextMenu(c)
         },
+      })
+    }
+  } catch {}
+  // Android：语音转文本入口（录完再出字）
+  try {
+    const platform = await (async () => { try { return await getPlatform() } catch { return 'unknown' as any } })()
+    if (platform === 'android') {
+      items.push({ type: 'divider' } as any)
+      items.push({
+        label: '录音文件转文本',
+        icon: '??',
+        tooltip: '选择本地音频文件，上传到服务器转写并插入当前文档',
+        condition: (c) => c.mode === 'edit' || c.mode === 'wysiwyg',
+        onClick: async () => { await transcribeFromAudioFileMenu() },
+      })
+      items.push({
+        label: activeSpeechRecorder ? '停止录音并转写' : '开始录音（录完转写）',
+        icon: activeSpeechRecorder ? '??' : '??',
+        tooltip: activeSpeechRecorder
+          ? '停止录音，保存到 Download 兜底后上传转写'
+          : '开始录音（不会实时出字）；停止后才转写并插入',
+        condition: (c) => c.mode === 'edit' || c.mode === 'wysiwyg',
+        onClick: async () => { await toggleRecordAndTranscribeMenu() },
       })
     }
   } catch {}
