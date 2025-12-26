@@ -364,6 +364,7 @@ export function initBuiltInFloatingToolbar(deps: BuiltInFloatingToolbarDeps): vo
       { id: 'ul', label: '•', title: ftText('无序列表', 'Bullet list'), run: () => applyBulletList() },
       { id: 'link', label: '🔗', title: ftText('插入链接', 'Insert link'), run: () => applyLink() },
       { id: 'image', label: 'IMG', title: ftText('插入图片', 'Insert image'), run: () => applyImage() },
+      { id: 'more', label: '⋯', title: ftText('更多功能', 'More'), run: () => openContextMenu() },
     ]
 
     commands.forEach((cmd) => {
@@ -834,6 +835,18 @@ export function initBuiltInFloatingToolbar(deps: BuiltInFloatingToolbarDeps): vo
       deps.setDoc(before + md + after)
     } catch (e) {
       deps.notice(ftText('插入图片失败: ', 'Image failed: ') + String((e as any)?.message || e || ''), 'err', 1800)
+    }
+  }
+
+  const openContextMenu = () => {
+    try {
+      // 调用全局方法打开右键菜单
+      const w = window as any
+      if (typeof w.flymdOpenContextMenu === 'function') {
+        w.flymdOpenContextMenu()
+      }
+    } catch (e) {
+      deps.notice(ftText('打开菜单失败', 'Failed to open menu'), 'err', 1500)
     }
   }
 
