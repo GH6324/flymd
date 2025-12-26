@@ -151,7 +151,8 @@ export async function persistSafUriPermission(uri: string): Promise<void> {
 }
 
 export async function safPickFolder(timeoutMs = 60_000): Promise<string> {
-  return await invokeSaf<string>('android_saf_pick_folder', { timeout_ms: timeoutMs })
+  // 注意：Tauri 2.0 会把 Rust 的 snake_case 参数名映射为 JS 的 camelCase
+  return await invokeSaf<string>('android_saf_pick_folder', { timeoutMs })
 }
 
 export async function safListDir(uri: string): Promise<AndroidSafDirEntry[]> {
@@ -173,7 +174,7 @@ export async function safCreateFile(
   name: string,
   mimeType?: string,
 ): Promise<string> {
-  // 注意：Tauri 2.0 自动将 Rust 的 snake_case 参数名转换为 camelCase
+  // 注意：Tauri 2.0 会把 Rust 的 snake_case 参数名映射为 JS 的 camelCase
   return await invokeSaf<string>('android_saf_create_file', {
     parentUri,
     name,

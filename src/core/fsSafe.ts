@@ -66,7 +66,8 @@ export async function moveFileSafe(src: string, dst: string): Promise<void> {
 export async function renameFileSafe(p: string, newName: string): Promise<string> {
   if (isContentUriPath(p)) {
     try { await invoke('android_persist_uri_permission', { uri: p }) } catch {}
-    return await invoke<string>('android_saf_rename', { uri: p, new_name: newName })
+    // 注意：Tauri 2.0 会把 Rust 的 snake_case 参数名映射为 JS 的 camelCase
+    return await invoke<string>('android_saf_rename', { uri: p, newName })
   }
   const base = p.replace(/[\\/][^\\/]*$/, '')
   const dst = base + (base.includes('\\') ? '\\' : '/') + newName
