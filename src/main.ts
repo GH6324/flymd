@@ -1217,29 +1217,6 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
       })
     }
   } catch {}
-  // Android：语音转文本入口（录完再出字）
-  try {
-    const platform = await (async () => { try { return await getPlatform() } catch { return 'unknown' as any } })()
-    if (platform === 'android') {
-      items.push({ type: 'divider' } as any)
-      items.push({
-        label: '录音文件转文本',
-        icon: '??',
-        tooltip: '选择本地音频文件，上传到服务器转写并插入当前文档',
-        condition: (c) => c.mode === 'edit' || c.mode === 'wysiwyg',
-        onClick: async () => { await transcribeFromAudioFileMenu() },
-      })
-      items.push({
-        label: activeSpeechRecorder ? '停止录音并转写' : '开始录音（录完转写）',
-        icon: activeSpeechRecorder ? '??' : '??',
-        tooltip: activeSpeechRecorder
-          ? '停止录音，保存到 Download 兜底后上传转写'
-          : '开始录音（不会实时出字）；停止后才转写并插入',
-        condition: (c) => c.mode === 'edit' || c.mode === 'wysiwyg',
-        onClick: async () => { await toggleRecordAndTranscribeMenu() },
-      })
-    }
-  } catch {}
   return items
 }
 
@@ -7489,6 +7466,7 @@ function showMobileQuickMenu() {
   if (!anchor) return
   const isMobileUi = document.body.classList.contains('platform-mobile')
   if (!isMobileUi) return
+  const isAndroidUi = document.body.classList.contains('platform-android')
 
   const clickById = (id: string) => {
     try {
@@ -7504,6 +7482,10 @@ function showMobileQuickMenu() {
     { label: t('file.open'), action: () => { void openFile2() } },
     { label: t('file.save'), action: () => { void saveFile() } },
     { label: '插入图片…', action: () => { void handleMobileInsertImages() } },
+    ...(isAndroidUi ? ([
+      { label: '录音文件转文本…', action: () => { void transcribeFromAudioFileMenu() } },
+      { label: activeSpeechRecorder ? '停止录音并转写' : '开始录音', action: () => { void toggleRecordAndTranscribeMenu() } },
+    ] as TopMenuItemSpec[]) : []),
     { label: `${t('mode.edit')}/${t('mode.read')}`, action: () => { void handleToggleModeShortcut() } },
     { label: t('sync.title'), action: () => { try { void openWebdavSyncDialog() } catch {} } },
     { label: t('sync.now'), action: () => { void handleManualSyncFromMenu() } },
