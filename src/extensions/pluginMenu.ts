@@ -150,34 +150,40 @@ function showPluginDropdownInternal(anchor: HTMLElement, items: any[]) {
     document.body.appendChild(overlay)
 
     const panel = document.getElementById(PLUGIN_DROPDOWN_PANEL_ID)
+    const isCoarsePointer = (() => {
+      try { return !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches } catch { return false }
+    })()
+
     if (panel) {
       positionPluginDropdown(panel, anchor)
 
       // 为每个有子菜单的项目添加 mouseenter 事件，动态调整子菜单位置
-      panel.querySelectorAll('.plugin-menu-item.has-children').forEach((item) => {
-        item.addEventListener('mouseenter', function (this: HTMLElement) {
-          const submenu = this.querySelector('.plugin-menu-submenu') as HTMLElement
-          if (!submenu) return
+      if (!isCoarsePointer) {
+        panel.querySelectorAll('.plugin-menu-item.has-children').forEach((item) => {
+          item.addEventListener('mouseenter', function (this: HTMLElement) {
+            const submenu = this.querySelector('.plugin-menu-submenu') as HTMLElement
+            if (!submenu) return
 
-          // 使用 requestAnimationFrame 确保在下一帧计算，此时子菜单已经显示
-          requestAnimationFrame(() => {
-            const itemRect = this.getBoundingClientRect()
-            const submenuRect = submenu.getBoundingClientRect()
-            const viewportWidth = window.innerWidth
+            // 使用 requestAnimationFrame 确保在下一帧计算，此时子菜单已经显示
+            requestAnimationFrame(() => {
+              const itemRect = this.getBoundingClientRect()
+              const submenuRect = submenu.getBoundingClientRect()
+              const viewportWidth = window.innerWidth
 
-            // 检查子菜单是否会超出右边界
-            const wouldOverflowRight = itemRect.right + submenuRect.width > viewportWidth - 10
+              // 检查子菜单是否会超出右边界
+              const wouldOverflowRight = itemRect.right + submenuRect.width > viewportWidth - 10
 
-            if (wouldOverflowRight) {
-              // 向左展开
-              submenu.classList.add('expand-left')
-            } else {
-              // 向右展开（默认）
-              submenu.classList.remove('expand-left')
-            }
+              if (wouldOverflowRight) {
+                // 向左展开
+                submenu.classList.add('expand-left')
+              } else {
+                // 向右展开（默认）
+                submenu.classList.remove('expand-left')
+              }
+            })
           })
         })
-      })
+      }
     }
 
     // 点击外部区域关闭
@@ -193,7 +199,20 @@ function showPluginDropdownInternal(anchor: HTMLElement, items: any[]) {
 
         if (!menuItem) return
         if (menuItem.classList?.contains('disabled')) return
-        if (menuItem.classList?.contains('has-children')) return // 有子菜单的不执行
+        if (menuItem.classList?.contains('has-children')) {
+          // 移动端：用点击展开/收起子菜单，避免 hover 逻辑在触屏环境不可用且容易出屏
+          if (isCoarsePointer) {
+            e.preventDefault()
+            e.stopPropagation()
+            const opened = menuItem.classList.contains('submenu-open')
+            // 同级只允许展开一个，避免菜单无限变长
+            panel.querySelectorAll('.plugin-menu-item.has-children.submenu-open').forEach((el) => {
+              if (el !== menuItem) (el as HTMLElement).classList.remove('submenu-open')
+            })
+            menuItem.classList.toggle('submenu-open', !opened)
+          }
+          return
+        } // 有子菜单的不执行回调
 
         const id = menuItem.getAttribute('data-id')
         if (!id) return

@@ -365,6 +365,8 @@ body.compact-titlebar .window-btn.window-close:hover {
   left: 0;
   top: 0;
   min-width: 200px;
+  max-height: calc(100vh - 24px);
+  overflow: auto;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -504,6 +506,37 @@ body.compact-titlebar .window-btn.window-close:hover {
 /* 确保子菜单本身悬停时保持显示 */
 .plugin-menu-submenu:hover {
   display: block;
+}
+
+/* 移动端：子菜单改为“内联展开”，避免 hover 不生效或子菜单出屏 */
+@media (max-width: 640px) {
+  .plugin-menu-submenu {
+    position: static;
+    left: auto;
+    right: auto;
+    top: auto;
+    border: none;
+    box-shadow: none;
+    padding: 4px 0 4px 12px;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .plugin-menu-item.has-children > .plugin-menu-submenu {
+    display: none;
+  }
+
+  .plugin-menu-item.has-children.submenu-open > .plugin-menu-submenu {
+    display: block;
+  }
+
+  .plugin-menu-item.has-children:hover > .plugin-menu-submenu {
+    display: none;
+  }
+
+  .plugin-menu-submenu.expand-left {
+    right: auto;
+  }
 }
 
 .titlebar .filename {

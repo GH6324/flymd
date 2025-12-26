@@ -16,7 +16,7 @@ on:
   # 仅在推送 Tag 时自动构建 Release（用于发布）
   push:
     tags:
-      - 'v*'
+      - 'android-v*'
 
 env:
   TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
@@ -190,6 +190,35 @@ jobs:
           echo "=== aab files ==="
           find src-tauri/gen/android/app/build/outputs -type f -name "*.aab" | sort || true
 
+      - name: 固定命名 Android 产物 (Release)
+        if: ${{ steps.buildtype.outputs.type == 'release' && steps.tauri_build_release.outcome == 'success' }}
+        run: |
+          set -e
+          # tag 约定：android-vX.Y.Z
+          # 固定命名里只保留纯版本号 X.Y.Z
+          VERSION="${GITHUB_REF_NAME#android-}"
+          VERSION="${VERSION#v}"
+          OUT_DIR="$GITHUB_WORKSPACE/android-artifacts"
+          mkdir -p "$OUT_DIR"
+
+          APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name \"*universal*release*.apk\" | head -n 1)"
+          if [ -z "$APK" ]; then
+            APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name \"*release*.apk\" | head -n 1)"
+          fi
+          if [ -z "$APK" ]; then
+            echo "::error::未找到 Release APK 产物"
+            exit 1
+          fi
+          cp "$APK" "$OUT_DIR/flymd_android_${VERSION}.apk"
+
+          AAB="$(find src-tauri/gen/android/app/build/outputs/bundle -type f -name \"*.aab\" | head -n 1 || true)"
+          if [ -n "$AAB" ]; then
+            cp "$AAB" "$OUT_DIR/flymd_android_${VERSION}.aab"
+          fi
+
+          echo "=== fixed artifacts ==="
+          ls -la "$OUT_DIR"
+
       - name: 上传 APK 产物 (Debug)
         if: ${{ steps.buildtype.outputs.type == 'debug' && steps.tauri_build_debug.outcome == 'success' }}
         uses: actions/upload-artifact@v4
@@ -203,7 +232,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flymd-android-release
-          path: src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
+          path: android-artifacts/*.apk
           if-no-files-found: error
 
       - name: 上传 AAB 产物 (Release)
@@ -211,9 +240,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flymd-android-bundle
-          # Gradle 的 AAB 输出目录为 outputs/bundle/<variant>/，例如：bundle/universalRelease/app-universal-release.aab
-          # 这里用更宽松的 glob，避免因变体目录命名（universalRelease 等）导致匹配不到产物。
-          path: src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+          path: android-artifacts/*.aab
           if-no-files-found: warn
 
       - name: 失败时结束（保持 CI 红灯）
@@ -225,8 +252,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+            android-artifacts/*.apk
+            android-artifacts/*.aab
           draft: true
           generate_release_notes: true
         env:
