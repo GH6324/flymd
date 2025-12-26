@@ -201,18 +201,22 @@ jobs:
           OUT_DIR="$GITHUB_WORKSPACE/android-artifacts"
           mkdir -p "$OUT_DIR"
 
-          APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name \"*universal*release*.apk\" | head -n 1)"
+          # 注意：这里不要写 \"...\"，否则会把双引号当作文件名的一部分，导致 find 匹配不到
+          # 优先 universal/release（Tauri 默认），兜底任意 release APK
+          APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -path '*/apk/universal/release/*.apk' | head -n 1)"
           if [ -z "$APK" ]; then
-            APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name \"*release*.apk\" | head -n 1)"
+            APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -path '*/apk/*/release/*.apk' | head -n 1)"
           fi
           if [ -z "$APK" ]; then
             echo "::error::未找到 Release APK 产物"
             exit 1
           fi
+          echo "::notice::选中 APK: $APK"
           cp "$APK" "$OUT_DIR/flymd_android_${VERSION}.apk"
 
-          AAB="$(find src-tauri/gen/android/app/build/outputs/bundle -type f -name \"*.aab\" | head -n 1 || true)"
+          AAB="$(find src-tauri/gen/android/app/build/outputs/bundle -type f -name '*.aab' | head -n 1 || true)"
           if [ -n "$AAB" ]; then
+            echo "::notice::选中 AAB: $AAB"
             cp "$AAB" "$OUT_DIR/flymd_android_${VERSION}.aab"
           fi
 
