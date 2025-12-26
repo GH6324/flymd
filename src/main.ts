@@ -47,8 +47,9 @@ import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConf
 // 平台适配层（Android 支持）
 import { initPlatformIntegration } from './platform-integration'
 import { ensureAndroidDefaultLibraryRoot } from './platform/androidLibrary'
-import { safDelete, safListDir, persistSafUriPermission, safPickFolder, safPrettyName, isSafUninstallUnsafeFolder, safLocationHint } from './platform/androidSaf'
+import { safDelete, safListDir, safCreateDir, safCreateFile, persistSafUriPermission, safPickFolder, safPrettyName, isSafUninstallUnsafeFolder, safLocationHint } from './platform/androidSaf'
 import { createImageUploader } from './core/imageUpload'
+import { getAppStore, setAppStore } from './core/appStore'
 import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
 import type { InstallableItem } from './extensions/market'
 import { isSupportedDoc, listDirOnce, type LibEntry } from './core/libraryFs'
@@ -659,7 +660,9 @@ async function restoreConfigFromPayload(payload: ConfigBackupPayload): Promise<{
     await writeFile(info.relPath as any, data, { baseDir: info.baseDir } as any)
   }
   try {
-    store = await Store.load(SETTINGS_FILE_NAME, { autoSave: true } as any)
+    setAppStore(null)
+    store = await getAppStore()
+    setAppStore(store)
     await store?.save()
   } catch {}
   return { settings: hasSettings, pluginFiles }
@@ -2908,8 +2911,9 @@ function refreshStatus() {
 async function initStore() {
   try {
     console.log('初始化应用存储...')
-    // Tauri v2 使用 Store.load，在应用数据目录下持久化
-    store = await Store.load('flymd-settings.json', { autoSave: true } as any)
+    // 关键：全应用只使用一个 Store 实例，避免多实例并发写导致配置覆盖/损坏
+    store = await getAppStore()
+    setAppStore(store)
     console.log('存储初始化成功')
     void logInfo('应用存储初始化成功')
     return true
@@ -2917,6 +2921,29 @@ async function initStore() {
     console.error('存储初始化失败:', error)
     console.warn('将以无持久化（内存）模式运行')
     void logWarn('存储初始化失败：使用内存模式', error)
+    // Android 上常见：应用被系统强杀时，写入中断导致 store 文件损坏/空文件，
+    // 下次启动 Store.load 直接抛错 -> 永久退化为“内存模式”，用户就会感觉“怎么都保存不了设置”。
+    // 这里做一次修复尝试：把损坏文件备份走，然后重建一个新的 store。
+    try {
+      const baseDir = getSettingsBaseDir()
+      const existsStoreFile = await exists(SETTINGS_FILE_NAME as any, { baseDir } as any)
+      if (existsStoreFile) {
+        const ts = Date.now()
+        const backup = `flymd-settings.corrupt-${ts}.json`
+        try {
+          await rename(SETTINGS_FILE_NAME as any, backup as any, { baseDir } as any)
+        } catch {
+          try { await remove(SETTINGS_FILE_NAME as any, { baseDir } as any) } catch {}
+        }
+      }
+      setAppStore(null)
+      store = await getAppStore()
+      setAppStore(store)
+      try { await store.save() } catch {}
+      console.warn('存储已重建：原配置文件疑似损坏，已备份为 flymd-settings.corrupt-*.json')
+      void logWarn('存储损坏已重建', error)
+      return true
+    } catch {}
     return false
   }
 }
@@ -3721,6 +3748,33 @@ const _imageUploader = createImageUploader({
   getUserPicturesDir: () => getUserPicturesDir(),
   getAlwaysSaveLocalImages: () => getAlwaysSaveLocalImages(),
   getUploaderConfig: () => getUploaderConfig(),
+  getTranscodePrefs: () => getTranscodePrefs(),
+  writeBinaryFile: async (path: string, bytes: Uint8Array) => { await writeFile(path as any, bytes as any) },
+  fileToDataUrl: (f: File) => fileToDataUrl(f),
+  transcodeToWebpIfNeeded: (blob, fname, quality, opts) => transcodeToWebpIfNeeded(blob, fname, quality, opts),
+})
+
+// 移动端“手动选择图片插入”：只要图床配置齐全就尝试上传（不要求额外打开 enabled 开关）
+const _imageUploaderManualPick = createImageUploader({
+  getEditorValue: () => editor.value,
+  setEditorValue: (v: string) => { editor.value = v },
+  getMode: () => mode,
+  isWysiwyg: () => !!wysiwyg,
+  renderPreview: () => { void renderPreview() },
+  scheduleWysiwygRender: () => { try { scheduleWysiwygRender() } catch {} },
+  markDirtyAndRefresh: () => {
+    dirty = true
+    refreshTitle()
+    refreshStatus()
+  },
+  insertAtCursor: (text: string) => insertAtCursor(text),
+  getCurrentFilePath: () => currentFilePath,
+  isTauriRuntime: () => isTauriRuntime(),
+  ensureDir: async (dir: string) => { try { await ensureDir(dir) } catch {} },
+  getDefaultPasteDir: () => getDefaultPasteDir(),
+  getUserPicturesDir: () => getUserPicturesDir(),
+  getAlwaysSaveLocalImages: () => getAlwaysSaveLocalImages(),
+  getUploaderConfig: () => getUploaderConfigAllowDisabled(),
   getTranscodePrefs: () => getTranscodePrefs(),
   writeBinaryFile: async (path: string, bytes: Uint8Array) => { await writeFile(path as any, bytes as any) },
   fileToDataUrl: (f: File) => fileToDataUrl(f),
@@ -5191,6 +5245,33 @@ async function getUploaderConfig(): Promise<UploaderConfig | null> {
       saveLocalAsWebp: !!o.saveLocalAsWebp,
     }
     if (!cfg.enabled) return null
+    if (!cfg.accessKeyId || !cfg.secretAccessKey || !cfg.bucket) return null
+    return cfg
+  } catch { return null }
+}
+
+// 图床配置读取（允许 enabled=false 的情况）：用于“手动插入图片”这种显式动作
+async function getUploaderConfigAllowDisabled(): Promise<UploaderConfig | null> {
+  try {
+    if (!store) return null
+    const up = await store.get('uploader')
+    if (!up || typeof up !== 'object') return null
+    const o = up as any
+    const cfg: UploaderConfig = {
+      enabled: true,
+      accessKeyId: String(o.accessKeyId || ''),
+      secretAccessKey: String(o.secretAccessKey || ''),
+      bucket: String(o.bucket || ''),
+      region: typeof o.region === 'string' ? o.region : undefined,
+      endpoint: typeof o.endpoint === 'string' ? o.endpoint : undefined,
+      customDomain: typeof o.customDomain === 'string' ? o.customDomain : undefined,
+      keyTemplate: typeof o.keyTemplate === 'string' ? o.keyTemplate : '{year}/{month}{fileName}{md5}.{extName}',
+      aclPublicRead: o.aclPublicRead !== false,
+      forcePathStyle: o.forcePathStyle !== false,
+      convertToWebp: !!o.convertToWebp,
+      webpQuality: (typeof o.webpQuality === 'number' ? o.webpQuality : 0.85),
+      saveLocalAsWebp: !!o.saveLocalAsWebp,
+    }
     if (!cfg.accessKeyId || !cfg.secretAccessKey || !cfg.bucket) return null
     return cfg
   } catch { return null }
@@ -7023,6 +7104,65 @@ function showModeMenu() {
   ])
 }
 
+async function pickImageFilesFromInput(): Promise<File[]> {
+  return await new Promise<File[]>((resolve) => {
+    try {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'image/*'
+      input.multiple = true
+      input.style.position = 'fixed'
+      input.style.left = '-9999px'
+      input.style.top = '-9999px'
+      const cleanup = () => {
+        try { input.value = '' } catch {}
+        try { input.remove() } catch {}
+      }
+      input.addEventListener(
+        'change',
+        () => {
+          try {
+            const arr = Array.from(input.files || [])
+            cleanup()
+            resolve(arr)
+          } catch {
+            cleanup()
+            resolve([])
+          }
+        },
+        { once: true },
+      )
+      document.body.appendChild(input)
+      input.click()
+      // 某些 WebView 下用户取消不会触发 change，这里给一个温和兜底
+      window.setTimeout(() => {
+        try {
+          if (document.body.contains(input)) {
+            cleanup()
+            resolve([])
+          }
+        } catch {}
+      }, 90_000)
+    } catch {
+      resolve([])
+    }
+  })
+}
+
+async function handleMobileInsertImages(): Promise<void> {
+  try {
+    const files = await pickImageFilesFromInput()
+    if (!files.length) return
+    for (const f of files) {
+      const name = (f && (f as any).name) ? String((f as any).name) : 'image'
+      await _imageUploaderManualPick.startAsyncUploadFromFile(f, name)
+    }
+  } catch (e) {
+    console.warn('移动端插入图片失败', e)
+    pluginNotice('插入图片失败', 'err', 2200)
+  }
+}
+
 function showMobileQuickMenu() {
   const anchor = document.getElementById('btn-mobile-menu') as HTMLDivElement | null
   if (!anchor) return
@@ -7042,6 +7182,7 @@ function showMobileQuickMenu() {
     { label: t('file.new'), action: () => { clickById('btn-new') } },
     { label: t('file.open'), action: () => { void openFile2() } },
     { label: t('file.save'), action: () => { void saveFile() } },
+    { label: '插入图片…', action: () => { void handleMobileInsertImages() } },
     { label: `${t('mode.edit')}/${t('mode.read')}`, action: () => { void handleToggleModeShortcut() } },
     { label: t('sync.title'), action: () => { try { void openWebdavSyncDialog() } catch {} } },
     { label: t('sync.now'), action: () => { void handleManualSyncFromMenu() } },
@@ -7165,6 +7306,7 @@ async function showLibraryMenu() {
     items.push({ label: '新增库…', action: async () => { const p = await pickLibraryRoot(); if (p) await refreshLibraryUiAndTree(true) } })
     if (platform === 'android') {
       items.push({ label: '从外置文件夹导入…', action: async () => { await importAndroidSafFolderAsLocalLibrary() } })
+      items.push({ label: '导出当前库到文件夹…', action: async () => { await exportActiveLibraryToFolderAndroid() } })
     }
     items.push({ label: '重命名当前库…', action: async () => {
       const id = await getActiveLibraryId(); if (!id) return
@@ -7185,6 +7327,179 @@ async function showLibraryMenu() {
     } })
     showTopMenu(anchor, items)
   } catch {}
+}
+
+function sanitizeSafName(input: string, fallback: string): string {
+  const s = String(input || '')
+    .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return s || fallback
+}
+
+function isTextLikeForExport(path: string): boolean {
+  const p = String(path || '').toLowerCase()
+  // 仅导出文本类文件：md/txt/yaml/json/csv 等；图片等二进制暂不导出
+  return /\.(md|markdown|txt|json|ya?ml|csv|log)$/i.test(p)
+}
+
+async function ensureSafDirUnder(parentUri: string, name: string): Promise<string> {
+  const safe = sanitizeSafName(name, 'folder')
+  // 先查找，避免重复创建导致报错或出现同名重复目录
+  try {
+    const ents = await safListDir(parentUri)
+    const hit = ents.find(e => e && e.isDir && e.name === safe)
+    if (hit && hit.path) return hit.path
+  } catch {}
+  return await safCreateDir(parentUri, safe)
+}
+
+async function createSafDirUnique(parentUri: string, desiredName: string): Promise<string> {
+  const base = sanitizeSafName(desiredName, 'folder')
+  let taken = new Set<string>()
+  try {
+    const ents = await safListDir(parentUri)
+    taken = new Set((ents || []).filter(e => e && e.isDir).map(e => String(e.name || '').trim()).filter(Boolean))
+  } catch {}
+  let name = base
+  let n = 1
+  while (taken.has(name) && n < 100) {
+    n += 1
+    name = `${base}-${n}`
+  }
+  return await safCreateDir(parentUri, name)
+}
+
+async function ensureSafDirChain(rootUri: string, relDir: string, cache: Map<string, string>): Promise<string> {
+  const norm = String(relDir || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+  if (!norm) return rootUri
+  if (cache.has(norm)) return cache.get(norm)!
+  const parts = norm.split('/').filter(Boolean)
+  let curUri = rootUri
+  let curKey = ''
+  for (const p of parts) {
+    curKey = curKey ? (curKey + '/' + p) : p
+    const cached = cache.get(curKey)
+    if (cached) {
+      curUri = cached
+      continue
+    }
+    curUri = await ensureSafDirUnder(curUri, p)
+    cache.set(curKey, curUri)
+  }
+  return curUri
+}
+
+async function exportActiveLibraryToFolderAndroid(): Promise<void> {
+  try {
+    const platform = await (async () => {
+      try { return await invoke<string>('get_platform') } catch { return '' }
+    })()
+    if (platform !== 'android') {
+      pluginNotice('仅 Android 可用', 'err', 2000)
+      return
+    }
+
+    const root = await getLibraryRoot()
+    if (!root) {
+      pluginNotice('未选择库', 'err', 2000)
+      return
+    }
+    if (root.startsWith('content://')) {
+      pluginNotice('当前为外置库（SAF），无需导出应用私有目录', 'ok', 2200)
+      return
+    }
+
+    const activeId = await getActiveLibraryId()
+    const libs = await getLibraries()
+    const lib = libs.find(x => x.id === activeId) || libs[0]
+    const libName = sanitizeSafName(lib?.name || 'library', 'library')
+
+    let parent = ''
+    try {
+      parent = normalizePath(await safPickFolder()) || ''
+    } catch (e) {
+      const msg = String((e as any)?.message || e || '')
+      if (/cancel/i.test(msg) || /canceled/i.test(msg) || /cancellation/i.test(msg)) return
+      throw e
+    }
+    if (!parent || !parent.startsWith('content://')) {
+      pluginNotice('请选择一个目标文件夹（SAF）', 'err', 2400)
+      return
+    }
+    try { await persistSafUriPermission(parent) } catch {}
+
+    const ts = formatBackupTimestamp(new Date())
+    const baseName = sanitizeSafName(`flymd-export-${libName}-${ts}`, 'flymd-export')
+    let exportRootUri = ''
+    try {
+      exportRootUri = await createSafDirUnique(parent, baseName)
+    } catch {
+      exportRootUri = await createSafDirUnique(parent, baseName + '-2')
+    }
+    try { await persistSafUriPermission(exportRootUri) } catch {}
+
+    // 递归收集本地库文件（路径模式）
+    type LocalFile = { abs: string; rel: string }
+    const files: LocalFile[] = []
+    const skipDir = (name: string) => {
+      const s = String(name || '').trim()
+      if (!s) return true
+      if (s === '.' || s === '..') return true
+      if (s === '.git' || s === 'node_modules' || s === '.flymd') return true
+      return false
+    }
+    const walk = async (absDir: string, relDir: string) => {
+      let entries: any[] = []
+      try {
+        entries = await readDir(absDir as any, { recursive: false } as any) as any[]
+      } catch {
+        return
+      }
+      for (const entry of entries || []) {
+        const name = entry?.name ? String(entry.name) : ''
+        if (!name) continue
+        if (skipDir(name)) continue
+        const isDir = entry?.isDirectory === true || entry?.isDir === true || Array.isArray(entry?.children)
+        const childAbs = absDir.replace(/[\\/]+$/, '') + (absDir.includes('\\') ? '\\' : '/') + name
+        const childRel = relDir ? (relDir + '/' + name) : name
+        if (isDir) await walk(childAbs, childRel)
+        else files.push({ abs: childAbs, rel: childRel })
+      }
+    }
+    await walk(root, '')
+
+    if (!files.length) {
+      pluginNotice('库为空，无需导出', 'ok', 1600)
+      return
+    }
+
+    const dirCache = new Map<string, string>()
+    let exported = 0
+    let skipped = 0
+    for (const f of files) {
+      try {
+        if (!isTextLikeForExport(f.abs)) { skipped += 1; continue }
+        const rel = String(f.rel || '').replace(/\\/g, '/')
+        const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''
+        const name = rel.includes('/') ? rel.slice(rel.lastIndexOf('/') + 1) : rel
+        const parentDirUri = await ensureSafDirChain(exportRootUri, dir, dirCache)
+        const safeName = sanitizeSafName(name, 'file.txt')
+        const mime = /\.md|\.markdown$/i.test(safeName) ? 'text/markdown' : 'text/plain'
+        const fileUri = await safCreateFile(parentDirUri, safeName, mime)
+        const text = await readTextFile(f.abs as any)
+        await writeTextFileAnySafe(fileUri, text)
+        exported += 1
+      } catch {
+        skipped += 1
+      }
+    }
+
+    pluginNotice(`导出完成：${exported} 个文本文件，跳过 ${skipped} 个非文本/失败项`, 'ok', 3600)
+  } catch (e) {
+    console.warn('导出库失败', e)
+    pluginNotice('导出失败', 'err', 2600)
+  }
 }
 
 function applyI18nUi() {

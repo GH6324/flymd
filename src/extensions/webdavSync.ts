@@ -2,7 +2,8 @@
 // - F5 手动同步；启动时同步；关闭前异步触发同步（不阻塞）
 // - 仅按最后修改时间比较；新者覆盖旧者；不做合并
 
-import { Store } from '@tauri-apps/plugin-store'
+import type { Store } from '@tauri-apps/plugin-store'
+import { getAppStore } from '../core/appStore'
 import { getActiveLibraryRoot, getActiveLibraryId } from '../utils/library'
 import { readDir, stat, readFile, writeFile, mkdir, exists, open as openFileHandle, BaseDirectory, remove } from '@tauri-apps/plugin-fs'
 import { appLocalDataDir } from '@tauri-apps/api/path'
@@ -997,7 +998,7 @@ export type WebdavExtraSyncPath = {
 let _store: Store | null = null
 async function getStore(): Promise<Store> {
   if (_store) return _store
-  _store = await Store.load('flymd-settings.json', { autoSave: true } as any)
+  _store = await getAppStore()
   return _store
 }
 

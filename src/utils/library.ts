@@ -1,7 +1,8 @@
 // 库管理工具（方案A实现）：统一在 flymd-settings.json 中维护 libraries/activeLibraryId
 // 保持与 legacy 字段 libraryRoot 的兼容（始终与当前激活库的 root 同步）
 
-import { Store } from '@tauri-apps/plugin-store'
+import type { Store } from '@tauri-apps/plugin-store'
+import { getAppStore } from '../core/appStore'
 
 // 库实体类型
 export type Library = {
@@ -15,7 +16,7 @@ export type Library = {
 let _store: Store | null = null
 async function getStore(): Promise<Store> {
   if (_store) return _store
-  _store = await Store.load('flymd-settings.json', { autoSave: true } as any)
+  _store = await getAppStore()
   return _store
 }
 
