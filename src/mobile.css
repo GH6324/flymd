@@ -261,6 +261,15 @@ body.platform-mobile #btn-lang {
   min-width: 40px !important;
 }
 
+/* 移动端：主题设置里隐藏桌面专属开关（减少误触与无意义配置） */
+body.platform-mobile #theme-panel label[for='focus-mode-toggle'],
+body.platform-mobile #theme-panel label[for='wysiwyg-default-toggle'],
+body.platform-mobile #theme-panel label[for='sourcemode-default-toggle'],
+body.platform-mobile #theme-panel label[for='wysiwyg-html-table-toggle'],
+body.platform-mobile #theme-panel label[for='compact-titlebar-toggle'] {
+  display: none !important;
+}
+
 /* ========== 移动端弹窗（图床 / WebDAV 同步等） ========== */
 body.platform-mobile .upl-overlay {
   position: fixed !important;

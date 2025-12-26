@@ -15,7 +15,7 @@ export type Library = {
 let _store: Store | null = null
 async function getStore(): Promise<Store> {
   if (_store) return _store
-  _store = await Store.load('flymd-settings.json')
+  _store = await Store.load('flymd-settings.json', { autoSave: true } as any)
   return _store
 }
 

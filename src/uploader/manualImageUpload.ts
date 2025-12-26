@@ -16,7 +16,7 @@ let _store: Store | null = null
 async function getStore(): Promise<Store | null> {
   if (_store) return _store
   try {
-    _store = await Store.load('flymd-settings.json')
+    _store = await Store.load('flymd-settings.json', { autoSave: true } as any)
     return _store
   } catch {
     return null
@@ -273,4 +273,3 @@ export async function uploadImageFromContextMenu(ctx: ContextMenuContext): Promi
     NotificationManager.show('plugin-error', '图片上传过程中出现异常', 3200)
   }
 }
-

@@ -533,8 +533,23 @@ import { load as yamlLoad } from 'js-yaml'
 // 便携模式（已拆分到 core/portable.ts）
 import { PORTABLE_BACKUP_FILENAME, getPortableBaseDir, getPortableDirAbsolute, joinPortableFile, exportPortableBackupSilent, readPortableBackupPayload } from './core/portable'
 
+function isMobileUiFast(): boolean {
+  try {
+    // 优先使用平台集成层写入的 class（更可靠）
+    if (document.body.classList.contains('platform-mobile')) return true
+  } catch {}
+  try {
+    const ua = String(navigator?.userAgent || '')
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua)
+  } catch {
+    return false
+  }
+}
+
 async function isPortableModeEnabled(): Promise<boolean> {
   try {
+    // 移动端：不支持便携模式（更不应该自动导入/覆盖配置）
+    if (isMobileUiFast()) return false
     if (!store) return false
     const raw = await store.get('portableMode')
     return !!(raw as any)?.enabled
@@ -545,6 +560,7 @@ async function isPortableModeEnabled(): Promise<boolean> {
 
 async function setPortableModeEnabled(next: boolean): Promise<void> {
   try {
+    if (isMobileUiFast()) return
     if (!store) return
     const raw = ((await store.get('portableMode')) as any) || {}
     raw.enabled = next
@@ -556,6 +572,7 @@ async function setPortableModeEnabled(next: boolean): Promise<void> {
 // 便携模式：导入备份（依赖 store，保留在 main.ts）
 async function importPortableBackupSilent(): Promise<boolean> {
   try {
+    if (isMobileUiFast()) return false
     const payload = await readPortableBackupPayload()
     if (!payload) return false
     await restoreConfigFromPayload(payload)
@@ -568,6 +585,7 @@ async function importPortableBackupSilent(): Promise<boolean> {
 
 async function maybeAutoImportPortableBackup(): Promise<void> {
   try {
+    if (isMobileUiFast()) return
     // 1) 若不存在便携备份文件，直接跳过
     const payload = await readPortableBackupPayload()
     if (!payload) return
@@ -595,6 +613,7 @@ async function maybeAutoImportPortableBackup(): Promise<void> {
 
 async function maybeAutoExportPortableBackup(): Promise<void> {
   try {
+    if (isMobileUiFast()) return
     if (!(await isPortableModeEnabled())) return
     await exportPortableBackupSilent()
   } catch (err) {
@@ -640,7 +659,7 @@ async function restoreConfigFromPayload(payload: ConfigBackupPayload): Promise<{
     await writeFile(info.relPath as any, data, { baseDir: info.baseDir } as any)
   }
   try {
-    store = await Store.load(SETTINGS_FILE_NAME)
+    store = await Store.load(SETTINGS_FILE_NAME, { autoSave: true } as any)
     await store?.save()
   } catch {}
   return { settings: hasSettings, pluginFiles }
@@ -805,6 +824,7 @@ async function handleImportConfigFromMenu(): Promise<void> {
 
 async function togglePortableModeFromMenu(): Promise<void> {
   try {
+    if (isMobileUiFast()) return
     const enabled = await isPortableModeEnabled()
     const next = !enabled
     await setPortableModeEnabled(next)
@@ -1277,7 +1297,9 @@ try { logInfo('打点:DOM就绪') } catch {}
 performance.mark('flymd-dom-ready')
 
 // 初始化平台适配（Android 支持）
-initPlatformIntegration().catch((e) => console.error('[Platform] Initialization failed:', e))
+const _platformIntegrationReady = initPlatformIntegration().catch((e) => {
+  console.error('[Platform] Initialization failed:', e)
+})
 // 初始化平台类（用于 CSS 平台适配，Windows 显示窗口控制按钮）
 try { initPlatformClass() } catch {}
 // 移动端：根据 visualViewport 自动计算“键盘占用高度”，用于底部菜单避开输入法遮挡
@@ -2452,19 +2474,22 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
   containerEl.appendChild(library)
   // 创建边缘唤醒热区（默认隐藏）
   try {
-    _libEdgeEl = document.createElement('div') as HTMLDivElement
-    _libEdgeEl.id = 'lib-edge'
-    _libEdgeEl.style.position = 'absolute'
-    _libEdgeEl.style.left = '0'
-    _libEdgeEl.style.top = '0'
-    _libEdgeEl.style.bottom = '0'
-    _libEdgeEl.style.width = '36px' // 热区宽度：原 6px，向内扩大 30px
-    _libEdgeEl.style.zIndex = '14'
-    _libEdgeEl.style.pointerEvents = 'auto'
-    _libEdgeEl.style.background = 'transparent'
-    _libEdgeEl.style.display = 'none'
-    _libEdgeEl.addEventListener('mouseenter', () => { try { if (!libraryDocked) showLibrary(true, false) } catch {} })
-    containerEl.appendChild(_libEdgeEl)
+    // 移动端：左边缘误触太多，禁用“边缘唤醒库侧栏”，只允许通过菜单栏“库”按钮展开。
+    if (!isMobileUiFast()) {
+      _libEdgeEl = document.createElement('div') as HTMLDivElement
+      _libEdgeEl.id = 'lib-edge'
+      _libEdgeEl.style.position = 'absolute'
+      _libEdgeEl.style.left = '0'
+      _libEdgeEl.style.top = '0'
+      _libEdgeEl.style.bottom = '0'
+      _libEdgeEl.style.width = '36px' // 热区宽度：原 6px，向内扩大 30px
+      _libEdgeEl.style.zIndex = '14'
+      _libEdgeEl.style.pointerEvents = 'auto'
+      _libEdgeEl.style.background = 'transparent'
+      _libEdgeEl.style.display = 'none'
+      _libEdgeEl.addEventListener('mouseenter', () => { try { if (!libraryDocked) showLibrary(true, false) } catch {} })
+      containerEl.appendChild(_libEdgeEl)
+    }
   } catch {}
   try {
     const elPath = library.querySelector('#lib-path') as HTMLDivElement | null
@@ -2636,34 +2661,37 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
             } catch {}
           })
         }
-    } catch {}
+  } catch {}
   // 创建浮动展开按钮（侧栏隐藏时显示，仅在专注模式）
   try {
-    const floatToggle = document.createElement('button')
-    floatToggle.id = 'lib-float-toggle'
-    floatToggle.className = 'lib-float-toggle side-left'
-    floatToggle.innerHTML = '&gt;'
-    floatToggle.title = '展开侧栏'
-    floatToggle.addEventListener('click', () => {
-      try {
-        showLibrary(true, false)
-      } catch {}
-    })
-    containerEl.appendChild(floatToggle)
-    _libFloatToggleEl = floatToggle
-    // 初始化状态：如果侧栏此刻是隐藏的，直接显示展开按钮
-    try {
-      const isHidden = library.classList.contains('hidden')
-      floatToggle.classList.toggle('show', isHidden)
-    } catch {}
-    // 监听侧栏显示/隐藏状态，切换浮动按钮显示
-    const observer = new MutationObserver(() => {
+    // 移动端：库侧栏只允许通过菜单栏“库”按钮展开，避免额外入口导致误触。
+    if (!isMobileUiFast()) {
+      const floatToggle = document.createElement('button')
+      floatToggle.id = 'lib-float-toggle'
+      floatToggle.className = 'lib-float-toggle side-left'
+      floatToggle.innerHTML = '&gt;'
+      floatToggle.title = '展开侧栏'
+      floatToggle.addEventListener('click', () => {
+        try {
+          showLibrary(true, false)
+        } catch {}
+      })
+      containerEl.appendChild(floatToggle)
+      _libFloatToggleEl = floatToggle
+      // 初始化状态：如果侧栏此刻是隐藏的，直接显示展开按钮
       try {
         const isHidden = library.classList.contains('hidden')
         floatToggle.classList.toggle('show', isHidden)
       } catch {}
-    })
-    observer.observe(library, { attributes: true, attributeFilter: ['class'] })
+      // 监听侧栏显示/隐藏状态，切换浮动按钮显示
+      const observer = new MutationObserver(() => {
+        try {
+          const isHidden = library.classList.contains('hidden')
+          floatToggle.classList.toggle('show', isHidden)
+        } catch {}
+      })
+      observer.observe(library, { attributes: true, attributeFilter: ['class'] })
+    }
   } catch {}
   // 恢复库侧栏上次的可见状态
   ;(async () => {
@@ -2881,7 +2909,7 @@ async function initStore() {
   try {
     console.log('初始化应用存储...')
     // Tauri v2 使用 Store.load，在应用数据目录下持久化
-    store = await Store.load('flymd-settings.json')
+    store = await Store.load('flymd-settings.json', { autoSave: true } as any)
     console.log('存储初始化成功')
     void logInfo('应用存储初始化成功')
     return true
@@ -6900,7 +6928,7 @@ function showFileMenu() {
     const autoSaveEnabled = autoSave.isEnabled()
     let portableEnabled = false
     try {
-      portableEnabled = await isPortableModeEnabled()
+      if (!isMobileUiFast()) portableEnabled = await isPortableModeEnabled()
     } catch {}
     const items: TopMenuItemSpec[] = [
       { label: t('file.open'), accel: 'Ctrl+O', action: () => { void openFile2() } },
@@ -6915,22 +6943,25 @@ function showFileMenu() {
       { label: t('file.save'), accel: 'Ctrl+S', action: () => { void saveFile() } },
       { label: t('file.saveas'), accel: 'Ctrl+Shift+S', action: () => { void saveAs() } },
     ]
-    // 配置相关操作移动到“文件”菜单
-    items.push({
-      label: t('menu.exportConfig') || '导出配置',
-      accel: '',
-      action: () => { void handleExportConfigFromMenu() },
-    })
-    items.push({
-      label: t('menu.importConfig') || '导入配置',
-      accel: '',
-      action: () => { void handleImportConfigFromMenu() },
-    })
-    items.push({
-      label: `${portableEnabled ? '✔ ' : ''}${t('menu.portableMode') || '便携模式'}`,
-      accel: '',
-      action: () => { void togglePortableModeFromMenu() },
-    })
+    // 移动端不提供：便携模式/配置导入导出（避免误触与启动时覆盖配置）
+    if (!isMobileUiFast()) {
+      // 配置相关操作移动到“文件”菜单
+      items.push({
+        label: t('menu.exportConfig') || '导出配置',
+        accel: '',
+        action: () => { void handleExportConfigFromMenu() },
+      })
+      items.push({
+        label: t('menu.importConfig') || '导入配置',
+        accel: '',
+        action: () => { void handleImportConfigFromMenu() },
+      })
+      items.push({
+        label: `${portableEnabled ? '✔ ' : ''}${t('menu.portableMode') || '便携模式'}`,
+        accel: '',
+        action: () => { void togglePortableModeFromMenu() },
+      })
+    }
     showTopMenu(anchor, items)
   })()
 }
@@ -9319,8 +9350,24 @@ function bindEvents() {
       }
     }
 
+    // 等待平台集成层完成（至少保证 platform-mobile class 就绪）
+    try { await _platformIntegrationReady } catch {}
+
     // 尝试初始化存储（确保完成后再加载扩展，避免读取不到已安装列表）
     await initStore()
+    // 移动端：应用被切到后台/系统回收前，尽量把设置落盘（否则用户会觉得“根本不能保存设置”）
+    try {
+      document.addEventListener(
+        'visibilitychange',
+        () => {
+          try {
+            if (!document.hidden) return
+            if (store) void store.save()
+          } catch {}
+        },
+        { capture: true },
+      )
+    } catch {}
     // Android：默认初始化一个“应用私有目录”的本地库，先把基础能力跑通（浏览/搜索/编辑/WebDAV/插件）
     try { await ensureAndroidDefaultLibraryRoot() } catch (e) { console.warn('[Android] 初始化默认库失败:', e) }
     // Android：库侧栏不固定（固定会挤压编辑区，这在手机上就是垃圾体验）
