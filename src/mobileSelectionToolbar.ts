@@ -160,11 +160,13 @@ export function initMobileSelectionToolbar(opt: MobileSelectionToolbarOptions): 
     const btnItalic = mkBtn('mst-italic', t('mst.italic'), t('mst.italic'))
     const btnLink = mkBtn('mst-link', t('mst.link'), t('mst.link'))
     const btnCopy = mkBtn('mst-copy', t('mst.copy'), t('mst.copy'))
+    const btnMore = mkBtn('mst-more', t('mst.more'), t('mst.more'))
 
     el.appendChild(btnBold)
     el.appendChild(btnItalic)
     el.appendChild(btnLink)
     el.appendChild(btnCopy)
+    el.appendChild(btnMore)
 
     document.body.appendChild(el)
     return el
@@ -264,6 +266,15 @@ export function initMobileSelectionToolbar(opt: MobileSelectionToolbarOptions): 
     if (ok) opt.notice?.(t('mst.copied') || '已复制', 'ok', 1200)
     else opt.notice?.(t('mst.copyFail') || '复制失败', 'err', 1600)
   })
+  bindButton('mst-more', () => {
+    // 打开右键菜单（调用全局方法）
+    try {
+      const w = window as any
+      if (typeof w.flymdOpenContextMenu === 'function') {
+        w.flymdOpenContextMenu()
+      }
+    } catch {}
+  })
 
   // 监听：选区变化/键盘弹出/收起
   try { document.addEventListener('selectionchange', update, true) } catch {}
@@ -296,6 +307,7 @@ export function initMobileSelectionToolbar(opt: MobileSelectionToolbarOptions): 
         set('mst-italic', 'mst.italic')
         set('mst-link', 'mst.link')
         set('mst-copy', 'mst.copy')
+        set('mst-more', 'mst.more')
       } catch {}
     })
   } catch {}
