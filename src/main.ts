@@ -1499,7 +1499,7 @@ async function transcribeFromAudioFileMenu(): Promise<void> {
       name = r.name
     }
 
-    try { if (noticeId) NotificationManager.updateMessage(noticeId, '正在转写音频…') } catch {}
+    try { if (noticeId) NotificationManager.updateMessage(noticeId, '正在转写音频（硅基流动提供模型支持）…') } catch {}
     const out = await transcribeAudioBlob(blob, name, mimeType)
     insertAtCursor(out)
     try { renderPreview() } catch {}
@@ -8085,7 +8085,6 @@ function showMobileQuickMenu() {
     { label: '插入图片…', action: () => { void handleMobileInsertImages() } },
     ...(isAndroidUi ? ([
       { label: '录音文件转文本…', action: () => { void transcribeFromAudioFileMenu() } },
-      { label: activeAndroidSpeechInput ? '停止语音输入（BiBi）' : '语音输入（BiBi）', action: () => { void toggleAndroidSpeechInputFromMenu() } },
       { label: activeSpeechRecorder ? '停止录音并转写' : '开始录音', action: () => { void toggleRecordAndTranscribeMenu() } },
     ] as TopMenuItemSpec[]) : []),
     { label: `${t('mode.edit')}/${t('mode.read')}`, action: () => { void handleToggleModeShortcut() } },

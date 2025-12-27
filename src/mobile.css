@@ -39,6 +39,15 @@
     transform: translateX(0) !important;
   }
 
+  /* 库侧栏头部：添加安全区域适配，避免与系统状态栏重合 */
+  body.platform-mobile .lib-header {
+    padding-top: var(--mobile-titlebar-pad-top, env(safe-area-inset-top)) !important;
+  }
+
+  body.platform-android .lib-header {
+    padding-top: var(--mobile-titlebar-pad-top, 6px) !important;
+  }
+
   /* 编辑器全屏 */
   #editor {
     width: 100% !important;
