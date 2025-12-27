@@ -11,9 +11,13 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "pretauri": "node scripts/ensure-icons.cjs",
-    "pretauri:dev": "node scripts/ensure-icons.cjs",
-    "pretauri:build": "node scripts/ensure-icons.cjs"
+    "android:patch": "node scripts/patch-android-tauri-settings.cjs && node scripts/patch-android-icons.cjs && node scripts/patch-android-signing.cjs && node scripts/patch-android-immersive.cjs",
+    "pretauri": "node scripts/ensure-icons.cjs && npm run -s android:patch",
+    "posttauri": "npm run -s android:patch",
+    "pretauri:dev": "node scripts/ensure-icons.cjs && npm run -s android:patch",
+    "pretauri:build": "node scripts/ensure-icons.cjs && npm run -s android:patch",
+    "posttauri:dev": "npm run -s android:patch",
+    "posttauri:build": "npm run -s android:patch"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

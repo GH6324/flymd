@@ -453,6 +453,12 @@ body.platform-mobile #ai-assist-win.dock-right {
     margin: 0 auto;
     padding: 14px 12px 20px 12px;
   }
+
+  /* 修复：窄屏两端对齐会把中文“字间距”拉爆（看起来像不居中/排版错乱） */
+  body.platform-mobile .preview p {
+    text-align: left !important;
+    text-justify: auto !important;
+  }
 }
 
 /* ========== 触摸滚动优化 ========== */
