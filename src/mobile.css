@@ -256,10 +256,12 @@ body.platform-mobile #btn-plugins {
 
 /* 右侧组：更多 + 语言（在 titlebar 内，menubar 外） */
 body.platform-mobile #btn-mobile-menu {
-  order: 10;
-  margin-left: auto !important;
-  padding: 0 10px !important;
-  min-width: 40px !important;
+  order: 20; /* 确保在最右侧 */
+  margin-left: 0 !important;
+  padding: 0 !important;
+  min-width: 32px !important;
+  width: 32px;
+  justify-content: center;
 }
 
 body.platform-mobile #btn-lang {
@@ -562,9 +564,9 @@ body.platform-mobile .ext-market-search-input {
 body.platform-mobile .mobile-toolbar {
   display: flex !important;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   margin-left: auto; /* 推到右侧 */
-  padding: 0 8px;
+  padding: 0 4px;
   height: var(--mobile-titlebar-h, 44px);
 }
 
@@ -575,6 +577,7 @@ body.platform-mobile .mobile-toolbar {
 /* 工具栏按钮基础样式 */
 body.platform-mobile .toolbar-btn {
   appearance: none;
+  -webkit-app-region: no-drag;
   border: none;
   background: transparent;
   padding: 0;
@@ -610,6 +613,13 @@ body.platform-mobile .toolbar-btn svg {
   pointer-events: none; /* 防止 SVG 拦截点击事件 */
 }
 
+/* 顶栏菜单项图标化：收紧 padding，避免移动端顶栏溢出 */
+body.platform-mobile .menu-item.icon-button {
+  padding: 0 !important;
+  min-width: 32px !important;
+  justify-content: center;
+}
+
 body.platform-mobile .icon-button:active svg,
 body.platform-mobile .toolbar-btn:active svg {
   stroke: rgba(0, 0, 0, 0.9);
@@ -619,16 +629,6 @@ body.platform-mobile .toolbar-btn:active svg {
 body.platform-mobile .titlebar {
   background: #f8f9fa !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-}
-
-/* 左侧按钮布局调整（与现有规则合并） */
-body.platform-mobile #btn-library {
-  margin-left: 8px;
-}
-
-body.platform-mobile #btn-mobile-menu {
-  order: 20; /* 确保在最右侧 */
-  margin-left: 0 !important; /* 移除旧样式的 margin-left: auto */
 }
 
 /* 隐藏语言切换（移动端不常用） */

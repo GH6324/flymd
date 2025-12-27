@@ -29,6 +29,4 @@ export async function initPlatformIntegration(): Promise<void> {
       initMobileUI()
     }
   } catch {}
-
-  console.log('[Platform] Running on:', platform)
 }

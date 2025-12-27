@@ -12,10 +12,10 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "android:patch": "node scripts/patch-android-tauri-settings.cjs && node scripts/patch-android-icons.cjs && node scripts/patch-android-signing.cjs && node scripts/patch-android-immersive.cjs",
-    "pretauri": "node scripts/ensure-icons.cjs && npm run -s android:patch",
+    "pretauri": "node scripts/ensure-icons.cjs && node scripts/ensure-android-init.cjs && npm run -s android:patch",
     "posttauri": "npm run -s android:patch",
-    "pretauri:dev": "node scripts/ensure-icons.cjs && npm run -s android:patch",
-    "pretauri:build": "node scripts/ensure-icons.cjs && npm run -s android:patch",
+    "pretauri:dev": "node scripts/ensure-icons.cjs && node scripts/ensure-android-init.cjs && npm run -s android:patch",
+    "pretauri:build": "node scripts/ensure-icons.cjs && node scripts/ensure-android-init.cjs && npm run -s android:patch",
     "posttauri:dev": "npm run -s android:patch",
     "posttauri:build": "npm run -s android:patch"
   },

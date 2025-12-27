@@ -48,6 +48,7 @@ import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConf
 import { initPlatformIntegration } from './platform-integration'
 import { ensureAndroidDefaultLibraryRoot } from './platform/androidLibrary'
 import { safDelete, safListDir, safCreateDir, safCreateFile, persistSafUriPermission, safPickFolder, safPrettyName, isSafUninstallUnsafeFolder, safLocationHint } from './platform/androidSaf'
+import { getPlatform } from './platform'
 import { createImageUploader } from './core/imageUpload'
 import { getAppStore, setAppStore } from './core/appStore'
 import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
@@ -1677,8 +1678,8 @@ app.innerHTML = `
     <!-- 右侧工具栏（仅移动端显示） -->
     <div class="mobile-toolbar" id="mobile-toolbar">
       <button class="toolbar-btn" id="btn-mode-toggle" title="${t('mode.edit')}/${t('mode.read')}">源码</button>
-      <button class="toolbar-btn" id="btn-undo" title="撤销" disabled>↶</button>
-      <button class="toolbar-btn" id="btn-redo" title="重做" disabled>↷</button>
+      <button class="toolbar-btn" id="btn-undo" title="撤销">↶</button>
+      <button class="toolbar-btn" id="btn-redo" title="重做">↷</button>
       <button class="toolbar-btn" id="btn-save-mobile" title="${t('file.save')}">💾</button>
       <button class="toolbar-btn" id="btn-find" title="查找">🔍</button>
     </div>
@@ -8140,6 +8141,9 @@ function applyI18nUi() {
         if (insertBtn) insertBtn.textContent = t('dlg.insert')
       }
     } catch {}
+
+    // 移动端：i18n 会重写按钮文本，这里统一恢复顶栏图标
+    try { if (document.body.classList.contains('platform-mobile')) initMobileIcons() } catch {}
   } catch {}
 }
 
@@ -8838,6 +8842,7 @@ function bindEvents() {
         toggleModeIcon(isReadMode)
       } catch (e) {
         console.error('[Mobile] 模式切换失败', e)
+        try { pluginNotice('模式切换失败：' + String((e as any)?.message || e || ''), 'err', 2400) } catch {}
       }
     })
 
@@ -8845,9 +8850,11 @@ function bindEvents() {
     const btnUndo = document.getElementById('btn-undo') as HTMLButtonElement | null
     btnUndo?.addEventListener('click', () => {
       try {
+        try { (editor as HTMLTextAreaElement).focus() } catch {}
         document.execCommand('undo')
       } catch (e) {
         console.warn('[Mobile] 撤销失败', e)
+        try { pluginNotice('撤销失败', 'err', 1600) } catch {}
       }
     })
 
@@ -8855,9 +8862,11 @@ function bindEvents() {
     const btnRedo = document.getElementById('btn-redo') as HTMLButtonElement | null
     btnRedo?.addEventListener('click', () => {
       try {
+        try { (editor as HTMLTextAreaElement).focus() } catch {}
         document.execCommand('redo')
       } catch (e) {
         console.warn('[Mobile] 重做失败', e)
+        try { pluginNotice('重做失败', 'err', 1600) } catch {}
       }
     })
 
@@ -8868,6 +8877,7 @@ function bindEvents() {
         await saveFile()
       } catch (e) {
         console.error('[Mobile] 保存失败', e)
+        try { pluginNotice('保存失败：' + String((e as any)?.message || e || ''), 'err', 2400) } catch {}
       }
     })
 
@@ -8878,10 +8888,9 @@ function bindEvents() {
         showFindPanel()
       } catch (e) {
         console.error('[Mobile] 查找面板打开失败', e)
+        try { pluginNotice('查找失败：' + String((e as any)?.message || e || ''), 'err', 2400) } catch {}
       }
     })
-
-    console.log('[Mobile] 工具栏事件绑定完成')
   }
 
   // 全局快捷键：Ctrl+H 打开查找替换
@@ -10296,6 +10305,8 @@ function bindEvents() {
           await ensurePluginsDir()
           // 初始化统一的"插件"菜单按钮
           initPluginsMenu()
+          // 移动端：插件按钮是后插入的，这里补一次图标替换
+          try { if (document.body.classList.contains('platform-mobile')) initMobileIcons() } catch {}
           await loadAndActivateEnabledPlugins()
           await ensureCoreExtensionsAfterStartup(store, APP_VERSION, activatePlugin)
           // 启动后后台检查一次扩展更新（仅提示，不自动更新）
