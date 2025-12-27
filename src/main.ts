@@ -868,7 +868,7 @@ let transcribeAudioFileBusy = false
 
 // Android：录音中的悬浮提示/一键停止
 const SPEECH_RECORD_FAB_ID = 'flymd-speech-record-fab'
-const SPEECH_RECORD_FAB_DEFAULT_TEXT = '录音（该功能由硅基流动提供模型支持）'
+const SPEECH_RECORD_FAB_DEFAULT_TEXT = '录音（硅基流动提供模型支持）'
 const BIBI_SPEECH_INSTALL_URL = 'https://bibi.brycewg.com/'
 type SpeechRecordFabState = {
   el: HTMLButtonElement
@@ -1458,7 +1458,7 @@ async function maybeOrganizeTranscription(rawText: string): Promise<void> {
 
 async function transcribeFromAudioFileMenu(): Promise<void> {
   if (transcribeAudioFileBusy) {
-    pluginNotice('正在转写音频（该功能由硅基流动提供模型支持），请稍候…', 'err', 2000)
+    pluginNotice('正在转写音频（硅基流动提供模型支持），请稍候…', 'err', 2000)
     return
   }
   transcribeAudioFileBusy = true
