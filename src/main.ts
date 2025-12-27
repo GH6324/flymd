@@ -1713,22 +1713,8 @@ const _platformIntegrationReady = initPlatformIntegration().catch((e) => {
 try { initPlatformClass() } catch {}
 // 移动端：根据 visualViewport 自动计算"键盘占用高度"，用于底部菜单避开输入法遮挡
 try { installMobileKeyboardInsetCssVar() } catch {}
-// 移动端：初始化图标和工具栏事件
-// 注意：这里必须延迟到本文件所有顶层初始化完成后再执行（否则会在 const editor 之前触发，直接炸掉）
-try {
-  if (isMobileUiFast()) {
-    Promise.resolve().then(() => {
-      try {
-        initMobileIcons()
-        initMobileToolbar()
-      } catch (e) {
-        console.error('[Mobile] 图标/工具栏初始化失败', e)
-      }
-    })
-  }
-} catch (e) {
-  console.error('[Mobile] 图标/工具栏初始化失败', e)
-}
+// 移动端：先把顶栏文字替换成图标；事件绑定在 bindEvents() 内完成，避免作用域/初始化顺序问题
+try { if (isMobileUiFast()) initMobileIcons() } catch {}
 // 应用已保存主题并挂载主题 UI
 try { applySavedTheme() } catch {}
 try { initThemeUI() } catch {}
@@ -8899,6 +8885,14 @@ function bindEvents() {
       }
     })
   }
+
+  // 移动端：在事件绑定阶段初始化顶栏按钮（之前在顶层调用会因为作用域导致根本没绑上）
+  try {
+    if (isMobileUiFast()) {
+      try { initMobileIcons() } catch {}
+      try { initMobileToolbar() } catch {}
+    }
+  } catch {}
 
   // 全局快捷键：Ctrl+H 打开查找替换
   document.addEventListener('keydown', (e: KeyboardEvent) => {

@@ -63,6 +63,82 @@ function maybeSetupJavaFromAndroidStudio() {
   } catch {}
 }
 
+function listDirs(dir) {
+  try {
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+  } catch {
+    return []
+  }
+}
+
+function compareVersionLike(a, b) {
+  // 只做够用的比较：按 . 分割，逐段按数字比较；无法解析的段按字符串比较。
+  const pa = String(a || '').split('.')
+  const pb = String(b || '').split('.')
+  const n = Math.max(pa.length, pb.length)
+  for (let i = 0; i < n; i += 1) {
+    const sa = pa[i] ?? ''
+    const sb = pb[i] ?? ''
+    const na = Number(sa)
+    const nb = Number(sb)
+    const aIsNum = Number.isFinite(na) && String(na) === String(parseInt(sa, 10))
+    const bIsNum = Number.isFinite(nb) && String(nb) === String(parseInt(sb, 10))
+    if (aIsNum && bIsNum) {
+      if (na !== nb) return na - nb
+      continue
+    }
+    if (sa !== sb) return sa < sb ? -1 : 1
+  }
+  return 0
+}
+
+function maybeSetupAndroidSdkAndNdk() {
+  // 目标：让 Rust/CMake 能找到 SDK/NDK（aws-lc-sys 等依赖 CMake 的 crate 否则会直接炸）
+  // 只做“缺了才补”的兜底，不改用户已有环境变量。
+
+  // 1) SDK
+  let sdk = String(process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || '').trim()
+  if (!sdk) {
+    if (process.platform === 'win32') {
+      const home = String(process.env.USERPROFILE || '').trim()
+      if (home) {
+        const cand = path.join(home, 'AppData', 'Local', 'Android', 'Sdk')
+        if (exists(cand)) sdk = cand
+      }
+    }
+  }
+  if (sdk && exists(sdk)) {
+    if (!process.env.ANDROID_HOME) process.env.ANDROID_HOME = sdk
+    if (!process.env.ANDROID_SDK_ROOT) process.env.ANDROID_SDK_ROOT = sdk
+  }
+
+  // 2) NDK（CMake 认 ANDROID_NDK / ANDROID_NDK_ROOT）
+  let ndk = String(process.env.ANDROID_NDK_ROOT || process.env.ANDROID_NDK || process.env.ANDROID_NDK_HOME || process.env.NDK_HOME || '').trim()
+  if (!ndk && sdk) {
+    const ndkRoot = path.join(sdk, 'ndk')
+    if (exists(ndkRoot)) {
+      const vers = listDirs(ndkRoot)
+      vers.sort(compareVersionLike)
+      const pick = vers[vers.length - 1]
+      if (pick) ndk = path.join(ndkRoot, pick)
+    }
+    // 旧式安装：ndk-bundle
+    if (!ndk) {
+      const bundle = path.join(sdk, 'ndk-bundle')
+      if (exists(bundle)) ndk = bundle
+    }
+  }
+  if (ndk && exists(ndk)) {
+    if (!process.env.ANDROID_NDK_ROOT) process.env.ANDROID_NDK_ROOT = ndk
+    if (!process.env.ANDROID_NDK) process.env.ANDROID_NDK = ndk
+    if (!process.env.ANDROID_NDK_HOME) process.env.ANDROID_NDK_HOME = ndk
+    if (!process.env.NDK_HOME) process.env.NDK_HOME = ndk
+  }
+}
+
 function binPath(name) {
   const bin = process.platform === 'win32' ? `${name}.cmd` : name
   return path.join(process.cwd(), 'node_modules', '.bin', bin)
@@ -92,6 +168,7 @@ function main() {
 
   if (isAndroid) {
     maybeSetupJavaFromAndroidStudio()
+    maybeSetupAndroidSdkAndNdk()
 
     const androidRoot = path.join(process.cwd(), 'src-tauri', 'gen', 'android')
     const needInit = sub !== 'init' && !exists(androidRoot)
