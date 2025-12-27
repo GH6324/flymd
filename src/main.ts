@@ -1571,6 +1571,36 @@ function asrNoteQueueFlush(note: ActiveAndroidAsrNote): void {
   } catch {}
 }
 
+function asrNoteQueueFlushFinal(note: ActiveAndroidAsrNote): void {
+  try {
+    asrNoteQueueFlush(note)
+    const ws = note.ws
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    if (!note.qLen || !note.q.length) return
+
+    const chunk = new Uint8Array(ANDROID_ASR_CHUNK_BYTES)
+    let filled = 0
+    while (filled < ANDROID_ASR_CHUNK_BYTES && note.q.length) {
+      const head = note.q[0]
+      const need = ANDROID_ASR_CHUNK_BYTES - filled
+      if (head.length <= need) {
+        chunk.set(head, filled)
+        filled += head.length
+        note.q.shift()
+      } else {
+        chunk.set(head.subarray(0, need), filled)
+        filled += need
+        note.q[0] = head.subarray(need)
+      }
+    }
+    note.q = []
+    note.qLen = 0
+    if (filled > 0) {
+      try { ws.send(chunk) } catch {}
+    }
+  } catch {}
+}
+
 async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
   // 只做 Android
   const platform = await getPlatform()
@@ -1875,6 +1905,7 @@ async function toggleAndroidAsrNotePauseResume(clickedPause: boolean): Promise<v
     if (note.running) {
       // 暂停（断开连接）
       note.ending = 'pause'
+      asrNoteQueueFlushFinal(note)
       try { note.ws?.send(JSON.stringify({ type: 'stop' })) } catch {}
       try { note.ws?.close() } catch {}
       await finishAndroidAsrNoteSession(note, false)
@@ -1895,6 +1926,7 @@ async function stopAndroidAsrNoteFromFab(exitMode: boolean): Promise<void> {
       return
     }
     note.ending = exitMode ? 'stop' : 'pause'
+    asrNoteQueueFlushFinal(note)
     try { note.ws?.send(JSON.stringify({ type: 'stop' })) } catch {}
     try { note.ws?.close() } catch {}
     await finishAndroidAsrNoteSession(note, false)
