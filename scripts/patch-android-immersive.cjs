@@ -40,32 +40,44 @@ function findMainActivityKotlin(projectRoot) {
 
 function patchAndroidManifestPermissions(projectRoot) {
   try {
-    const manifest = path.join(projectRoot, 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
-    if (!fs.existsSync(manifest)) {
-      console.warn('[patch-android-immersive] 未找到 AndroidManifest.xml（可能还没执行 tauri android init），跳过麦克风权限注入')
+    const appSrc = path.join(projectRoot, 'src-tauri', 'gen', 'android', 'app', 'src')
+    if (!fs.existsSync(appSrc)) {
+      console.warn('[patch-android-immersive] 未找到 gen/android/app/src（可能还没执行 tauri android init），跳过麦克风权限注入')
       return false
     }
-    const s = fs.readFileSync(manifest, 'utf8')
-    if (s.includes('android.permission.RECORD_AUDIO')) {
-      return true
+
+    const manifests = walk(appSrc).filter(p => p.endsWith(path.sep + 'AndroidManifest.xml'))
+    if (!manifests.length) {
+      console.warn('[patch-android-immersive] 未找到任何 AndroidManifest.xml，跳过麦克风权限注入')
+      return false
     }
 
     // flymd:audio-permission-v1
     // 说明：WebView getUserMedia 需要 Manifest 声明 RECORD_AUDIO，否则前端永远 Permission denied。
     const block = `  <!-- flymd:audio-permission-v1 -->\n  <uses-permission android:name="android.permission.RECORD_AUDIO" />\n  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n`
 
-    const m = s.match(/<manifest\\b[^>]*>/)
-    if (!m || m.index == null) {
-      console.warn(`[patch-android-immersive] AndroidManifest.xml 未找到 <manifest>，跳过: ${manifest}`)
-      return false
-    }
+    let ok = false
+    for (const manifest of manifests) {
+      const s = fs.readFileSync(manifest, 'utf8')
+      if (s.includes('android.permission.RECORD_AUDIO')) {
+        ok = true
+        continue
+      }
 
-    // 在 <manifest ...> 后插入 uses-permission（尽量不碰 <application>）
-    const insertPos = m.index + m[0].length
-    const next = s.slice(0, insertPos) + '\n' + block + s.slice(insertPos)
-    fs.writeFileSync(manifest, next, 'utf8')
-    console.log(`[patch-android-immersive] 已写入麦克风权限声明: ${manifest}`)
-    return true
+      const m = s.match(/<manifest\\b[^>]*>/)
+      if (!m || m.index == null) {
+        console.warn(`[patch-android-immersive] AndroidManifest.xml 未找到 <manifest>，跳过: ${manifest}`)
+        continue
+      }
+
+      // 在 <manifest ...> 后插入 uses-permission（尽量不碰 <application>）
+      const insertPos = m.index + m[0].length
+      const next = s.slice(0, insertPos) + '\n' + block + s.slice(insertPos)
+      fs.writeFileSync(manifest, next, 'utf8')
+      console.log(`[patch-android-immersive] 已写入麦克风权限声明: ${manifest}`)
+      ok = true
+    }
+    return ok
   } catch (e) {
     console.warn(`[patch-android-immersive] 写入 AndroidManifest 麦克风权限失败: ${e?.message || e}`)
     return false

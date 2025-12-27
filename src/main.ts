@@ -861,6 +861,7 @@ type ActiveSpeechRecorder = {
 }
 
 let activeSpeechRecorder: ActiveSpeechRecorder | null = null
+let transcribeAudioFileBusy = false
 
 function fnv1a32Hex(str: string): string {
   try {
@@ -1022,7 +1023,19 @@ async function readAudioBlobFromPickedPath(path: string, nameHint: string): Prom
 }
 
 async function transcribeAudioBlob(blob: Blob, name: string, mimeType: string): Promise<string> {
-  const file = new File([blob], name, { type: mimeType || 'application/octet-stream' })
+  const fallbackName = String(name || '').trim() || ((blob instanceof File) ? String((blob as any).name || '') : '') || 'audio'
+  const fallbackType = String(mimeType || '').trim() || String((blob as any)?.type || '') || 'application/octet-stream'
+  const file = (() => {
+    try {
+      if (blob instanceof File) {
+        const sameName = !!fallbackName && blob.name === fallbackName
+        const sameType = !!fallbackType && blob.type === fallbackType
+        if (sameName && sameType) return blob
+        return new File([blob], fallbackName, { type: fallbackType })
+      }
+    } catch {}
+    return new File([blob], fallbackName, { type: fallbackType })
+  })()
   const form = new FormData()
   form.append('file', file)
   const headers: Record<string, string> = { 'X-Flymd-Token': buildRollingClientToken() }
@@ -1057,23 +1070,47 @@ async function maybeOrganizeTranscription(rawText: string): Promise<void> {
 }
 
 async function transcribeFromAudioFileMenu(): Promise<void> {
+  if (transcribeAudioFileBusy) {
+    pluginNotice('正在转写音频，请稍候…', 'err', 2000)
+    return
+  }
+  transcribeAudioFileBusy = true
   try {
-    const sel = await open({
-      multiple: false,
-      filters: [
-        { name: 'Audio', extensions: ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'webm'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    })
-    if (!sel) return
-    const path = typeof sel === 'string' ? sel : ((sel as any)?.path ?? (sel as any)?.filePath ?? String(sel))
-    const name = (() => {
-      const p = String(path || '')
-      const base = p.split(/[/\\]/).pop() || ''
-      return base || 'audio'
-    })()
+    const platform = await (async () => { try { return await getPlatform() } catch { return '' } })()
+
+    let blob: Blob
+    let mimeType = ''
+    let name = 'audio'
+
+    if (platform === 'android') {
+      // Android：优先使用 <input type="file">，避免某些 WebView/插件首轮选择不回调导致“第二次才触发两次”的诡异行为。
+      const picked = await pickAudioFileFromInput()
+      if (!picked) return
+      name = String((picked as any)?.name || '').trim() || 'audio'
+      mimeType = String((picked as any)?.type || '').trim() || guessAudioMimeType(name)
+      blob = picked
+    } else {
+      const sel = await open({
+        multiple: false,
+        filters: [
+          { name: 'Audio', extensions: ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'webm'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      })
+      if (!sel) return
+      const path = typeof sel === 'string' ? sel : ((sel as any)?.path ?? (sel as any)?.filePath ?? String(sel))
+      name = (() => {
+        const p = String(path || '')
+        const base = p.split(/[/\\]/).pop() || ''
+        return base || 'audio'
+      })()
+      const r = await readAudioBlobFromPickedPath(path, name)
+      blob = r.blob
+      mimeType = r.mimeType
+      name = r.name
+    }
+
     pluginNotice('正在转写音频…', 'ok', 1800)
-    const { blob, mimeType } = await readAudioBlobFromPickedPath(path, name)
     const out = await transcribeAudioBlob(blob, name, mimeType)
     insertAtCursor(out)
     try { renderPreview() } catch {}
@@ -1081,6 +1118,8 @@ async function transcribeFromAudioFileMenu(): Promise<void> {
   } catch (e) {
     console.error('录音文件转写失败', e)
     pluginNotice('转写失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+  } finally {
+    transcribeAudioFileBusy = false
   }
 }
 
@@ -7465,6 +7504,51 @@ async function pickImageFilesFromInput(): Promise<File[]> {
       }, 90_000)
     } catch {
       resolve([])
+    }
+  })
+}
+
+async function pickAudioFileFromInput(): Promise<File | null> {
+  return await new Promise<File | null>((resolve) => {
+    try {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'audio/*,.mp3,.wav,.webm,.opus,.pcm'
+      input.multiple = false
+      input.style.position = 'fixed'
+      input.style.left = '-9999px'
+      input.style.top = '-9999px'
+      const cleanup = () => {
+        try { input.value = '' } catch {}
+        try { input.remove() } catch {}
+      }
+      input.addEventListener(
+        'change',
+        () => {
+          try {
+            const f = (input.files && input.files[0]) ? input.files[0] : null
+            cleanup()
+            resolve(f)
+          } catch {
+            cleanup()
+            resolve(null)
+          }
+        },
+        { once: true },
+      )
+      document.body.appendChild(input)
+      input.click()
+      // 某些 WebView 下用户取消不会触发 change，这里给一个温和兜底
+      window.setTimeout(() => {
+        try {
+          if (document.body.contains(input)) {
+            cleanup()
+            resolve(null)
+          }
+        } catch {}
+      }, 90_000)
+    } catch {
+      resolve(null)
     }
   })
 }
