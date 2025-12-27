@@ -64,7 +64,7 @@ function patchAndroidManifestPermissions(projectRoot) {
         continue
       }
 
-      const m = s.match(/<manifest\\b[^>]*>/)
+      const m = s.match(/<manifest\b[^>]*>/)
       if (!m || m.index == null) {
         console.warn(`[patch-android-immersive] AndroidManifest.xml 未找到 <manifest>，跳过: ${manifest}`)
         continue

@@ -1714,10 +1714,17 @@ try { initPlatformClass() } catch {}
 // 移动端：根据 visualViewport 自动计算"键盘占用高度"，用于底部菜单避开输入法遮挡
 try { installMobileKeyboardInsetCssVar() } catch {}
 // 移动端：初始化图标和工具栏事件
+// 注意：这里必须延迟到本文件所有顶层初始化完成后再执行（否则会在 const editor 之前触发，直接炸掉）
 try {
   if (isMobileUiFast()) {
-    initMobileIcons()
-    initMobileToolbar()
+    Promise.resolve().then(() => {
+      try {
+        initMobileIcons()
+        initMobileToolbar()
+      } catch (e) {
+        console.error('[Mobile] 图标/工具栏初始化失败', e)
+      }
+    })
   }
 } catch (e) {
   console.error('[Mobile] 图标/工具栏初始化失败', e)

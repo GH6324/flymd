@@ -18,6 +18,51 @@ function exists(p) {
   try { return fs.existsSync(p) } catch { return false }
 }
 
+function hasJavaInPath() {
+  try {
+    const res = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['java'], {
+      cwd: process.cwd(),
+      stdio: 'ignore',
+      shell: process.platform === 'win32',
+    })
+    return res.status === 0
+  } catch {
+    return false
+  }
+}
+
+function maybeSetupJavaFromAndroidStudio() {
+  // 只在 Windows 做“找 Android Studio 自带 JBR”这个兜底；其它平台让用户自己配。
+  if (process.platform !== 'win32') return
+
+  try {
+    const javaHome = String(process.env.JAVA_HOME || '').trim()
+    if (javaHome && exists(path.join(javaHome, 'bin', 'java.exe'))) return
+    if (hasJavaInPath()) return
+
+    // 常见安装位置：C:\Program Files\Android\Android Studio\jbr；有些人装在 D 盘
+    const roots = [
+      'C:\\Program Files\\Android\\Android Studio',
+      'C:\\Program Files (x86)\\Android\\Android Studio',
+      'D:\\Program Files\\Android\\Android Studio',
+      'D:\\Program Files (x86)\\Android\\Android Studio',
+    ]
+
+    for (const studioRoot of roots) {
+      const jbr = path.join(studioRoot, 'jbr')
+      const javaExe = path.join(jbr, 'bin', 'java.exe')
+      if (!exists(javaExe)) continue
+      process.env.JAVA_HOME = jbr
+      // 子进程继承 PATH，确保 tauri CLI 能找到 java
+      process.env.PATH = path.join(jbr, 'bin') + path.delimiter + String(process.env.PATH || '')
+      console.log(`[tauri-wrapper] 未检测到 java，已自动设置 JAVA_HOME: ${jbr}`)
+      return
+    }
+
+    console.warn('[tauri-wrapper] 未检测到 Java（JAVA_HOME 未设置且 PATH 中无 java），请在系统环境变量中设置 JAVA_HOME 后重试。')
+  } catch {}
+}
+
 function binPath(name) {
   const bin = process.platform === 'win32' ? `${name}.cmd` : name
   return path.join(process.cwd(), 'node_modules', '.bin', bin)
@@ -46,6 +91,8 @@ function main() {
   const sub = String(args[1] || '')
 
   if (isAndroid) {
+    maybeSetupJavaFromAndroidStudio()
+
     const androidRoot = path.join(process.cwd(), 'src-tauri', 'gen', 'android')
     const needInit = sub !== 'init' && !exists(androidRoot)
 

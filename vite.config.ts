@@ -20,7 +20,8 @@ export default defineConfig(({ mode }) => ({
     dedupe: ['katex', '@milkdown/prose'] // 去重，避免多个版本
   },
   server: {
-    host: '127.0.0.1',
+    // 允许手机/真机通过局域网访问（Tauri Android dev 需要）
+    host: '0.0.0.0',
     port: 5173,
     strictPort: true
   },
