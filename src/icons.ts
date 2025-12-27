@@ -4,6 +4,7 @@
  */
 
 import {
+  createElement,
   Library,
   Puzzle,
   Menu,
@@ -24,24 +25,32 @@ function getIconColor(): string {
 
 // 创建 SVG 图标元素
 function createIcon(
-  iconFunction: typeof Library,
+  iconData: typeof Library,
   customAttrs?: { color?: string; size?: number }
 ): SVGSVGElement {
   const color = customAttrs?.color || getIconColor()
   const size = customAttrs?.size || 20
 
-  const svg = iconFunction.toSvg({
-    width: size,
-    height: size,
-    color: color,
-    'stroke-width': 2,
-    class: 'mobile-icon'
-  })
+  console.log(`[Icons] 创建图标，颜色: ${color}, 尺寸: ${size}`)
 
-  // 将 SVG 字符串转换为 DOM 元素
-  const template = document.createElement('template')
-  template.innerHTML = svg.trim()
-  return template.content.firstChild as SVGSVGElement
+  try {
+    // 使用 Lucide 的 createElement API
+    const iconElement = createElement(iconData)
+
+    // 设置自定义属性
+    iconElement.setAttribute('width', String(size))
+    iconElement.setAttribute('height', String(size))
+    iconElement.setAttribute('stroke', color)
+    iconElement.setAttribute('stroke-width', '2')
+    iconElement.classList.add('mobile-icon')
+
+    console.log(`[Icons] createElement 成功:`, iconElement)
+
+    return iconElement as SVGSVGElement
+  } catch (e) {
+    console.error(`[Icons] createIcon 出错:`, e)
+    throw e
+  }
 }
 
 // 图标映射表（按钮 ID → 图标函数）
@@ -68,19 +77,35 @@ export function replaceWithIcon(
   iconKey: keyof typeof MOBILE_ICONS,
   customAttrs?: { color?: string; size?: number }
 ): void {
+  console.log(`[Icons] 尝试替换按钮: ${buttonId} -> ${iconKey}`)
+
   const button = document.getElementById(buttonId)
   if (!button) {
     console.warn(`[Icons] 未找到按钮: ${buttonId}`)
     return
   }
 
-  const iconFn = MOBILE_ICONS[iconKey]
-  const svg = createIcon(iconFn, customAttrs)
+  console.log(`[Icons] 找到按钮: ${buttonId}`, button)
 
-  // 清空按钮文本，插入图标
-  button.innerHTML = ''
-  button.appendChild(svg)
-  button.classList.add('icon-button')
+  const iconFn = MOBILE_ICONS[iconKey]
+  if (!iconFn) {
+    console.error(`[Icons] 未找到图标函数: ${iconKey}`)
+    return
+  }
+
+  try {
+    const svg = createIcon(iconFn, customAttrs)
+    console.log(`[Icons] 创建SVG成功: ${buttonId}`, svg)
+
+    // 清空按钮文本，插入图标
+    button.innerHTML = ''
+    button.appendChild(svg)
+    button.classList.add('icon-button')
+
+    console.log(`[Icons] 按钮 ${buttonId} 图标替换成功`)
+  } catch (e) {
+    console.error(`[Icons] 替换按钮 ${buttonId} 时出错:`, e)
+  }
 }
 
 /**
@@ -105,7 +130,7 @@ export function initMobileIcons(): void {
   replaceWithIcon('btn-mode-toggle', 'btn-mode-toggle')
   replaceWithIcon('btn-undo', 'btn-undo')
   replaceWithIcon('btn-redo', 'btn-redo')
-  replaceWithIcon('btn-save', 'btn-save')
+  replaceWithIcon('btn-save-mobile', 'btn-save')
   replaceWithIcon('btn-find', 'btn-find')
 
   console.log('[Icons] 移动端图标初始化完成')

@@ -267,18 +267,15 @@ export function initMobileSelectionToolbar(opt: MobileSelectionToolbarOptions): 
     else opt.notice?.(t('mst.copyFail') || '复制失败', 'err', 1600)
   })
   bindButton('mst-more', () => {
-    // 打开顶栏“更多”（移动端）
+    try {
+      // 优先打开“右键菜单”（用户期望：选中后的“更多”=上下文菜单）
+      const w = window as any
+      if (typeof w.flymdOpenContextMenu === 'function') { w.flymdOpenContextMenu(); return }
+    } catch {}
+    // 兜底：顶栏“更多”（避免极少数场景没有右键菜单入口时彻底没法用）
     try {
       const el = document.getElementById('btn-mobile-menu') as HTMLElement | null
-      if (el) {
-        el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-        return
-      }
-    } catch {}
-    // 兜底：旧入口（避免少数旧 UI/主题没有 btn-mobile-menu 时彻底没法用）
-    try {
-      const w = window as any
-      if (typeof w.flymdOpenContextMenu === 'function') w.flymdOpenContextMenu()
+      if (el) el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     } catch {}
   })
 

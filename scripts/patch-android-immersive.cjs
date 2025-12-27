@@ -90,6 +90,7 @@ function patchMainActivity(filePath) {
   // SAF folder picker：兼容 v1/v2 标记
   const hasFolderPicker = original.includes('flymd:saf-folder-picker-v1') || original.includes('flymd:saf-folder-picker-v2')
   const hasFlymdPickFolder = /fun\s+flymdPickFolder\s*\(/.test(original)
+  const hasMicPermission = original.includes('flymd:mic-permission-v1') || /fun\s+flymdEnsureRecordAudioPermission\s*\(/.test(original)
 
   let content = original
 
@@ -183,6 +184,40 @@ ${bodyIndent}}
     return true
   }
 
+  function injectMicPermissionHookIntoExistingOnRequestPermissionsResult() {
+    if (content.includes('flymd:mic-permission-hook-v1')) return false
+    const m = content.match(/^(\s*)override\s+fun\s+onRequestPermissionsResult\s*\(([^)]*)\)\s*\{/m)
+    if (!m || m.index == null) return false
+    const indent = m[1] || ''
+    const params = m[2] || ''
+    const openIdx = (m.index + m[0].length) - 1 // '{'
+    const closeIdx = findMatchingBrace(content, openIdx)
+    if (openIdx < 0 || closeIdx < 0) return false
+
+    const names = parseParamNames(params)
+    const reqName = names[0] || 'requestCode'
+    const grantsName = names[2] || 'grantResults'
+    const bodyIndent = indent + '  '
+
+    const hook = `
+${bodyIndent}// flymd:mic-permission-hook-v1
+${bodyIndent}if (${reqName} == flymdMicPermReqCode) {
+${bodyIndent}  synchronized(flymdMicPermLock) {
+${bodyIndent}    var ok = false
+${bodyIndent}    try {
+${bodyIndent}      if (${grantsName}.isNotEmpty() && ${grantsName}[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) ok = true
+${bodyIndent}    } catch (_: Throwable) {}
+${bodyIndent}    flymdMicPermGranted = ok
+${bodyIndent}    flymdMicPermDone = true
+${bodyIndent}    flymdMicPermLock.notifyAll()
+${bodyIndent}  }
+${bodyIndent}}
+`
+    const insertPos = openIdx + 1
+    content = content.slice(0, insertPos) + hook + content.slice(insertPos)
+    return true
+  }
+
   const mainClassLine = content.match(/^(\s*class\s+MainActivity\b[^\n]*)$/m)?.[1]
   if (!mainClassLine) {
     console.warn(`[patch-android-immersive] 未找到 MainActivity 类声明，跳过: ${filePath}`)
@@ -191,6 +226,7 @@ ${bodyIndent}}
 
   const classHasBody = mainClassLine.includes('{') || /class\s+MainActivity\b[^{\n]*\{/.test(content)
   const hasOnActivityResult = /override\s+fun\s+onActivityResult\s*\(/.test(content)
+  const hasOnRequestPermissionsResult = /override\s+fun\s+onRequestPermissionsResult\s*\(/.test(content)
 
   // 0) 如果模板是 `class MainActivity : ...()`（无 class body），先补上 `{ ... }`，避免后续找不到 `}` 插入点
   if (!classHasBody) {
@@ -338,11 +374,92 @@ ${hasOnActivityResult ? '' : `
 `)
   }
 
+  // 麦克风权限：getUserMedia 需要 Manifest + 运行时权限；有些 WebView 不会自动弹系统权限框，必须 ActivityCompat.requestPermissions。
+  const needMicPermissionCore = !/fun\s+flymdEnsureRecordAudioPermission\s*\(/.test(content)
+  const needMicPermissionHook = hasOnRequestPermissionsResult && !content.includes('flymd:mic-permission-hook-v1')
+  if (needMicPermissionHook) {
+    const hooked = injectMicPermissionHookIntoExistingOnRequestPermissionsResult()
+    if (!hooked) {
+      console.warn(`[patch-android-immersive] 注入 mic permission hook 失败（未找到 onRequestPermissionsResult 方法体），录音权限可能无法正常回调: ${filePath}`)
+    }
+  }
+  if (needMicPermissionCore) {
+    blocks.push(`
+  // flymd:mic-permission-v1
+  private val flymdMicPermLock = java.lang.Object()
+  @Volatile private var flymdMicPermDone: Boolean = false
+  @Volatile private var flymdMicPermGranted: Boolean = false
+  private val flymdMicPermReqCode: Int = 61707
+
+  @androidx.annotation.Keep
+  fun flymdEnsureRecordAudioPermission(timeoutMs: Long): Boolean {
+    try {
+      val perm = "android.permission.RECORD_AUDIO"
+      val granted =
+        androidx.core.content.ContextCompat.checkSelfPermission(this, perm) == android.content.pm.PackageManager.PERMISSION_GRANTED
+      if (granted) return true
+
+      synchronized(flymdMicPermLock) {
+        flymdMicPermDone = false
+        flymdMicPermGranted = false
+      }
+
+      runOnUiThread {
+        try {
+          androidx.core.app.ActivityCompat.requestPermissions(this, arrayOf(perm), flymdMicPermReqCode)
+        } catch (_: Throwable) {
+          synchronized(flymdMicPermLock) {
+            flymdMicPermDone = true
+            flymdMicPermGranted = false
+            flymdMicPermLock.notifyAll()
+          }
+        }
+      }
+
+      val waitTotal = if (timeoutMs > 0) timeoutMs else 60_000L
+      val end = android.os.SystemClock.uptimeMillis() + waitTotal
+      synchronized(flymdMicPermLock) {
+        while (!flymdMicPermDone) {
+          val waitMs = end - android.os.SystemClock.uptimeMillis()
+          if (waitMs <= 0) break
+          try { flymdMicPermLock.wait(waitMs) } catch (_: Throwable) {}
+        }
+        return flymdMicPermDone && flymdMicPermGranted
+      }
+    } catch (_: Throwable) {
+      return false
+    }
+  }
+
+${hasOnRequestPermissionsResult ? '' : `
+  override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+    // flymd:mic-permission-hook-v1
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    if (requestCode != flymdMicPermReqCode) return
+    synchronized(flymdMicPermLock) {
+      var ok = false
+      try {
+        if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) ok = true
+      } catch (_: Throwable) {}
+      flymdMicPermGranted = ok
+      flymdMicPermDone = true
+      flymdMicPermLock.notifyAll()
+    }
+  }`}
+`)
+  }
+
   // 兜底：如果文件里已有 v1/v2 folder picker，但未标记 @Keep，则补上，防止 release 混淆/裁剪导致 JNI 找不到方法
   if (hasFolderPicker || hasFlymdPickFolder) {
     ensureKeepNearFun('flymdPickFolder')
     // 仅在我们已打过 hook 时，才尝试给 onActivityResult 加 Keep（避免误改用户自定义方法）
     if (content.includes('flymd:saf-folder-picker-hook-v1')) ensureKeepNearFun('onActivityResult')
+  }
+
+  // 兜底：如果已有 mic permission，但未标记 @Keep，则补上（JNI 调用需要）
+  if (hasMicPermission || /fun\s+flymdEnsureRecordAudioPermission\s*\(/.test(content)) {
+    ensureKeepNearFun('flymdEnsureRecordAudioPermission')
+    if (content.includes('flymd:mic-permission-hook-v1')) ensureKeepNearFun('onRequestPermissionsResult')
   }
 
   const mutatedBeforeBlocks = content !== original
@@ -381,11 +498,16 @@ function patchProguardKeepRules(projectRoot) {
       return false
     }
     const s = fs.readFileSync(proguard, 'utf8')
-    if (s.includes('flymd:saf-folder-picker-keep-v1')) {
+    const hasFolderKeep = s.includes('flymd:saf-folder-picker-keep-v1')
+    const hasMicKeep = s.includes('flymd:mic-permission-keep-v1')
+    if (hasFolderKeep && hasMicKeep) {
       console.log('[patch-android-immersive] Proguard keep 规则已存在，跳过')
       return true
     }
-    const block = `
+
+    let block = '\n'
+    if (!hasFolderKeep) {
+      block += `
 
 # flymd:saf-folder-picker-keep-v1
 # 说明：release 可能启用 R8/Proguard；flymdPickFolder 仅被 JNI 调用，容易被裁剪/改名导致运行时找不到方法。
@@ -393,6 +515,18 @@ function patchProguardKeepRules(projectRoot) {
     public java.lang.String flymdPickFolder(long);
 }
 `
+    }
+    if (!hasMicKeep) {
+      block += `
+
+# flymd:mic-permission-keep-v1
+# 说明：flymdEnsureRecordAudioPermission 仅被 JNI 调用；若被裁剪/改名，会导致录音权限请求永远失败。
+-keepclassmembers class **.MainActivity {
+    public boolean flymdEnsureRecordAudioPermission(long);
+}
+`
+    }
+
     fs.writeFileSync(proguard, s.trimEnd() + block + '\n', 'utf8')
     console.log(`[patch-android-immersive] 已写入 Proguard keep 规则: ${proguard}`)
     return true

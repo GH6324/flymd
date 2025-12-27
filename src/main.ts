@@ -1077,6 +1077,8 @@ async function transcribeFromAudioFileMenu(): Promise<void> {
     return
   }
   transcribeAudioFileBusy = true
+  const noticeId = (() => { try { return NotificationManager.show('sync', '请选择音频文件…', 0) } catch { return '' } })()
+  let noticeHideScheduled = false
   try {
     const platform = await (async () => { try { return await getPlatform() } catch { return '' } })()
 
@@ -1112,16 +1114,35 @@ async function transcribeFromAudioFileMenu(): Promise<void> {
       name = r.name
     }
 
-    pluginNotice('正在转写音频…', 'ok', 1800)
+    try { if (noticeId) NotificationManager.updateMessage(noticeId, '正在转写音频…') } catch {}
     const out = await transcribeAudioBlob(blob, name, mimeType)
     insertAtCursor(out)
     try { renderPreview() } catch {}
     await maybeOrganizeTranscription(out)
+    try {
+      if (noticeId) {
+        NotificationManager.updateMessage(noticeId, '转写完成')
+        noticeHideScheduled = true
+        window.setTimeout(() => { try { NotificationManager.hide(noticeId) } catch {} }, 800)
+      }
+    } catch {}
   } catch (e) {
     console.error('录音文件转写失败', e)
-    pluginNotice('转写失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+    const msg = '转写失败：' + String((e as any)?.message || e || '')
+    try {
+      if (noticeId) {
+        NotificationManager.updateMessage(noticeId, msg)
+        noticeHideScheduled = true
+        window.setTimeout(() => { try { NotificationManager.hide(noticeId) } catch {} }, 3200)
+      } else {
+        pluginNotice(msg, 'err', 3200)
+      }
+    } catch {
+      pluginNotice(msg, 'err', 3200)
+    }
   } finally {
     transcribeAudioFileBusy = false
+    try { if (noticeId && !noticeHideScheduled) NotificationManager.hide(noticeId) } catch {}
   }
 }
 
@@ -1146,6 +1167,21 @@ async function toggleRecordAndTranscribeMenu(): Promise<void> {
     }
     if (typeof (window as any).MediaRecorder !== 'function') {
       pluginNotice('当前环境不支持录音（缺少 MediaRecorder）', 'err', 2500)
+      return
+    }
+
+    // Android：先显式请求系统麦克风权限（部分 WebView 不会自动弹权限框，导致 getUserMedia 静默拒绝）
+    try {
+      const platform = await getPlatform()
+      if (platform === 'android') {
+        const ok = await invoke<boolean>('android_ensure_record_audio_permission', { timeoutMs: 60_000 } as any)
+        if (!ok) {
+          pluginNotice('麦克风权限未授予：请到系统设置开启麦克风权限后重试。', 'err', 4200)
+          return
+        }
+      }
+    } catch (e) {
+      pluginNotice('麦克风权限请求失败：' + String((e as any)?.message || e || ''), 'err', 4200)
       return
     }
 

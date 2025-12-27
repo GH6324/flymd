@@ -989,6 +989,7 @@ pub fn run() {
        android_read_uri_base64,
        android_write_uri_base64,
        android_persist_uri_permission,
+      android_ensure_record_audio_permission,
        android_saf_pick_folder,
        android_saf_list_dir,
        android_saf_create_file,
@@ -2532,6 +2533,41 @@ mod android_saf {
     })
   }
 
+  pub fn ensure_record_audio_permission(timeout_ms: u64) -> Result<bool, String> {
+    with_env(|env, activity| {
+      let t: jlong = if timeout_ms > i64::MAX as u64 {
+        i64::MAX as jlong
+      } else {
+        timeout_ms as jlong
+      };
+
+      let v = match env.call_method(
+        &activity,
+        "flymdEnsureRecordAudioPermission",
+        "(J)Z",
+        &[JValue::Long(t)],
+      ) {
+        Ok(v) => v,
+        Err(e) => {
+          let detail = take_java_exception_string(env).unwrap_or_default();
+          if !detail.is_empty() {
+            let mut msg =
+              format!("flymdEnsureRecordAudioPermission 调用失败（Android 补丁/混淆/实现异常）: {detail}");
+            if detail.contains("NoSuchMethod") {
+              msg.push_str("（请确认已执行 Android patch：scripts/patch-android-immersive.cjs，并避免 release 混淆裁剪该方法）");
+            }
+            return Err(msg);
+          }
+          let _ = env.exception_clear();
+          return Err(format!("flymdEnsureRecordAudioPermission 调用失败（可能未打 Android patch）: {e}"));
+        }
+      };
+
+      v.z()
+        .map_err(|e| format!("flymdEnsureRecordAudioPermission 返回类型异常: {e}"))
+    })
+  }
+
   pub fn write_uri_text(uri: &str, content: &str) -> Result<(), String> {
     with_env(|env, activity| {
       let uri_obj = parse_uri(env, uri)?;
@@ -3092,6 +3128,22 @@ async fn android_persist_uri_permission(uri: String) -> Result<(), String> {
   {
     let _ = uri;
     Err("android_persist_uri_permission only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_ensure_record_audio_permission(timeout_ms: Option<u64>) -> Result<bool, String> {
+  #[cfg(target_os = "android")]
+  {
+    let t = timeout_ms.unwrap_or(60_000);
+    return tauri::async_runtime::spawn_blocking(move || android_saf::ensure_record_audio_permission(t))
+      .await
+      .map_err(|e| format!("android_ensure_record_audio_permission join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = timeout_ms;
+    Err("android_ensure_record_audio_permission only available on Android".into())
   }
 }
 

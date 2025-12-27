@@ -840,17 +840,17 @@ export function initBuiltInFloatingToolbar(deps: BuiltInFloatingToolbarDeps): vo
 
   const openContextMenu = () => {
     try {
-      // 优先打开顶栏“更多”（移动端）
-      const el = document.getElementById('btn-mobile-menu') as HTMLElement | null
-      if (el) {
-        el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      // 优先打开“右键菜单”（用户期望：选中后的“更多”=上下文菜单）
+      const w = window as any
+      if (typeof w.flymdOpenContextMenu === 'function') {
+        w.flymdOpenContextMenu()
         return
       }
     } catch {}
-    // 兜底：旧入口（避免少数旧 UI/主题没有 btn-mobile-menu 时彻底没法用）
+    // 兜底：顶栏“更多”（避免极少数场景没有右键菜单入口时彻底没法用）
     try {
-      const w = window as any
-      if (typeof w.flymdOpenContextMenu === 'function') w.flymdOpenContextMenu()
+      const el = document.getElementById('btn-mobile-menu') as HTMLElement | null
+      if (el) el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     } catch (e) {
       deps.notice(ftText('打开菜单失败', 'Failed to open menu'), 'err', 1500)
     }

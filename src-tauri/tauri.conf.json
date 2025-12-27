@@ -4,8 +4,8 @@
   "version": "0.0.4",
   "identifier": "com.flymd",
   "build": {
-    "beforeDevCommand": "vite",
-    "beforeBuildCommand": "vite build",
+    "beforeDevCommand": "npm run -s android:patch && vite",
+    "beforeBuildCommand": "npm run -s android:patch && vite build",
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:5173"
   },
