@@ -471,9 +471,22 @@ body.platform-android #flymd-speech-record-fab .flymd-rec-time {
   opacity: 0.98;
 }
 
+body.platform-android #flymd-speech-record-fab .flymd-rec-pause,
 body.platform-android #flymd-speech-record-fab .flymd-rec-stop {
   font-size: 13px;
   opacity: 0.92;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.10);
+}
+
+body.platform-android #flymd-speech-record-fab .flymd-rec-stop {
+  background: rgba(239, 68, 68, 0.18);
+}
+
+body.platform-android #flymd-speech-record-fab.paused .flymd-rec-dot {
+  background: #9ca3af;
+  animation: none;
 }
 
 @keyframes flymd-rec-pulse {

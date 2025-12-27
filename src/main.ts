@@ -874,6 +874,8 @@ type SpeechRecordFabState = {
   el: HTMLButtonElement
   timeEl: HTMLSpanElement | null
   textEl: HTMLSpanElement | null
+  pauseEl: HTMLSpanElement | null
+  stopEl: HTMLSpanElement | null
   timer: number | null
   startedAt: number
 }
@@ -902,6 +904,7 @@ function ensureSpeechRecordFab(): SpeechRecordFabState | null {
         <span class="flymd-rec-dot" aria-hidden="true"></span>
         <span class="flymd-rec-text">${SPEECH_RECORD_FAB_DEFAULT_TEXT}</span>
         <span class="flymd-rec-time">00:00</span>
+        <span class="flymd-rec-pause" style="display:none">暂停</span>
         <span class="flymd-rec-stop">停止</span>
       `
       document.body.appendChild(el)
@@ -909,18 +912,22 @@ function ensureSpeechRecordFab(): SpeechRecordFabState | null {
 
     const timeEl = el.querySelector('.flymd-rec-time') as HTMLSpanElement | null
     const textEl = el.querySelector('.flymd-rec-text') as HTMLSpanElement | null
+    const pauseEl = el.querySelector('.flymd-rec-pause') as HTMLSpanElement | null
+    const stopEl = el.querySelector('.flymd-rec-stop') as HTMLSpanElement | null
     const state: SpeechRecordFabState = (_speechRecordFab && _speechRecordFab.el === el)
       ? _speechRecordFab
-      : { el, timeEl, textEl, timer: null, startedAt: 0 }
+      : { el, timeEl, textEl, pauseEl, stopEl, timer: null, startedAt: 0 }
     state.timeEl = timeEl
     state.textEl = textEl
+    state.pauseEl = pauseEl
+    state.stopEl = stopEl
     _speechRecordFab = state
 
     try {
       const anyEl = el as any
       if (!anyEl.__flymdSpeechRecordFabBound) {
         anyEl.__flymdSpeechRecordFabBound = true
-        el.addEventListener('click', () => { void handleSpeechFabClick() })
+        el.addEventListener('click', (ev) => { void handleSpeechFabClick(ev as any) })
       }
     } catch {}
 
@@ -950,7 +957,7 @@ function updateSpeechRecordFabNow(): void {
   } catch {}
 }
 
-function setSpeechRecordFabVisible(visible: boolean, startedAt?: number, label?: string, ariaLabel?: string): void {
+function setSpeechRecordFabVisible(visible: boolean, startedAt?: number, label?: string, ariaLabel?: string, modeTag?: string): void {
   try {
     // 只在 Android UI 显示；其他平台即使误触发也不挡内容
     if (!document.body.classList.contains('platform-android')) visible = false
@@ -959,8 +966,14 @@ function setSpeechRecordFabVisible(visible: boolean, startedAt?: number, label?:
 
     if (!visible) {
       try { s.el.classList.remove('show') } catch {}
+      try { s.el.classList.remove('paused') } catch {}
       try { s.el.disabled = false } catch {}
       try { s.el.style.bottom = '' } catch {}
+      try {
+        const ds = (s.el as any).dataset as any
+        if (ds) delete ds.mode
+      } catch {}
+      try { if (s.pauseEl) s.pauseEl.style.display = 'none' } catch {}
       try {
         if (s.timer != null) window.clearInterval(s.timer)
       } catch {}
@@ -975,6 +988,7 @@ function setSpeechRecordFabVisible(visible: boolean, startedAt?: number, label?:
       const al = String(ariaLabel || '').trim()
       if (al) s.el.setAttribute('aria-label', al)
     } catch {}
+    try { ;(s.el as any).dataset.mode = String(modeTag || '').trim() } catch {}
     try { s.el.disabled = false } catch {}
     try { s.el.classList.add('show') } catch {}
     updateSpeechRecordFabNow()
@@ -1008,14 +1022,26 @@ type ActiveAndroidSpeechInput = {
 }
 let activeAndroidSpeechInput: ActiveAndroidSpeechInput | null = null
 
-async function handleSpeechFabClick(): Promise<void> {
+async function handleSpeechFabClick(ev?: MouseEvent): Promise<void> {
   try {
+    const target = (ev?.target as HTMLElement | null) || null
+    const clickedPause = !!(target && target.classList && target.classList.contains('flymd-rec-pause'))
+    const clickedStop = !!(target && target.classList && target.classList.contains('flymd-rec-stop'))
     if (activeSpeechRecorder) {
       await stopSpeechRecordingAndTranscribeFromFab()
       return
     }
     if (activeAndroidSpeechInput) {
       await stopAndroidSpeechInputFromFab()
+      return
+    }
+    if (activeAndroidAsrNote) {
+      if (clickedStop) {
+        await stopAndroidAsrNoteFromFab(true)
+        return
+      }
+      // 点任意位置默认暂停/继续；点“暂停”也一样
+      await toggleAndroidAsrNotePauseResume(clickedPause)
       return
     }
     setSpeechRecordFabVisible(false)
@@ -1248,6 +1274,643 @@ async function pollAndroidSpeechInputEventsOnce(sessionId: number): Promise<void
       } catch {}
     }
   }
+}
+
+// Android：自动语音笔记（火山流式 ASR，经由自建 WS 网关）
+// 设计取舍：partial 会反复修正，所以用“覆盖式草稿段”写入编辑器，避免越说越重复。
+type ActiveAndroidAsrNote = {
+  notePath: string
+  token: string
+  wsUrl: string
+  startedAt: number
+  running: boolean
+  paused: boolean
+  ending: 'pause' | 'stop' | ''
+
+  // 编辑器草稿段（partial 覆盖写这里）
+  draftStart: number
+  draftLen: number
+  lastPartial: string
+
+  // 音频采集与发送
+  ws: WebSocket | null
+  stream: MediaStream | null
+  audioCtx: AudioContext | null
+  sourceNode: MediaStreamAudioSourceNode | null
+  processor: ScriptProcessorNode | null
+  zeroGain: GainNode | null
+  q: Uint8Array[]
+  qLen: number
+
+  // 保存节流
+  lastSaveAt: number
+  saveBusy: boolean
+  saveTimer: number | null
+}
+
+let activeAndroidAsrNote: ActiveAndroidAsrNote | null = null
+
+const ASR_BACKEND_BASE_DEFAULT = 'https://flymd.llingfei.com/asr'
+const ANDROID_ASR_SAMPLE_RATE = 16000
+const ANDROID_ASR_CHUNK_MS = 200
+const ANDROID_ASR_CHUNK_BYTES = (ANDROID_ASR_SAMPLE_RATE * 2 * ANDROID_ASR_CHUNK_MS) / 1000 // 16k * 2B * 200ms = 6400
+
+async function asrGetBaseUrl(): Promise<string> {
+  // 预留：未来可放进设置里；目前先固定你的域名
+  return ASR_BACKEND_BASE_DEFAULT
+}
+
+async function asrStoreGet(): Promise<any> {
+  try {
+    const store = await getAppStore()
+    const raw = (await store.get('asr')) as any
+    if (raw && typeof raw === 'object') return raw
+  } catch {}
+  return {}
+}
+
+async function asrStoreSet(patch: any): Promise<void> {
+  try {
+    const store = await getAppStore()
+    const prev = await asrStoreGet()
+    const next = { ...(prev || {}), ...(patch || {}) }
+    await store.set('asr', next)
+    await store.save()
+  } catch {}
+}
+
+async function asrApi(path: string, opt?: { method?: string; token?: string; body?: any }): Promise<any> {
+  const base = await asrGetBaseUrl()
+  const url = base.replace(/\/+$/, '') + String(path || '')
+  const method = String(opt?.method || 'GET').toUpperCase()
+  const headers: Record<string, string> = {}
+  if (opt?.token) headers['Authorization'] = 'Bearer ' + String(opt.token)
+  const bodyObj = opt?.body || {}
+  let body: any = undefined
+  if (method !== 'GET' && method !== 'HEAD') {
+    headers['Content-Type'] = 'application/json; charset=utf-8'
+    body = JSON.stringify(bodyObj)
+  }
+  // 好品味：优先走 tauri plugin-http，绕开 WebView CORS；失败再回退到 fetch
+  let text = ''
+  let status = 0
+  try {
+    const http = await getHttpClient()
+    if (http && typeof http.fetch === 'function') {
+      const req: any = { method, headers, responseType: http.ResponseType?.Text }
+      if (method !== 'GET' && method !== 'HEAD') {
+        req.body = (http.Body && typeof http.Body.json === 'function')
+          ? http.Body.json(bodyObj)
+          : body
+      }
+      const resp: any = await http.fetch(url, req)
+      status = Number(resp?.status || 0) || 0
+      const ok = resp?.ok === true || (status >= 200 && status < 300)
+      text = typeof resp?.text === 'function' ? String(await resp.text()) : String(resp?.data || '')
+      const data = (() => { try { return JSON.parse(text) } catch { return null } })()
+      if (!ok) throw new Error(`HTTP ${status || 0}：${(data && data.error) ? String(data.error) : (text || 'unknown')}`)
+      if (!data || typeof data !== 'object') throw new Error('后端返回非 JSON')
+      if (data.ok === false) throw new Error(String(data.error || '请求失败'))
+      return data
+    }
+  } catch {
+    // 回退 fetch
+  }
+  const resp2 = await fetch(url, { method, headers, body })
+  status = resp2.status
+  text = await resp2.text()
+  const data = (() => { try { return JSON.parse(text) } catch { return null } })()
+  if (!resp2.ok) throw new Error(`HTTP ${status}：${(data && data.error) ? String(data.error) : (text || 'unknown')}`)
+  if (!data || typeof data !== 'object') throw new Error('后端返回非 JSON')
+  if (data.ok === false) throw new Error(String(data.error || '请求失败'))
+  return data
+}
+
+async function asrEnsureTokenInteractive(): Promise<string | null> {
+  // 先用已保存 token 试一下
+  try {
+    const saved = await asrStoreGet()
+    const tok = String(saved?.token || '').trim()
+    if (tok) {
+      try {
+        await asrApi('/api/auth/me/', { method: 'GET', token: tok })
+        return tok
+      } catch {
+        await asrStoreSet({ token: '' })
+      }
+    }
+  } catch {}
+
+  const isLogin = await confirmNative('语音笔记服务未登录。\n确定：登录\n取消：注册', '自动语音笔记')
+  const username = String(prompt('用户名（3~32）', '') || '').trim()
+  if (!username) return null
+  const password = String(prompt(isLogin ? '密码（6~64）' : '设置密码（6~64）', '') || '')
+  if (!password) return null
+
+  const apiPath = isLogin ? '/api/auth/login/' : '/api/auth/register/'
+  const resp = await asrApi(apiPath, { method: 'POST', body: { username, password } })
+  const tok = String(resp?.token || '').trim()
+  if (!tok) throw new Error('登录失败：token 为空')
+  await asrStoreSet({ token: tok, username })
+  return tok
+}
+
+function asrTruncateHint(s: string, maxLen: number): string {
+  try {
+    const t = String(s || '').trim()
+    if (!t) return ''
+    if (t.length <= maxLen) return t
+    return t.slice(0, Math.max(0, maxLen - 1)) + '…'
+  } catch {
+    return ''
+  }
+}
+
+function floatToInt16Pcm(src: Float32Array): Int16Array {
+  const out = new Int16Array(src.length)
+  for (let i = 0; i < src.length; i++) {
+    let v = src[i]
+    if (v > 1) v = 1
+    else if (v < -1) v = -1
+    out[i] = v < 0 ? (v * 0x8000) : (v * 0x7fff)
+  }
+  return out
+}
+
+function resampleTo16kInt16(src: Float32Array, srcRate: number): Int16Array {
+  const inRate = Number(srcRate) || ANDROID_ASR_SAMPLE_RATE
+  if (inRate === ANDROID_ASR_SAMPLE_RATE) return floatToInt16Pcm(src)
+  if (!src.length) return new Int16Array(0)
+
+  const ratio = inRate / ANDROID_ASR_SAMPLE_RATE
+  const outLen = Math.max(0, Math.floor(src.length / ratio))
+  const out = new Int16Array(outLen)
+  for (let i = 0; i < outLen; i++) {
+    const pos = i * ratio
+    const idx = Math.floor(pos)
+    const frac = pos - idx
+    const s1 = src[idx] ?? 0
+    const s2 = src[idx + 1] ?? s1
+    let v = s1 + (s2 - s1) * frac
+    if (v > 1) v = 1
+    else if (v < -1) v = -1
+    out[i] = v < 0 ? (v * 0x8000) : (v * 0x7fff)
+  }
+  return out
+}
+
+function asrFabSetPauseVisible(show: boolean, text: string, paused: boolean): void {
+  try {
+    const s = _speechRecordFab
+    if (!s) return
+    try { if (show && s.pauseEl) { s.pauseEl.style.display = ''; s.pauseEl.textContent = text } } catch {}
+    try { if (!show && s.pauseEl) s.pauseEl.style.display = 'none' } catch {}
+    try {
+      if (paused) s.el.classList.add('paused')
+      else s.el.classList.remove('paused')
+    } catch {}
+  } catch {}
+}
+
+function asrNoteUpdateDraft(note: ActiveAndroidAsrNote, text: string): void {
+  try {
+    const t = String(text || '')
+    note.lastPartial = t
+    if (note.draftStart < 0) return
+
+    const start = Math.max(0, Math.min(editor.value.length, note.draftStart))
+    const end = Math.max(start, Math.min(editor.value.length, start + Math.max(0, note.draftLen)))
+    const val = editor.value
+    editor.value = val.slice(0, start) + t + val.slice(end)
+    note.draftStart = start
+    note.draftLen = t.length
+    const pos = start + note.draftLen
+    try { editor.selectionStart = editor.selectionEnd = pos } catch {}
+    dirty = true
+    refreshTitle()
+    refreshStatus()
+
+    // 悬浮条显示 partial（用户要看得到实时文字）
+    try {
+      const hint = asrTruncateHint(t, 28)
+      const s = _speechRecordFab
+      if (s?.textEl) s.textEl.textContent = hint ? ('语音笔记：' + hint) : '语音笔记：识别中…'
+    } catch {}
+
+    void asrNoteScheduleSave(note)
+  } catch {}
+}
+
+async function asrNoteScheduleSave(note: ActiveAndroidAsrNote): Promise<void> {
+  // 别傻到每个 partial 都写盘：节流一下，够“实时”也不炸 IO
+  try {
+    const now = Date.now()
+    const gap = now - (note.lastSaveAt || 0)
+    if (gap >= 3000) {
+      note.lastSaveAt = now
+      if (!note.saveBusy) {
+        note.saveBusy = true
+        try { await saveFile() } catch {}
+        note.saveBusy = false
+      }
+      return
+    }
+    if (note.saveTimer != null) return
+    note.saveTimer = window.setTimeout(() => {
+      note.saveTimer = null
+      void asrNoteScheduleSave(note)
+    }, Math.max(200, 3000 - gap))
+  } catch {}
+}
+
+function asrNoteStopAudioCapture(note: ActiveAndroidAsrNote): void {
+  try { note.processor?.disconnect() } catch {}
+  try { note.sourceNode?.disconnect() } catch {}
+  try { note.zeroGain?.disconnect() } catch {}
+  try { note.audioCtx?.close?.() } catch {}
+  note.processor = null
+  note.sourceNode = null
+  note.zeroGain = null
+  note.audioCtx = null
+  try { note.stream?.getTracks?.().forEach(t => { try { t.stop() } catch {} }) } catch {}
+  note.stream = null
+}
+
+function asrNoteQueuePush(note: ActiveAndroidAsrNote, bytes: Uint8Array): void {
+  try {
+    if (!bytes || !bytes.length) return
+    note.q.push(bytes)
+    note.qLen += bytes.length
+    asrNoteQueueFlush(note)
+  } catch {}
+}
+
+function asrNoteQueueFlush(note: ActiveAndroidAsrNote): void {
+  try {
+    const ws = note.ws
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    while (note.qLen >= ANDROID_ASR_CHUNK_BYTES) {
+      const chunk = new Uint8Array(ANDROID_ASR_CHUNK_BYTES)
+      let filled = 0
+      while (filled < ANDROID_ASR_CHUNK_BYTES && note.q.length) {
+        const head = note.q[0]
+        const need = ANDROID_ASR_CHUNK_BYTES - filled
+        if (head.length <= need) {
+          chunk.set(head, filled)
+          filled += head.length
+          note.q.shift()
+        } else {
+          chunk.set(head.subarray(0, need), filled)
+          filled += need
+          note.q[0] = head.subarray(need)
+        }
+      }
+      note.qLen -= ANDROID_ASR_CHUNK_BYTES
+      try { ws.send(chunk) } catch {}
+    }
+  } catch {}
+}
+
+async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
+  // 只做 Android
+  const platform = await getPlatform()
+  if (platform !== 'android') {
+    pluginNotice('该功能仅 Android 可用', 'err', 2200)
+    return
+  }
+  if (activeSpeechRecorder) {
+    pluginNotice('正在录音中：请先停止录音再使用自动语音笔记', 'err', 3600)
+    return
+  }
+  if (activeAndroidSpeechInput) {
+    pluginNotice('语音输入（BiBi）进行中：请先停止再使用自动语音笔记', 'err', 3600)
+    return
+  }
+
+  // 权限与环境检查
+  if (!window.isSecureContext) {
+    pluginNotice('当前环境不是安全上下文：WebView 禁止录音（isSecureContext=false）', 'err', 3500)
+    return
+  }
+  if (!(navigator as any)?.mediaDevices?.getUserMedia) {
+    pluginNotice('当前环境不支持录音（缺少 getUserMedia）', 'err', 2500)
+    return
+  }
+
+  try {
+    const ok = await invoke<boolean>('android_ensure_record_audio_permission', { timeoutMs: 60_000 } as any)
+    if (!ok) {
+      pluginNotice('麦克风权限未授予：请到系统设置开启后重试', 'err', 4200)
+      return
+    }
+  } catch (e) {
+    pluginNotice('麦克风权限请求失败：' + String((e as any)?.message || e || ''), 'err', 4200)
+    return
+  }
+
+  // 登录 + 读取余额/网关地址
+  let token = ''
+  try {
+    const t = await asrEnsureTokenInteractive()
+    if (!t) return
+    token = t
+  } catch (e) {
+    pluginNotice('登录失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+    return
+  }
+
+  let status: any = null
+  try {
+    status = await asrApi('/api/billing/status/', { method: 'GET', token })
+  } catch (e) {
+    pluginNotice('后端不可用：' + String((e as any)?.message || e || ''), 'err', 3200)
+    return
+  }
+
+  const balMs = Number(status?.billing?.balance_ms || 0) || 0
+  const wsUrl = String(status?.billing?.ws?.url || '').trim()
+  const payUrl = String(status?.billing?.pay?.url || '').trim()
+  try {
+    const balMinStr = String(status?.billing?.balance_min || '').trim()
+    const priceStr = String(status?.billing?.price_cny_per_min || '').trim()
+    if (balMinStr) pluginNotice(`语音笔记余额：${balMinStr} 分钟（${priceStr || '0.2'} 元/分钟）`, 'ok', 2200)
+  } catch {}
+  if (!wsUrl) {
+    pluginNotice('网关地址为空：请检查后端配置', 'err', 3200)
+    return
+  }
+  if (balMs <= 0) {
+    const ok = await confirmNative('余额不足。\n确定：打开充值页面\n取消：我已有卡密，去兑换', '自动语音笔记')
+    if (ok && payUrl) {
+      try { void openInBrowser(payUrl) } catch {}
+      pluginNotice('充值完成后，把卡密粘贴到“兑换卡密”里即可。', 'ok', 2600)
+      return
+    }
+    const key = String(prompt('请输入充值卡密（支付页给你的卡号）', '') || '').trim()
+    if (!key) return
+    try {
+      const r = await asrApi('/api/billing/redeem/', { method: 'POST', token, body: { token: key } })
+      pluginNotice('充值成功，余额 ' + String(r?.balance_min || r?.billing?.balance_min || ''), 'ok', 2600)
+      // 重新取一次状态
+      try { status = await asrApi('/api/billing/status/', { method: 'GET', token }) } catch {}
+    } catch (e) {
+      pluginNotice('兑换失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+      return
+    }
+  }
+
+  // 创建/打开笔记文件
+  try {
+    await ensureAndroidDefaultLibraryRoot()
+  } catch {}
+  if (createNewFile || !currentFilePath) {
+    const root = await (async () => { try { return await getLibraryRoot() } catch { return '' } })()
+    if (!root) {
+      pluginNotice('未初始化库目录：请先打开一次“库”', 'err', 3000)
+      return
+    }
+    const d = new Date()
+    const pad2 = (n: number) => String(n).padStart(2, '0')
+    const name = `语音笔记 ${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}.md`
+    const p = await newFileSafeInTree(root, name)
+    try {
+      const title = `# 语音笔记 ${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}\n\n`
+      await writeTextFileAnySafe(p, title)
+    } catch {}
+    await openFile2(p)
+    mode = 'edit'
+    preview.classList.add('hidden')
+    try { editor.focus() } catch {}
+  }
+
+  // 准备草稿插入点：尽量从光标处开始，不去猜用户想要什么格式
+  const startPos = (() => {
+    try { return Math.max(0, Math.min(editor.value.length, editor.selectionStart)) } catch { return editor.value.length }
+  })()
+
+  const note: ActiveAndroidAsrNote = {
+    notePath: String(currentFilePath || '').trim(),
+    token,
+    wsUrl,
+    startedAt: Date.now(),
+    running: true,
+    paused: false,
+    ending: '',
+    draftStart: startPos,
+    draftLen: 0,
+    lastPartial: '',
+    ws: null,
+    stream: null,
+    audioCtx: null,
+    sourceNode: null,
+    processor: null,
+    zeroGain: null,
+    q: [],
+    qLen: 0,
+    lastSaveAt: 0,
+    saveBusy: false,
+    saveTimer: null,
+  }
+  activeAndroidAsrNote = note
+
+  try {
+    setSpeechRecordFabVisible(true, note.startedAt, '语音笔记：连接中…', '暂停/停止自动语音笔记', 'asr')
+    asrFabSetPauseVisible(true, '暂停', false)
+  } catch {}
+
+  // 建连 WS
+  const ws = new WebSocket(wsUrl)
+  note.ws = ws
+
+  ws.onopen = () => {
+    try {
+      const client = {
+        platform: 'android',
+        ver: APP_VERSION,
+        device: String(navigator.userAgent || '').slice(0, 120),
+      }
+      ws.send(JSON.stringify({ type: 'start', token, hold_ms: 120000, client, volc: { language: 'zh' } }))
+    } catch {}
+    try { const s = _speechRecordFab; if (s?.textEl) s.textEl.textContent = '语音笔记：请开始说话…' } catch {}
+  }
+
+  ws.onmessage = (ev) => {
+    try {
+      if (typeof ev.data !== 'string') return
+      const msg = (() => { try { return JSON.parse(ev.data) } catch { return null } })()
+      if (!msg || typeof msg !== 'object') return
+      const t = String((msg as any).type || '')
+
+      if (t === 'partial') {
+        const text = String((msg as any).text || '')
+        if (text) asrNoteUpdateDraft(note, text)
+        return
+      }
+      if (t === 'final') {
+        const text = String((msg as any).text || '')
+        if (text) asrNoteUpdateDraft(note, text)
+        return
+      }
+      if (t === 'error') {
+        const err = String((msg as any).error || '语音网关错误')
+        pluginNotice('语音笔记失败：' + err, 'err', 3200)
+        note.ending = note.ending || 'pause'
+        void finishAndroidAsrNoteSession(note, true)
+        return
+      }
+      if (t === 'end') {
+        void finishAndroidAsrNoteSession(note, false)
+        return
+      }
+    } catch {}
+  }
+
+  ws.onerror = () => {
+    try { pluginNotice('语音笔记连接失败：网络或证书问题', 'err', 3200) } catch {}
+    note.ending = note.ending || 'pause'
+    void finishAndroidAsrNoteSession(note, true)
+  }
+
+  ws.onclose = () => {
+    if (!note.running) return
+    note.ending = note.ending || 'pause'
+    void finishAndroidAsrNoteSession(note, false)
+  }
+
+  // 启动音频采集（PCM 16k/16bit/mono）
+  let stream: MediaStream
+  try {
+    stream = await (navigator as any).mediaDevices.getUserMedia({ audio: true })
+  } catch (e) {
+    pluginNotice('录音权限被拒绝：请到系统设置开启麦克风权限后重试。', 'err', 4000)
+    await stopAndroidAsrNoteFromFab(true)
+    return
+  }
+  note.stream = stream
+
+  let audioCtx: AudioContext | null = null
+  try {
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext
+    audioCtx = new AC({ sampleRate: ANDROID_ASR_SAMPLE_RATE })
+  } catch {
+    try { audioCtx = new AudioContext() } catch { audioCtx = null }
+  }
+  if (!audioCtx) {
+    pluginNotice('无法初始化音频处理（AudioContext 不可用）', 'err', 3200)
+    await stopAndroidAsrNoteFromFab(true)
+    return
+  }
+  note.audioCtx = audioCtx
+
+  const sourceNode = audioCtx.createMediaStreamSource(stream)
+  const processor = audioCtx.createScriptProcessor(4096, 1, 1)
+  const zeroGain = audioCtx.createGain()
+  zeroGain.gain.value = 0
+  note.sourceNode = sourceNode
+  note.processor = processor
+  note.zeroGain = zeroGain
+
+  processor.onaudioprocess = (e) => {
+    try {
+      if (!activeAndroidAsrNote || activeAndroidAsrNote !== note) return
+      if (!note.running || note.ending) return
+      const ch = e.inputBuffer.getChannelData(0)
+      const pcm16 = resampleTo16kInt16(ch, audioCtx!.sampleRate)
+      if (!pcm16.length) return
+      const bytes = new Uint8Array(pcm16.buffer, pcm16.byteOffset, pcm16.byteLength)
+      asrNoteQueuePush(note, bytes)
+    } catch {}
+  }
+
+  try {
+    sourceNode.connect(processor)
+    processor.connect(zeroGain)
+    zeroGain.connect(audioCtx.destination)
+  } catch {}
+}
+
+async function finishAndroidAsrNoteSession(note: ActiveAndroidAsrNote, forceStopWs: boolean): Promise<void> {
+  try {
+    // 先停麦克风，别占着不放
+    asrNoteStopAudioCapture(note)
+
+    // 如果 WS 还开着，尽量优雅结束（让服务端返 final/end 并结算）
+    try {
+      if (forceStopWs && note.ws && note.ws.readyState === WebSocket.OPEN) {
+        note.ws.send(JSON.stringify({ type: 'stop' }))
+      }
+    } catch {}
+    try {
+      if (forceStopWs && note.ws) note.ws.close()
+    } catch {}
+
+    note.running = false
+
+    // 保存一次，避免用户丢字
+    try { await saveFile() } catch {}
+
+    if (note.ending === 'stop') {
+      activeAndroidAsrNote = null
+      try { setSpeechRecordFabVisible(false) } catch {}
+      pluginNotice('自动语音笔记已结束', 'ok', 1400)
+      return
+    }
+
+    // pause：保留模式，可继续
+    note.paused = true
+    note.ending = ''
+    try {
+      const s = _speechRecordFab
+      if (s?.textEl) s.textEl.textContent = '语音笔记：已暂停'
+      asrFabSetPauseVisible(true, '继续', true)
+    } catch {}
+    pluginNotice('自动语音笔记已暂停', 'ok', 1200)
+  } catch {}
+}
+
+async function toggleAndroidAsrNotePauseResume(clickedPause: boolean): Promise<void> {
+  try {
+    const note = activeAndroidAsrNote
+    if (!note) return
+    if (note.running) {
+      // 暂停（断开连接）
+      note.ending = 'pause'
+      try { note.ws?.send(JSON.stringify({ type: 'stop' })) } catch {}
+      try { note.ws?.close() } catch {}
+      await finishAndroidAsrNoteSession(note, false)
+      return
+    }
+    // 继续：重新走一遍 start（不新建文件）
+    note.paused = false
+    await startAndroidAsrNote(false)
+    return
+  } catch {}
+}
+
+async function stopAndroidAsrNoteFromFab(exitMode: boolean): Promise<void> {
+  try {
+    const note = activeAndroidAsrNote
+    if (!note) {
+      setSpeechRecordFabVisible(false)
+      return
+    }
+    note.ending = exitMode ? 'stop' : 'pause'
+    try { note.ws?.send(JSON.stringify({ type: 'stop' })) } catch {}
+    try { note.ws?.close() } catch {}
+    await finishAndroidAsrNoteSession(note, false)
+  } catch {}
+}
+
+async function toggleAndroidAsrNoteFromMenu(): Promise<void> {
+  try {
+    const note = activeAndroidAsrNote
+    if (!note) {
+      await startAndroidAsrNote(true)
+      return
+    }
+    // 菜单只有一个入口：在运行中就是暂停；暂停中就是继续
+    await toggleAndroidAsrNotePauseResume(true)
+  } catch {}
 }
 
 function fnv1a32Hex(str: string): string {
@@ -8086,6 +8749,7 @@ function showMobileQuickMenu() {
     ...(isAndroidUi ? ([
       { label: '录音文件转文本…', action: () => { void transcribeFromAudioFileMenu() } },
       { label: activeSpeechRecorder ? '停止录音并转写' : '开始录音', action: () => { void toggleRecordAndTranscribeMenu() } },
+      { label: activeAndroidAsrNote ? (activeAndroidAsrNote.running ? '暂停自动语音笔记' : '继续自动语音笔记') : '自动语音笔记', action: () => { void toggleAndroidAsrNoteFromMenu() } },
     ] as TopMenuItemSpec[]) : []),
     { label: `${t('mode.edit')}/${t('mode.read')}`, action: () => { void handleToggleModeShortcut() } },
     { label: t('sync.title'), action: () => { try { void openWebdavSyncDialog() } catch {} } },
