@@ -1,4 +1,4 @@
-// flymd: 在 Tauri 生成的 Android 工程里打补丁（沉浸式全屏）
+// flymd: 在 Tauri 生成的 Android 工程里打补丁（移动端兼容）
 //
 // 背景：
 // - `src-tauri/gen/android` 是 tauri CLI 生成目录，默认被 gitignore
@@ -74,7 +74,7 @@ function patchAndroidManifestPermissions(projectRoot) {
 
 function patchMainActivity(filePath) {
   const original = fs.readFileSync(filePath, 'utf8')
-  const hasImmersive = original.includes('flymd:immersive-fullscreen-v2')
+  const hasImmersive = original.includes('flymd:immersive-fullscreen-v2') || original.includes('flymdApplyImmersiveFullscreen')
   // SAF folder picker：兼容 v1/v2 标记
   const hasFolderPicker = original.includes('flymd:saf-folder-picker-v1') || original.includes('flymd:saf-folder-picker-v2')
   const hasFlymdPickFolder = /fun\s+flymdPickFolder\s*\(/.test(original)
@@ -178,9 +178,6 @@ ${bodyIndent}}
   }
 
   const classHasBody = mainClassLine.includes('{') || /class\s+MainActivity\b[^{\n]*\{/.test(content)
-  const hasOnCreate = /override\s+fun\s+onCreate\s*\(/.test(content)
-  const hasOnResume = /override\s+fun\s+onResume\s*\(/.test(content)
-  const hasOnWindowFocusChanged = /override\s+fun\s+onWindowFocusChanged\s*\(/.test(content)
   const hasOnActivityResult = /override\s+fun\s+onActivityResult\s*\(/.test(content)
 
   // 0) 如果模板是 `class MainActivity : ...()`（无 class body），先补上 `{ ... }`，避免后续找不到 `}` 插入点
@@ -188,69 +185,55 @@ ${bodyIndent}}
     content = content.replace(/^(\s*class\s+MainActivity\b[^\n]*)$/m, (line) => `${line.trimEnd()} {`)
   }
 
-  // 1) 尝试在已有的生命周期里插入一次调用（即使没命中，我们也会在缺失时注入 override 兜底）
-  if (!hasImmersive && !content.includes('flymdApplyImmersiveFullscreen()')) {
-    content = content.replace(
-      /^(\s*)super\.onCreate\([^)]*\)\s*$/m,
-      (line, indent) => `${line}\n${indent}flymdApplyImmersiveFullscreen()`,
-    )
-    content = content.replace(
-      /^(\s*)super\.onResume\(\)\s*$/m,
-      (line, indent) => `${line}\n${indent}flymdApplyImmersiveFullscreen()`,
-    )
-    content = content.replace(
-      /^(\s*)super\.onWindowFocusChanged\(\s*hasFocus\s*\)\s*$/m,
-      (line, indent) => `${line}\n${indent}if (hasFocus) flymdApplyImmersiveFullscreen()`,
-    )
-  }
+  // 1) 取消“沉浸式全屏”：用户需要系统状态栏（时间/信号/电量），并让 WebView 内容自然避开顶部安全区。
+  // 说明：这里不去“强行开启”任何 edge-to-edge；只做最小清理：
+  // - 移除我们曾注入的 flymdApplyImmersiveFullscreen() 方法
+  // - 移除所有对该方法的调用
+  function removeImmersiveFullscreen() {
+    let changed = false
 
-  const blocks = []
+    // a) 先移除所有调用（避免方法删除后编译失败）
+    const beforeCalls = content
+    content = content.replace(/^\s*flymdApplyImmersiveFullscreen\(\)\s*\r?\n/gm, '')
+    content = content.replace(/^\s*if\s*\(\s*hasFocus\s*\)\s*flymdApplyImmersiveFullscreen\(\)\s*\r?\n/gm, '')
+    if (content !== beforeCalls) changed = true
 
-  if (!hasImmersive) {
-    // 在类末尾注入方法与 override（使用全限定名，避免新增 import 触发 Kotlin/Gradle 依赖问题）
-    blocks.push(`
-  // flymd:immersive-fullscreen-v2
-  private fun flymdApplyImmersiveFullscreen() {
-    try {
-      window.statusBarColor = android.graphics.Color.TRANSPARENT
-      window.navigationBarColor = android.graphics.Color.TRANSPARENT
+    // b) 再移除方法定义（使用 brace 计数，避免 if 块导致正则误删）
+    while (true) {
+      const markerIdx = content.indexOf('flymd:immersive-fullscreen-v2')
+      if (markerIdx < 0) break
 
-      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-        window.attributes.layoutInDisplayCutoutMode =
-          android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+      const funIdx = content.indexOf('fun flymdApplyImmersiveFullscreen', markerIdx)
+      if (funIdx < 0) break
+      const openIdx = content.indexOf('{', funIdx)
+      if (openIdx < 0) break
+      const closeIdx = findMatchingBrace(content, openIdx)
+      if (closeIdx < 0) break
+
+      let start = content.lastIndexOf('\n', markerIdx)
+      if (start < 0) start = 0
+      // 删除到方法结束括号之后，并吃掉多余空行
+      let end = closeIdx + 1
+      while (end < content.length && (content[end] === '\n' || content[end] === '\r' || content[end] === ' ' || content[end] === '\t')) {
+        // 避免吃掉下一个函数/注释：遇到非空白就停
+        end += 1
       }
 
-      @Suppress("DEPRECATION")
-      window.decorView.systemUiVisibility =
-        android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-          android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
-          android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-          android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-          android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-          android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
-    } catch (_: Throwable) {
+      content = content.slice(0, start) + '\n' + content.slice(end)
+      changed = true
+    }
+
+    return changed
+  }
+
+  if (hasImmersive) {
+    const removed = removeImmersiveFullscreen()
+    if (removed) {
+      console.log(`[patch-android-immersive] 已移除沉浸式全屏代码（显示系统状态栏）: ${filePath}`)
     }
   }
 
-${hasOnCreate ? '' : `
-  override fun onCreate(savedInstanceState: android.os.Bundle?) {
-    super.onCreate(savedInstanceState)
-    flymdApplyImmersiveFullscreen()
-  }`}
-
-${hasOnResume ? '' : `
-  override fun onResume() {
-    super.onResume()
-    flymdApplyImmersiveFullscreen()
-  }`}
-
-${hasOnWindowFocusChanged ? '' : `
-  override fun onWindowFocusChanged(hasFocus: Boolean) {
-    super.onWindowFocusChanged(hasFocus)
-    if (hasFocus) flymdApplyImmersiveFullscreen()
-  }`}
-`)
-  }
+  const blocks = []
 
   // SAF folder picker：release 场景下也要可用（避免因模板已存在 onActivityResult 而跳过注入）
   // 1) 如果已有 onActivityResult，则往现有方法里打 hook；2) 如果没有，则注入 override；3) 统一确保 flymdPickFolder 存在。
@@ -425,7 +408,7 @@ function main() {
     }
   }
   if (!ok) {
-    console.warn('[patch-android-immersive] 未能成功写入任何 MainActivity.kt（构建仍可继续，但不会全屏）')
+    console.warn('[patch-android-immersive] 未能成功写入任何 MainActivity.kt（构建仍可继续，但相关 Android 补丁不会生效）')
   }
 
   // release 兜底：确保 JNI 调用的方法不会被 R8/Proguard 裁剪/改名
