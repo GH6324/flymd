@@ -91,6 +91,7 @@ function patchMainActivity(filePath) {
   const hasFolderPicker = original.includes('flymd:saf-folder-picker-v1') || original.includes('flymd:saf-folder-picker-v2')
   const hasFlymdPickFolder = /fun\s+flymdPickFolder\s*\(/.test(original)
   const hasMicPermission = original.includes('flymd:mic-permission-v1') || /fun\s+flymdEnsureRecordAudioPermission\s*\(/.test(original)
+  const hasSpeechRecognizer = original.includes('flymd:speech-recognizer-v1') || /fun\s+flymdSpeechStartListening\s*\(/.test(original)
 
   let content = original
 
@@ -449,6 +450,265 @@ ${hasOnRequestPermissionsResult ? '' : `
 `)
   }
 
+  // 系统 SpeechRecognizer：语音输入（返回 partial/final/rms/error 事件）
+  const needSpeechRecognizerCore = !/fun\s+flymdSpeechStartListening\s*\(/.test(content)
+  if (needSpeechRecognizerCore) {
+    blocks.push(`
+
+  // flymd:speech-recognizer-v1
+  // 说明：
+  // - 直接使用系统 android.speech.SpeechRecognizer（不依赖任何第三方 App / AIDL）
+  // - 事件通过队列返回给 Rust/JS 侧轮询消费（避免 Java->Rust 回调复杂度）
+  // - 只实现“最小可用”：开始/停止/取消 + partial/final + rms 音量 + 错误
+
+  private val flymdSpeechLock = java.lang.Object()
+  @Volatile private var flymdSpeechRecognizer: android.speech.SpeechRecognizer? = null
+  @Volatile private var flymdSpeechActiveSessionId: Int = 0
+  @Volatile private var flymdSpeechStartDone: Boolean = false
+  @Volatile private var flymdSpeechStartOk: Boolean = false
+  @Volatile private var flymdSpeechStartErr: String? = null
+  @Volatile private var flymdSpeechLastRmsAtMs: Long = 0L
+  private var flymdSpeechNextId: Int = 1
+
+  private val flymdSpeechEventsLock = java.lang.Object()
+  private val flymdSpeechEvents: java.util.ArrayDeque<String> = java.util.ArrayDeque()
+
+  private fun flymdSpeechPushEvent(obj: org.json.JSONObject) {
+    val s = obj.toString()
+    synchronized(flymdSpeechEventsLock) {
+      // 防止队列无限增长导致 OOM：最多保留 128 条，超出丢弃最旧
+      while (flymdSpeechEvents.size >= 128) {
+        try { flymdSpeechEvents.removeFirst() } catch (_: Throwable) { break }
+      }
+      flymdSpeechEvents.addLast(s)
+    }
+  }
+
+  private fun flymdSpeechState(sid: Int, state: Int, msg: String) {
+    try {
+      val o = org.json.JSONObject()
+      o.put("t", "state")
+      o.put("sid", sid)
+      o.put("state", state)
+      o.put("msg", msg)
+      flymdSpeechPushEvent(o)
+    } catch (_: Throwable) {}
+  }
+
+  private fun flymdSpeechEnsureRecognizer(): android.speech.SpeechRecognizer? {
+    val existing = flymdSpeechRecognizer
+    if (existing != null) return existing
+    return try {
+      if (!android.speech.SpeechRecognizer.isRecognitionAvailable(this)) return null
+      val r = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
+      r.setRecognitionListener(object : android.speech.RecognitionListener {
+        override fun onReadyForSpeech(params: android.os.Bundle?) {
+          val sid = flymdSpeechActiveSessionId
+          if (sid <= 0) return
+          flymdSpeechState(sid, 1, "ready")
+        }
+
+        override fun onBeginningOfSpeech() {
+          val sid = flymdSpeechActiveSessionId
+          if (sid <= 0) return
+          flymdSpeechState(sid, 1, "begin")
+        }
+
+        override fun onRmsChanged(rmsdB: Float) {
+          val sid = flymdSpeechActiveSessionId
+          if (sid <= 0) return
+          val now = android.os.SystemClock.uptimeMillis()
+          // 限流：rms 回调过于频繁，避免刷爆队列
+          if (now - flymdSpeechLastRmsAtMs < 120) return
+          flymdSpeechLastRmsAtMs = now
+          try {
+            val amp = kotlin.math.max(0.0, kotlin.math.min(1.0, (rmsdB / 10.0).toDouble()))
+            val o = org.json.JSONObject()
+            o.put("t", "amp")
+            o.put("sid", sid)
+            o.put("amp", amp)
+            flymdSpeechPushEvent(o)
+          } catch (_: Throwable) {}
+        }
+
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {
+          val sid = flymdSpeechActiveSessionId
+          if (sid <= 0) return
+          flymdSpeechState(sid, 2, "end")
+        }
+
+        override fun onError(error: Int) {
+          val sid = flymdSpeechActiveSessionId
+          if (sid <= 0) return
+          try {
+            val o = org.json.JSONObject()
+            o.put("t", "error")
+            o.put("sid", sid)
+            o.put("code", error)
+            o.put("msg", "speechrecognizer error")
+            flymdSpeechPushEvent(o)
+          } catch (_: Throwable) {}
+          flymdSpeechState(sid, 0, "idle")
+          flymdSpeechActiveSessionId = 0
+        }
+
+        override fun onResults(results: android.os.Bundle?) {
+          val sid = flymdSpeechActiveSessionId
+          if (sid <= 0) return
+          try {
+            val list = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+            val text = if (list != null && list.isNotEmpty()) (list[0] ?: "") else ""
+            val o = org.json.JSONObject()
+            o.put("t", "final")
+            o.put("sid", sid)
+            o.put("text", text)
+            flymdSpeechPushEvent(o)
+          } catch (_: Throwable) {}
+          flymdSpeechState(sid, 0, "idle")
+          flymdSpeechActiveSessionId = 0
+        }
+
+        override fun onPartialResults(partialResults: android.os.Bundle?) {
+          val sid = flymdSpeechActiveSessionId
+          if (sid <= 0) return
+          try {
+            val list = partialResults?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+            val text = if (list != null && list.isNotEmpty()) (list[0] ?: "") else ""
+            val o = org.json.JSONObject()
+            o.put("t", "partial")
+            o.put("sid", sid)
+            o.put("text", text)
+            flymdSpeechPushEvent(o)
+          } catch (_: Throwable) {}
+        }
+
+        override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+      })
+      flymdSpeechRecognizer = r
+      r
+    } catch (_: Throwable) {
+      null
+    }
+  }
+
+  @androidx.annotation.Keep
+  fun flymdSpeechStartListening(timeoutMs: Long): Int {
+    try {
+      val perm = "android.permission.RECORD_AUDIO"
+      val granted =
+        androidx.core.content.ContextCompat.checkSelfPermission(this, perm) == android.content.pm.PackageManager.PERMISSION_GRANTED
+      if (!granted) return -3
+
+      if (!android.speech.SpeechRecognizer.isRecognitionAvailable(this)) return -1
+
+      synchronized(flymdSpeechLock) {
+        if (flymdSpeechActiveSessionId > 0) return -2
+
+        val sid = flymdSpeechNextId++
+        flymdSpeechStartDone = false
+        flymdSpeechStartOk = false
+        flymdSpeechStartErr = null
+        flymdSpeechLastRmsAtMs = 0L
+        flymdSpeechActiveSessionId = sid
+
+        runOnUiThread {
+          try {
+            val r = flymdSpeechEnsureRecognizer()
+            if (r == null) {
+              flymdSpeechStartErr = "recognizer unavailable"
+              flymdSpeechStartOk = false
+              flymdSpeechActiveSessionId = 0
+            } else {
+              val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+              intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+              intent.putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+              intent.putExtra(android.speech.RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+              // 说明：不强制语言，跟随系统；需要时可由前端扩展传参
+              r.startListening(intent)
+              flymdSpeechStartOk = true
+              flymdSpeechState(sid, 1, "recording")
+            }
+          } catch (t: Throwable) {
+            flymdSpeechStartErr = t.message ?: "startListening failed"
+            flymdSpeechStartOk = false
+            flymdSpeechActiveSessionId = 0
+          }
+          synchronized(flymdSpeechLock) {
+            flymdSpeechStartDone = true
+            flymdSpeechLock.notifyAll()
+          }
+        }
+
+        val waitTotal = if (timeoutMs > 0) timeoutMs else 8_000L
+        val end = android.os.SystemClock.uptimeMillis() + waitTotal
+        while (!flymdSpeechStartDone) {
+          val waitMs = end - android.os.SystemClock.uptimeMillis()
+          if (waitMs <= 0) break
+          try { flymdSpeechLock.wait(waitMs) } catch (_: Throwable) {}
+        }
+
+        if (!flymdSpeechStartDone || !flymdSpeechStartOk) {
+          flymdSpeechActiveSessionId = 0
+          return -4
+        }
+        return sid
+      }
+    } catch (_: Throwable) {
+      return -4
+    }
+  }
+
+  @androidx.annotation.Keep
+  fun flymdSpeechStopListening(sessionId: Int) {
+    try {
+      if (sessionId <= 0) return
+      if (flymdSpeechActiveSessionId != sessionId) return
+      runOnUiThread {
+        try {
+          flymdSpeechRecognizer?.stopListening()
+          flymdSpeechState(sessionId, 2, "stop")
+        } catch (_: Throwable) {}
+      }
+    } catch (_: Throwable) {}
+  }
+
+  @androidx.annotation.Keep
+  fun flymdSpeechCancelListening(sessionId: Int) {
+    try {
+      if (sessionId <= 0) return
+      if (flymdSpeechActiveSessionId != sessionId) return
+      flymdSpeechActiveSessionId = 0
+      runOnUiThread {
+        try { flymdSpeechRecognizer?.cancel() } catch (_: Throwable) {}
+        try { flymdSpeechState(sessionId, 0, "idle") } catch (_: Throwable) {}
+      }
+    } catch (_: Throwable) {}
+  }
+
+  @androidx.annotation.Keep
+  fun flymdSpeechDrainEvents(maxItems: Int): Array<String> {
+    val out = java.util.ArrayList<String>()
+    val max = if (maxItems <= 0) 64 else kotlin.math.min(maxItems, 256)
+    synchronized(flymdSpeechEventsLock) {
+      while (out.size < max && flymdSpeechEvents.isNotEmpty()) {
+        try {
+          out.add(flymdSpeechEvents.removeFirst())
+        } catch (_: Throwable) {
+          break
+        }
+      }
+    }
+    return out.toTypedArray()
+  }
+
+  @androidx.annotation.Keep
+  fun flymdSpeechGetActiveSessionId(): Int {
+    return flymdSpeechActiveSessionId
+  }
+`)
+  }
+
   // 兜底：如果文件里已有 v1/v2 folder picker，但未标记 @Keep，则补上，防止 release 混淆/裁剪导致 JNI 找不到方法
   if (hasFolderPicker || hasFlymdPickFolder) {
     ensureKeepNearFun('flymdPickFolder')
@@ -460,6 +720,15 @@ ${hasOnRequestPermissionsResult ? '' : `
   if (hasMicPermission || /fun\s+flymdEnsureRecordAudioPermission\s*\(/.test(content)) {
     ensureKeepNearFun('flymdEnsureRecordAudioPermission')
     if (content.includes('flymd:mic-permission-hook-v1')) ensureKeepNearFun('onRequestPermissionsResult')
+  }
+
+  // 兜底：如果已有 SpeechRecognizer 补丁，但未标记 @Keep，则补上（JNI 调用需要）
+  if (hasSpeechRecognizer || /fun\s+flymdSpeechStartListening\s*\(/.test(content)) {
+    ensureKeepNearFun('flymdSpeechStartListening')
+    ensureKeepNearFun('flymdSpeechStopListening')
+    ensureKeepNearFun('flymdSpeechCancelListening')
+    ensureKeepNearFun('flymdSpeechDrainEvents')
+    ensureKeepNearFun('flymdSpeechGetActiveSessionId')
   }
 
   const mutatedBeforeBlocks = content !== original
@@ -500,7 +769,8 @@ function patchProguardKeepRules(projectRoot) {
     const s = fs.readFileSync(proguard, 'utf8')
     const hasFolderKeep = s.includes('flymd:saf-folder-picker-keep-v1')
     const hasMicKeep = s.includes('flymd:mic-permission-keep-v1')
-    if (hasFolderKeep && hasMicKeep) {
+    const hasSpeechKeep = s.includes('flymd:speech-recognizer-keep-v1')
+    if (hasFolderKeep && hasMicKeep && hasSpeechKeep) {
       console.log('[patch-android-immersive] Proguard keep 规则已存在，跳过')
       return true
     }
@@ -523,6 +793,20 @@ function patchProguardKeepRules(projectRoot) {
 # 说明：flymdEnsureRecordAudioPermission 仅被 JNI 调用；若被裁剪/改名，会导致录音权限请求永远失败。
 -keepclassmembers class **.MainActivity {
     public boolean flymdEnsureRecordAudioPermission(long);
+}
+`
+    }
+    if (!hasSpeechKeep) {
+      block += `
+
+# flymd:speech-recognizer-keep-v1
+# 说明：SpeechRecognizer 联动仅被 JNI 调用；release 下若被裁剪/改名，会导致运行时找不到方法。
+-keepclassmembers class **.MainActivity {
+    public int flymdSpeechStartListening(long);
+    public void flymdSpeechStopListening(int);
+    public void flymdSpeechCancelListening(int);
+    public java.lang.String[] flymdSpeechDrainEvents(int);
+    public int flymdSpeechGetActiveSessionId();
 }
 `
     }

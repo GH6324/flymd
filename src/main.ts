@@ -868,9 +868,12 @@ let transcribeAudioFileBusy = false
 
 // Android：录音中的悬浮提示/一键停止
 const SPEECH_RECORD_FAB_ID = 'flymd-speech-record-fab'
+const SPEECH_RECORD_FAB_DEFAULT_TEXT = '录音（该功能由硅基流动提供模型支持）'
+const BIBI_SPEECH_INSTALL_URL = 'https://bibi.brycewg.com/'
 type SpeechRecordFabState = {
   el: HTMLButtonElement
   timeEl: HTMLSpanElement | null
+  textEl: HTMLSpanElement | null
   timer: number | null
   startedAt: number
 }
@@ -897,7 +900,7 @@ function ensureSpeechRecordFab(): SpeechRecordFabState | null {
       el.setAttribute('aria-label', '停止录音并转写')
       el.innerHTML = `
         <span class="flymd-rec-dot" aria-hidden="true"></span>
-        <span class="flymd-rec-text">录音</span>
+        <span class="flymd-rec-text">${SPEECH_RECORD_FAB_DEFAULT_TEXT}</span>
         <span class="flymd-rec-time">00:00</span>
         <span class="flymd-rec-stop">停止</span>
       `
@@ -905,17 +908,19 @@ function ensureSpeechRecordFab(): SpeechRecordFabState | null {
     }
 
     const timeEl = el.querySelector('.flymd-rec-time') as HTMLSpanElement | null
+    const textEl = el.querySelector('.flymd-rec-text') as HTMLSpanElement | null
     const state: SpeechRecordFabState = (_speechRecordFab && _speechRecordFab.el === el)
       ? _speechRecordFab
-      : { el, timeEl, timer: null, startedAt: 0 }
+      : { el, timeEl, textEl, timer: null, startedAt: 0 }
     state.timeEl = timeEl
+    state.textEl = textEl
     _speechRecordFab = state
 
     try {
       const anyEl = el as any
       if (!anyEl.__flymdSpeechRecordFabBound) {
         anyEl.__flymdSpeechRecordFabBound = true
-        el.addEventListener('click', () => { void stopSpeechRecordingAndTranscribeFromFab() })
+        el.addEventListener('click', () => { void handleSpeechFabClick() })
       }
     } catch {}
 
@@ -945,7 +950,7 @@ function updateSpeechRecordFabNow(): void {
   } catch {}
 }
 
-function setSpeechRecordFabVisible(visible: boolean, startedAt?: number): void {
+function setSpeechRecordFabVisible(visible: boolean, startedAt?: number, label?: string, ariaLabel?: string): void {
   try {
     // 只在 Android UI 显示；其他平台即使误触发也不挡内容
     if (!document.body.classList.contains('platform-android')) visible = false
@@ -965,6 +970,11 @@ function setSpeechRecordFabVisible(visible: boolean, startedAt?: number): void {
     }
 
     s.startedAt = Number.isFinite(Number(startedAt)) ? Number(startedAt) : Date.now()
+    try { if (s.textEl) s.textEl.textContent = (String(label || '').trim() || SPEECH_RECORD_FAB_DEFAULT_TEXT) } catch {}
+    try {
+      const al = String(ariaLabel || '').trim()
+      if (al) s.el.setAttribute('aria-label', al)
+    } catch {}
     try { s.el.disabled = false } catch {}
     try { s.el.classList.add('show') } catch {}
     updateSpeechRecordFabNow()
@@ -985,6 +995,259 @@ async function stopSpeechRecordingAndTranscribeFromFab(): Promise<void> {
     try { if (s?.el) s.el.disabled = true } catch {}
     await stopSpeechRecordingAndTranscribe()
   } catch {}
+}
+
+// Android：系统 SpeechRecognizer 语音输入（边说边出字）
+type ActiveAndroidSpeechInput = {
+  sid: number
+  startedAt: number
+  pollTimer: number | null
+  noticeId: string
+  lastPartial: string
+  stopping: boolean
+}
+let activeAndroidSpeechInput: ActiveAndroidSpeechInput | null = null
+
+async function handleSpeechFabClick(): Promise<void> {
+  try {
+    if (activeSpeechRecorder) {
+      await stopSpeechRecordingAndTranscribeFromFab()
+      return
+    }
+    if (activeAndroidSpeechInput) {
+      await stopAndroidSpeechInputFromFab()
+      return
+    }
+    setSpeechRecordFabVisible(false)
+  } catch {}
+}
+
+async function toggleAndroidSpeechInputFromMenu(): Promise<void> {
+  try {
+    if (activeAndroidSpeechInput) {
+      await stopAndroidSpeechInputFromMenu()
+      return
+    }
+    await startAndroidSpeechInput()
+  } catch {}
+}
+
+async function startAndroidSpeechInput(): Promise<void> {
+  // 只做 Android
+  try {
+    const platform = await getPlatform()
+    if (platform !== 'android') {
+      pluginNotice('该功能仅 Android 可用', 'err', 2200)
+      return
+    }
+  } catch {
+    pluginNotice('该功能仅 Android 可用', 'err', 2200)
+    return
+  }
+
+  // 不要同时占用麦克风（录音转写/语音输入互斥）
+  if (activeSpeechRecorder) {
+    pluginNotice('正在录音中：请先停止录音再使用语音输入', 'err', 3600)
+    return
+  }
+  if (activeAndroidSpeechInput) {
+    pluginNotice('语音输入已在进行中：点右下角“停止”即可结束', 'err', 3200)
+    return
+  }
+
+  // 先显式请求麦克风权限（SpeechRecognizer 也需要）
+  try {
+    const ok = await invoke<boolean>('android_ensure_record_audio_permission', { timeoutMs: 60_000 } as any)
+    if (!ok) {
+      pluginNotice('麦克风权限未授予：请到系统设置开启麦克风权限后重试。', 'err', 4200)
+      return
+    }
+  } catch (e) {
+    pluginNotice('麦克风权限请求失败：' + String((e as any)?.message || e || ''), 'err', 4200)
+    return
+  }
+
+  const noticeId = (() => { try { return NotificationManager.show('extension', '语音输入：准备中…', 0) } catch { return '' } })()
+
+  let sid = 0
+  try {
+    sid = await invoke<number>('android_speech_start_listening', { timeoutMs: 8_000 } as any)
+  } catch (e) {
+    try { if (noticeId) NotificationManager.hide(noticeId) } catch {}
+    pluginNotice('启动语音输入失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+    return
+  }
+
+  if (sid <= 0) {
+    try { if (noticeId) NotificationManager.hide(noticeId) } catch {}
+    if (sid === -1) {
+      pluginNotice('系统语音识别不可用：将打开 BiBi 下载页', 'err', 4200)
+      try { void openInBrowser(BIBI_SPEECH_INSTALL_URL) } catch {}
+      return
+    }
+    if (sid === -2) {
+      pluginNotice('语音输入正忙，请稍候重试', 'err', 2200)
+      return
+    }
+    if (sid === -3) {
+      pluginNotice('麦克风权限未授予：请到系统设置开启后重试', 'err', 4200)
+      return
+    }
+    pluginNotice('启动语音输入失败（系统语音服务异常）', 'err', 3200)
+    return
+  }
+
+  const session: ActiveAndroidSpeechInput = { sid, startedAt: Date.now(), pollTimer: null, noticeId, lastPartial: '', stopping: false }
+  activeAndroidSpeechInput = session
+  try { setSpeechRecordFabVisible(true, session.startedAt, '语音输入（BiBi）', '停止语音输入') } catch {}
+  try { if (noticeId) NotificationManager.updateMessage(noticeId, '语音输入：请开始说话…') } catch {}
+
+  // 轮询消费事件队列（Java->Rust->JS）
+  try {
+    session.pollTimer = window.setInterval(() => { void pollAndroidSpeechInputEventsOnce(session.sid) }, 220)
+  } catch {}
+}
+
+async function stopAndroidSpeechInputFromFab(): Promise<void> {
+  try {
+    const s = activeAndroidSpeechInput
+    if (!s) {
+      setSpeechRecordFabVisible(false)
+      return
+    }
+    const fab = _speechRecordFab
+    try { if (fab?.el) fab.el.disabled = true } catch {}
+    s.stopping = true
+    try { if (s.noticeId) NotificationManager.updateMessage(s.noticeId, '语音输入：正在结束并识别…') } catch {}
+    try { await invoke('android_speech_stop_listening', { sessionId: s.sid } as any) } catch {}
+    // 兜底：长时间没有结果就取消，防止 UI 卡死
+    setTimeout(() => {
+      try {
+        const cur = activeAndroidSpeechInput
+        if (cur && cur.sid === s.sid) {
+          void endAndroidSpeechInputSession(s.sid, true, '语音输入已取消')
+        }
+      } catch {}
+    }, 8000)
+  } catch {}
+}
+
+async function stopAndroidSpeechInputFromMenu(): Promise<void> {
+  try {
+    const s = activeAndroidSpeechInput
+    if (!s) return
+    s.stopping = true
+    try { if (s.noticeId) NotificationManager.updateMessage(s.noticeId, '语音输入：正在结束并识别…') } catch {}
+    try { await invoke('android_speech_stop_listening', { sessionId: s.sid } as any) } catch {}
+    setTimeout(() => {
+      try {
+        const cur = activeAndroidSpeechInput
+        if (cur && cur.sid === s.sid) {
+          void endAndroidSpeechInputSession(s.sid, true, '语音输入已取消')
+        }
+      } catch {}
+    }, 8000)
+  } catch {}
+}
+
+async function endAndroidSpeechInputSession(sessionId: number, cancel: boolean, toast?: string): Promise<void> {
+  const s = activeAndroidSpeechInput
+  if (!s || s.sid !== sessionId) return
+  activeAndroidSpeechInput = null
+  try { if (s.pollTimer != null) window.clearInterval(s.pollTimer) } catch {}
+  try { if (s.noticeId) NotificationManager.hide(s.noticeId) } catch {}
+  try { setSpeechRecordFabVisible(false) } catch {}
+  if (cancel) {
+    try { await invoke('android_speech_cancel_listening', { sessionId } as any) } catch {}
+  }
+  if (toast) {
+    try { pluginNotice(toast, 'ok', 1800) } catch {}
+  }
+}
+
+function truncateSpeechHint(s: string, maxLen: number): string {
+  try {
+    const t = String(s || '').trim()
+    if (!t) return ''
+    if (t.length <= maxLen) return t
+    return t.slice(0, Math.max(0, maxLen - 1)) + '…'
+  } catch {
+    return ''
+  }
+}
+
+async function pollAndroidSpeechInputEventsOnce(sessionId: number): Promise<void> {
+  const s = activeAndroidSpeechInput
+  if (!s || s.sid !== sessionId) return
+
+  let items: string[] = []
+  try {
+    items = await invoke<string[]>('android_speech_drain_events', { maxItems: 64 } as any)
+  } catch {
+    return
+  }
+  if (!items || !items.length) return
+
+  for (const raw of items) {
+    let ev: any = null
+    try { ev = JSON.parse(String(raw || '')) } catch { ev = null }
+    if (!ev || ev.sid !== sessionId) continue
+
+    const t0 = String(ev.t || '')
+    if (t0 === 'partial') {
+      const text = String(ev.text || '').trim()
+      if (!text) continue
+      s.lastPartial = text
+      try {
+        if (s.noticeId) {
+          const hint = truncateSpeechHint(text, 42)
+          NotificationManager.updateMessage(s.noticeId, hint ? ('语音输入：' + hint) : '语音输入：识别中…')
+        }
+      } catch {}
+      continue
+    }
+
+    if (t0 === 'final') {
+      const text = String(ev.text || '').trim()
+      try {
+        if (text) {
+          insertAtCursor(text)
+          try { renderPreview() } catch {}
+          try { pluginNotice('已插入语音文本', 'ok', 1200) } catch {}
+        } else {
+          try { pluginNotice('未识别到文字', 'err', 1600) } catch {}
+        }
+      } catch {}
+      void endAndroidSpeechInputSession(sessionId, false)
+      return
+    }
+
+    if (t0 === 'error') {
+      try { pluginNotice('语音输入失败（系统语音服务错误）', 'err', 3200) } catch {}
+      void endAndroidSpeechInputSession(sessionId, false)
+      return
+    }
+
+    if (t0 === 'state') {
+      const st = Number(ev.state || 0)
+      const msg = String(ev.msg || '')
+      if (st === 0) {
+        // idle：没有 final 的话，说明被取消/超时/静默失败
+        if (!s.stopping) {
+          try { pluginNotice('语音输入已结束', 'ok', 1200) } catch {}
+        }
+        void endAndroidSpeechInputSession(sessionId, false)
+        return
+      }
+      // recording/ready/begin/end/stop：仅更新提示
+      try {
+        if (s.noticeId) {
+          const label = msg ? ('语音输入：' + msg) : '语音输入：进行中…'
+          NotificationManager.updateMessage(s.noticeId, label)
+        }
+      } catch {}
+    }
+  }
 }
 
 function fnv1a32Hex(str: string): string {
@@ -1195,7 +1458,7 @@ async function maybeOrganizeTranscription(rawText: string): Promise<void> {
 
 async function transcribeFromAudioFileMenu(): Promise<void> {
   if (transcribeAudioFileBusy) {
-    pluginNotice('正在转写音频，请稍候…', 'err', 2000)
+    pluginNotice('正在转写音频（该功能由硅基流动提供模型支持），请稍候…', 'err', 2000)
     return
   }
   transcribeAudioFileBusy = true
@@ -4630,6 +4893,15 @@ async function showUpdateOverlay(resp: CheckUpdateResp) {
     ov.classList.remove('hidden')
     return
   }
+  // Android：浏览器下载 APK（直连/镜像）+ 发布页
+  if (resp.assetAndroid) {
+    const a = resp.assetAndroid as UpdateAssetInfo
+    { const b = mkBtn('浏览器下载', () => { void openInBrowser(a.directUrl) }); try { b.classList.add('btn-primary') } catch {} }
+    { const b = mkBtn('镜像下载', () => { void openInBrowser('https://ghfast.top/' + a.directUrl) }); try { b.classList.add('btn-secondary') } catch {} }
+    { const b = mkBtn('发布页', () => { void openInBrowser(resp.htmlUrl) }); try { b.classList.add('btn-secondary') } catch {} }
+    ov.classList.remove('hidden')
+    return
+  }
   // Linux：沿用现有按钮组
   showUpdateOverlayLinux(resp)
 }
@@ -7813,6 +8085,7 @@ function showMobileQuickMenu() {
     { label: '插入图片…', action: () => { void handleMobileInsertImages() } },
     ...(isAndroidUi ? ([
       { label: '录音文件转文本…', action: () => { void transcribeFromAudioFileMenu() } },
+      { label: activeAndroidSpeechInput ? '停止语音输入（BiBi）' : '语音输入（BiBi）', action: () => { void toggleAndroidSpeechInputFromMenu() } },
       { label: activeSpeechRecorder ? '停止录音并转写' : '开始录音', action: () => { void toggleRecordAndTranscribeMenu() } },
     ] as TopMenuItemSpec[]) : []),
     { label: `${t('mode.edit')}/${t('mode.read')}`, action: () => { void handleToggleModeShortcut() } },

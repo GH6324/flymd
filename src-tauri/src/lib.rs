@@ -990,6 +990,12 @@ pub fn run() {
        android_write_uri_base64,
        android_persist_uri_permission,
       android_ensure_record_audio_permission,
+      // Android：系统 SpeechRecognizer（语音输入）
+      android_speech_start_listening,
+      android_speech_stop_listening,
+      android_speech_cancel_listening,
+      android_speech_drain_events,
+      android_speech_get_active_session_id,
        android_saf_pick_folder,
        android_saf_list_dir,
        android_saf_create_file,
@@ -2568,6 +2574,175 @@ mod android_saf {
     })
   }
 
+  // ============ Android：SpeechRecognizer（系统语音输入） ============
+
+  pub fn speech_start_listening(timeout_ms: u64) -> Result<i32, String> {
+    with_env(|env, activity| {
+      let t: jlong = if timeout_ms > i64::MAX as u64 {
+        i64::MAX as jlong
+      } else {
+        timeout_ms as jlong
+      };
+
+      let v = match env.call_method(
+        &activity,
+        "flymdSpeechStartListening",
+        "(J)I",
+        &[JValue::Long(t)],
+      ) {
+        Ok(v) => v,
+        Err(e) => {
+          let detail = take_java_exception_string(env).unwrap_or_default();
+          if !detail.is_empty() {
+            let mut msg =
+              format!("flymdSpeechStartListening 调用失败（Android 补丁/混淆/实现异常）: {detail}");
+            if detail.contains("NoSuchMethod") {
+              msg.push_str("（请确认已执行 Android patch：scripts/patch-android-immersive.cjs，并避免 release 混淆裁剪该方法）");
+            }
+            return Err(msg);
+          }
+          let _ = env.exception_clear();
+          return Err(format!("flymdSpeechStartListening 调用失败（可能未打 Android patch）: {e}"));
+        }
+      };
+
+      v.i()
+        .map(|n| n as i32)
+        .map_err(|e| format!("flymdSpeechStartListening 返回类型异常: {e}"))
+    })
+  }
+
+  pub fn speech_stop_listening(session_id: i32) -> Result<(), String> {
+    with_env(|env, activity| {
+      match env.call_method(
+        &activity,
+        "flymdSpeechStopListening",
+        "(I)V",
+        &[JValue::Int(session_id as jint)],
+      ) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+          let detail = take_java_exception_string(env).unwrap_or_default();
+          if !detail.is_empty() {
+            let mut msg =
+              format!("flymdSpeechStopListening 调用失败（Android 补丁/混淆/实现异常）: {detail}");
+            if detail.contains("NoSuchMethod") {
+              msg.push_str("（请确认已执行 Android patch：scripts/patch-android-immersive.cjs，并避免 release 混淆裁剪该方法）");
+            }
+            return Err(msg);
+          }
+          let _ = env.exception_clear();
+          Err(format!("flymdSpeechStopListening 调用失败: {e}"))
+        }
+      }
+    })
+  }
+
+  pub fn speech_cancel_listening(session_id: i32) -> Result<(), String> {
+    with_env(|env, activity| {
+      match env.call_method(
+        &activity,
+        "flymdSpeechCancelListening",
+        "(I)V",
+        &[JValue::Int(session_id as jint)],
+      ) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+          let detail = take_java_exception_string(env).unwrap_or_default();
+          if !detail.is_empty() {
+            let mut msg =
+              format!("flymdSpeechCancelListening 调用失败（Android 补丁/混淆/实现异常）: {detail}");
+            if detail.contains("NoSuchMethod") {
+              msg.push_str("（请确认已执行 Android patch：scripts/patch-android-immersive.cjs，并避免 release 混淆裁剪该方法）");
+            }
+            return Err(msg);
+          }
+          let _ = env.exception_clear();
+          Err(format!("flymdSpeechCancelListening 调用失败: {e}"))
+        }
+      }
+    })
+  }
+
+  pub fn speech_drain_events(max_items: i32) -> Result<Vec<String>, String> {
+    with_env(|env, activity| {
+      let m: jint = if max_items <= 0 { 64 } else { max_items as jint };
+      let v = match env.call_method(
+        &activity,
+        "flymdSpeechDrainEvents",
+        "(I)[Ljava/lang/String;",
+        &[JValue::Int(m)],
+      ) {
+        Ok(v) => v,
+        Err(e) => {
+          let detail = take_java_exception_string(env).unwrap_or_default();
+          if !detail.is_empty() {
+            let mut msg =
+              format!("flymdSpeechDrainEvents 调用失败（Android 补丁/混淆/实现异常）: {detail}");
+            if detail.contains("NoSuchMethod") {
+              msg.push_str("（请确认已执行 Android patch：scripts/patch-android-immersive.cjs，并避免 release 混淆裁剪该方法）");
+            }
+            return Err(msg);
+          }
+          let _ = env.exception_clear();
+          return Err(format!("flymdSpeechDrainEvents 调用失败: {e}"));
+        }
+      };
+
+      let arr_obj = v.l().map_err(|e| {
+        clear_java_exception(env);
+        format!("flymdSpeechDrainEvents 返回类型异常: {e}")
+      })?;
+      if arr_obj.is_null() {
+        return Ok(Vec::new());
+      }
+
+      let arr: JObjectArray = JObjectArray::from(arr_obj);
+      let len = env
+        .get_array_length(&arr)
+        .map_err(|e| format!("get_array_length 失败: {e}"))?;
+
+      let mut out: Vec<String> = Vec::with_capacity(len as usize);
+      for i in 0..len {
+        let el = env
+          .get_object_array_element(&arr, i)
+          .map_err(|e| {
+            clear_java_exception(env);
+            format!("get_object_array_element({i}) 失败: {e}")
+          })?;
+        let s = jstring_to_string(env, el)?;
+        out.push(s);
+      }
+
+      Ok(out)
+    })
+  }
+
+  pub fn speech_get_active_session_id() -> Result<i32, String> {
+    with_env(|env, activity| {
+      let v = match env.call_method(&activity, "flymdSpeechGetActiveSessionId", "()I", &[]) {
+        Ok(v) => v,
+        Err(e) => {
+          let detail = take_java_exception_string(env).unwrap_or_default();
+          if !detail.is_empty() {
+            let mut msg =
+              format!("flymdSpeechGetActiveSessionId 调用失败（Android 补丁/混淆/实现异常）: {detail}");
+            if detail.contains("NoSuchMethod") {
+              msg.push_str("（请确认已执行 Android patch：scripts/patch-android-immersive.cjs，并避免 release 混淆裁剪该方法）");
+            }
+            return Err(msg);
+          }
+          let _ = env.exception_clear();
+          return Err(format!("flymdSpeechGetActiveSessionId 调用失败: {e}"));
+        }
+      };
+
+      v.i()
+        .map(|n| n as i32)
+        .map_err(|e| format!("flymdSpeechGetActiveSessionId 返回类型异常: {e}"))
+    })
+  }
+
   pub fn write_uri_text(uri: &str, content: &str) -> Result<(), String> {
     with_env(|env, activity| {
       let uri_obj = parse_uri(env, uri)?;
@@ -3144,6 +3319,82 @@ async fn android_ensure_record_audio_permission(timeout_ms: Option<u64>) -> Resu
   {
     let _ = timeout_ms;
     Err("android_ensure_record_audio_permission only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_speech_start_listening(timeout_ms: Option<u64>) -> Result<i32, String> {
+  #[cfg(target_os = "android")]
+  {
+    let t = timeout_ms.unwrap_or(8_000);
+    return tauri::async_runtime::spawn_blocking(move || android_saf::speech_start_listening(t))
+      .await
+      .map_err(|e| format!("android_speech_start_listening join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = timeout_ms;
+    Err("android_speech_start_listening only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_speech_stop_listening(session_id: i32) -> Result<(), String> {
+  #[cfg(target_os = "android")]
+  {
+    return tauri::async_runtime::spawn_blocking(move || android_saf::speech_stop_listening(session_id))
+      .await
+      .map_err(|e| format!("android_speech_stop_listening join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = session_id;
+    Err("android_speech_stop_listening only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_speech_cancel_listening(session_id: i32) -> Result<(), String> {
+  #[cfg(target_os = "android")]
+  {
+    return tauri::async_runtime::spawn_blocking(move || android_saf::speech_cancel_listening(session_id))
+      .await
+      .map_err(|e| format!("android_speech_cancel_listening join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = session_id;
+    Err("android_speech_cancel_listening only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_speech_drain_events(max_items: Option<i32>) -> Result<Vec<String>, String> {
+  #[cfg(target_os = "android")]
+  {
+    let m = max_items.unwrap_or(64);
+    return tauri::async_runtime::spawn_blocking(move || android_saf::speech_drain_events(m))
+      .await
+      .map_err(|e| format!("android_speech_drain_events join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = max_items;
+    Err("android_speech_drain_events only available on Android".into())
+  }
+}
+
+#[tauri::command]
+async fn android_speech_get_active_session_id() -> Result<i32, String> {
+  #[cfg(target_os = "android")]
+  {
+    return tauri::async_runtime::spawn_blocking(move || android_saf::speech_get_active_session_id())
+      .await
+      .map_err(|e| format!("android_speech_get_active_session_id join 失败: {e}"))?;
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    Err("android_speech_get_active_session_id only available on Android".into())
   }
 }
 
