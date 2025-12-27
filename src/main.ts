@@ -58,6 +58,8 @@ import { initBuiltInFloatingToolbar } from './mobileFloatingToolbarBuiltIn'
 import { getLibrarySort, setLibrarySort, type LibSortMode } from './core/librarySort'
 import { searchLibraryFilesByName, type LibrarySearchResult } from './core/librarySearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
+// 移动端图标管理
+import { initMobileIcons, toggleModeIcon } from './icons'
 import {
   toggleFocusMode,
   getFocusMode,
@@ -1636,6 +1638,14 @@ app.innerHTML = `
       <div class="menu-item" id="btn-theme" title="${t('menu.theme.tooltip')}">${t('menu.theme')}</div>
       <div class="menu-item" id="btn-extensions" title="${t('menu.extensions')}">${t('menu.extensions')}</div>
     </div>
+    <!-- 右侧工具栏（仅移动端显示） -->
+    <div class="mobile-toolbar" id="mobile-toolbar">
+      <button class="toolbar-btn" id="btn-mode-toggle" title="${t('mode.edit')}/${t('mode.read')}">源码</button>
+      <button class="toolbar-btn" id="btn-undo" title="撤销" disabled>↶</button>
+      <button class="toolbar-btn" id="btn-redo" title="重做" disabled>↷</button>
+      <button class="toolbar-btn" id="btn-save-mobile" title="${t('file.save')}">💾</button>
+      <button class="toolbar-btn" id="btn-find" title="查找">🔍</button>
+    </div>
     <div class="filename" id="filename">${t('filename.untitled')}</div>
     <div class="menu-item" id="btn-mobile-menu" title="${t('menu.more')}">${t('menu.more')}</div>
     <div class="window-controls" id="window-controls">
@@ -1664,8 +1674,17 @@ const _platformIntegrationReady = initPlatformIntegration().catch((e) => {
 })
 // 初始化平台类（用于 CSS 平台适配，Windows 显示窗口控制按钮）
 try { initPlatformClass() } catch {}
-// 移动端：根据 visualViewport 自动计算“键盘占用高度”，用于底部菜单避开输入法遮挡
+// 移动端：根据 visualViewport 自动计算"键盘占用高度"，用于底部菜单避开输入法遮挡
 try { installMobileKeyboardInsetCssVar() } catch {}
+// 移动端：初始化图标和工具栏事件
+try {
+  if (isMobileUiFast()) {
+    initMobileIcons()
+    initMobileToolbar()
+  }
+} catch (e) {
+  console.error('[Mobile] 图标/工具栏初始化失败', e)
+}
 // 应用已保存主题并挂载主题 UI
 try { applySavedTheme() } catch {}
 try { initThemeUI() } catch {}
@@ -8757,6 +8776,76 @@ function bindEvents() {
     try { if (_findUpdateLabelFn) _findUpdateLabelFn() } catch {}
     _findPanel.style.display = 'block'
     setTimeout(() => { try { (_findInput as HTMLInputElement).focus(); (_findInput as HTMLInputElement).select() } catch {} }, 0)
+  }
+
+  // ========== 移动端工具栏初始化（Android 专属）==========
+  /**
+   * 初始化移动端顶栏图标按钮事件
+   * 注意：仅在移动端调用，手机端只支持源码模式
+   */
+  function initMobileToolbar() {
+    if (!isMobileUiFast()) return
+
+    const toolbar = document.getElementById('mobile-toolbar')
+    if (!toolbar) {
+      console.warn('[Mobile] toolbar not found')
+      return
+    }
+
+    // 1. 模式切换按钮（源码 ⇄ 阅读）
+    const btnModeToggle = document.getElementById('btn-mode-toggle')
+    btnModeToggle?.addEventListener('click', async () => {
+      try {
+        await toggleMode()
+        // 更新图标
+        const isReadMode = mode === 'preview'
+        toggleModeIcon(isReadMode)
+      } catch (e) {
+        console.error('[Mobile] 模式切换失败', e)
+      }
+    })
+
+    // 2. 撤销按钮（源码模式使用 execCommand）
+    const btnUndo = document.getElementById('btn-undo') as HTMLButtonElement | null
+    btnUndo?.addEventListener('click', () => {
+      try {
+        document.execCommand('undo')
+      } catch (e) {
+        console.warn('[Mobile] 撤销失败', e)
+      }
+    })
+
+    // 3. 重做按钮
+    const btnRedo = document.getElementById('btn-redo') as HTMLButtonElement | null
+    btnRedo?.addEventListener('click', () => {
+      try {
+        document.execCommand('redo')
+      } catch (e) {
+        console.warn('[Mobile] 重做失败', e)
+      }
+    })
+
+    // 4. 保存按钮
+    const btnSaveMobile = document.getElementById('btn-save-mobile')
+    btnSaveMobile?.addEventListener('click', async () => {
+      try {
+        await saveFile()
+      } catch (e) {
+        console.error('[Mobile] 保存失败', e)
+      }
+    })
+
+    // 5. 查找按钮
+    const btnFind = document.getElementById('btn-find')
+    btnFind?.addEventListener('click', () => {
+      try {
+        showFindPanel()
+      } catch (e) {
+        console.error('[Mobile] 查找面板打开失败', e)
+      }
+    })
+
+    console.log('[Mobile] 工具栏事件绑定完成')
   }
 
   // 全局快捷键：Ctrl+H 打开查找替换
