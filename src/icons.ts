@@ -6,7 +6,7 @@
 import {
   createElement,
   Library,
-  Puzzle,
+  Blocks,
   Menu,
   CodeXml,
   Eye,
@@ -52,7 +52,7 @@ function createIcon(
 // 图标映射表（按钮 ID → 图标函数）
 export const MOBILE_ICONS = {
   'btn-library': Library,
-  'btn-plugins': Puzzle,
+  'btn-plugins': Blocks,
   'btn-mobile-menu': Menu,
   'btn-mode-toggle': CodeXml,
   'btn-mode-toggle-alt': Eye,

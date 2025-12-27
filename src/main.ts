@@ -866,6 +866,127 @@ type ActiveSpeechRecorder = {
 let activeSpeechRecorder: ActiveSpeechRecorder | null = null
 let transcribeAudioFileBusy = false
 
+// Android：录音中的悬浮提示/一键停止
+const SPEECH_RECORD_FAB_ID = 'flymd-speech-record-fab'
+type SpeechRecordFabState = {
+  el: HTMLButtonElement
+  timeEl: HTMLSpanElement | null
+  timer: number | null
+  startedAt: number
+}
+let _speechRecordFab: SpeechRecordFabState | null = null
+
+function formatSpeechRecordDuration(ms: number): string {
+  const sec = Math.max(0, Math.floor((ms || 0) / 1000))
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  const pad2 = (n: number) => String(n).padStart(2, '0')
+  if (h > 0) return `${h}:${pad2(m)}:${pad2(s)}`
+  return `${pad2(m)}:${pad2(s)}`
+}
+
+function ensureSpeechRecordFab(): SpeechRecordFabState | null {
+  try {
+    let el = document.getElementById(SPEECH_RECORD_FAB_ID) as HTMLButtonElement | null
+    if (!el) {
+      el = document.createElement('button')
+      el.id = SPEECH_RECORD_FAB_ID
+      el.type = 'button'
+      el.className = 'flymd-speech-record-fab'
+      el.setAttribute('aria-label', '停止录音并转写')
+      el.innerHTML = `
+        <span class="flymd-rec-dot" aria-hidden="true"></span>
+        <span class="flymd-rec-text">录音</span>
+        <span class="flymd-rec-time">00:00</span>
+        <span class="flymd-rec-stop">停止</span>
+      `
+      document.body.appendChild(el)
+    }
+
+    const timeEl = el.querySelector('.flymd-rec-time') as HTMLSpanElement | null
+    const state: SpeechRecordFabState = (_speechRecordFab && _speechRecordFab.el === el)
+      ? _speechRecordFab
+      : { el, timeEl, timer: null, startedAt: 0 }
+    state.timeEl = timeEl
+    _speechRecordFab = state
+
+    try {
+      const anyEl = el as any
+      if (!anyEl.__flymdSpeechRecordFabBound) {
+        anyEl.__flymdSpeechRecordFabBound = true
+        el.addEventListener('click', () => { void stopSpeechRecordingAndTranscribeFromFab() })
+      }
+    } catch {}
+
+    return state
+  } catch {
+    return null
+  }
+}
+
+function updateSpeechRecordFabNow(): void {
+  try {
+    const s = _speechRecordFab
+    if (!s) return
+    if (!document.body.contains(s.el)) return
+
+    // 关键：虚拟键盘弹出时，避免悬浮按钮被键盘遮住
+    try {
+      const vv = (window as any).visualViewport as VisualViewport | undefined
+      if (vv) {
+        const kb = Math.max(0, Math.round(window.innerHeight - (vv.height + vv.offsetTop)))
+        const bottom = kb > 80 ? (kb + 14) : 14
+        s.el.style.bottom = `calc(env(safe-area-inset-bottom) + ${bottom}px)`
+      }
+    } catch {}
+
+    if (s.timeEl) s.timeEl.textContent = formatSpeechRecordDuration(Date.now() - (s.startedAt || Date.now()))
+  } catch {}
+}
+
+function setSpeechRecordFabVisible(visible: boolean, startedAt?: number): void {
+  try {
+    // 只在 Android UI 显示；其他平台即使误触发也不挡内容
+    if (!document.body.classList.contains('platform-android')) visible = false
+    const s = ensureSpeechRecordFab()
+    if (!s) return
+
+    if (!visible) {
+      try { s.el.classList.remove('show') } catch {}
+      try { s.el.disabled = false } catch {}
+      try { s.el.style.bottom = '' } catch {}
+      try {
+        if (s.timer != null) window.clearInterval(s.timer)
+      } catch {}
+      s.timer = null
+      s.startedAt = 0
+      return
+    }
+
+    s.startedAt = Number.isFinite(Number(startedAt)) ? Number(startedAt) : Date.now()
+    try { s.el.disabled = false } catch {}
+    try { s.el.classList.add('show') } catch {}
+    updateSpeechRecordFabNow()
+    try {
+      if (s.timer != null) window.clearInterval(s.timer)
+    } catch {}
+    s.timer = window.setInterval(() => updateSpeechRecordFabNow(), 500)
+  } catch {}
+}
+
+async function stopSpeechRecordingAndTranscribeFromFab(): Promise<void> {
+  try {
+    if (!activeSpeechRecorder) {
+      setSpeechRecordFabVisible(false)
+      return
+    }
+    const s = _speechRecordFab
+    try { if (s?.el) s.el.disabled = true } catch {}
+    await stopSpeechRecordingAndTranscribe()
+  } catch {}
+}
+
 function fnv1a32Hex(str: string): string {
   try {
     let hash = 0x811c9dc5
@@ -1151,9 +1272,7 @@ async function toggleRecordAndTranscribeMenu(): Promise<void> {
   try {
     // 停止并转写
     if (activeSpeechRecorder) {
-      const r = activeSpeechRecorder
-      activeSpeechRecorder = null
-      try { r.recorder.stop() } catch {}
+      await stopSpeechRecordingAndTranscribe()
       return
     }
 
@@ -1207,7 +1326,14 @@ async function toggleRecordAndTranscribeMenu(): Promise<void> {
 
     const mimeType = pickRecorderMimeType()
     const chunks: BlobPart[] = []
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    let recorder: MediaRecorder
+    try {
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    } catch (e) {
+      // 兜底：如果 MediaRecorder 初始化失败，也要立刻释放麦克风
+      try { stream.getTracks().forEach(t => { try { t.stop() } catch {} }) } catch {}
+      throw e
+    }
 
     activeSpeechRecorder = { recorder, stream, chunks, mimeType: mimeType || '', startedAt: Date.now() }
 
@@ -1217,6 +1343,14 @@ async function toggleRecordAndTranscribeMenu(): Promise<void> {
 
     recorder.addEventListener('stop', () => {
       void (async () => {
+        // 无论如何先关掉“正在录音”的 UI
+        try { setSpeechRecordFabVisible(false) } catch {}
+        // 某些 WebView 下可能会“意外 stop”，这里兜底把状态归零，避免菜单仍显示“停止录音”
+        try {
+          if (activeSpeechRecorder && activeSpeechRecorder.recorder === recorder) {
+            activeSpeechRecorder = null
+          }
+        } catch {}
         const local = { chunks: chunks.slice(), mimeType: mimeType || recorder.mimeType || 'audio/webm' }
         try { stream.getTracks().forEach(t => { try { t.stop() } catch {} }) } catch {}
         try {
@@ -1235,12 +1369,52 @@ async function toggleRecordAndTranscribeMenu(): Promise<void> {
       })()
     })
 
+    // 极少数 WebView：录音器内部错误后不会抛异常，只发 error 事件
+    try {
+      recorder.addEventListener('error', (ev: any) => {
+        try { setSpeechRecordFabVisible(false) } catch {}
+        try {
+          if (activeSpeechRecorder && activeSpeechRecorder.recorder === recorder) activeSpeechRecorder = null
+        } catch {}
+        try { stream.getTracks().forEach(t => { try { t.stop() } catch {} }) } catch {}
+        try {
+          const msg = String((ev as any)?.error?.message || (ev as any)?.message || '')
+          pluginNotice('录音异常中断' + (msg ? `：${msg}` : ''), 'err', 3200)
+        } catch {}
+      })
+    } catch {}
+
     recorder.start()
-    pluginNotice('已开始录音。录完后点顶栏“更多”→“停止录音并转写”。', 'ok', 3500)
+    try { setSpeechRecordFabVisible(true, activeSpeechRecorder.startedAt) } catch {}
+    pluginNotice('已开始录音。点右下角悬浮按钮“停止”即可结束并转写。', 'ok', 3500)
   } catch (e) {
     console.error('录音流程异常', e)
+    // 防止“录音未真正开始”却残留 active recorder/麦克风占用
+    try { setSpeechRecordFabVisible(false) } catch {}
+    try {
+      const r = activeSpeechRecorder
+      activeSpeechRecorder = null
+      try { r?.recorder?.stop?.() } catch {}
+      try { r?.stream?.getTracks?.().forEach((t: any) => { try { t.stop() } catch {} }) } catch {}
+    } catch {}
     pluginNotice('录音失败：' + String((e as any)?.message || e || ''), 'err', 3200)
   }
+}
+
+async function stopSpeechRecordingAndTranscribe(): Promise<void> {
+  try {
+    const r = activeSpeechRecorder
+    if (!r) {
+      try { setSpeechRecordFabVisible(false) } catch {}
+      return
+    }
+    activeSpeechRecorder = null
+    try { setSpeechRecordFabVisible(false) } catch {}
+    try { r.recorder.stop() } catch {
+      // stop 失败也要尽量释放麦克风，避免用户以为“还在录音”
+      try { r.stream.getTracks().forEach(t => { try { t.stop() } catch {} }) } catch {}
+    }
+  } catch {}
 }
 
 async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<ContextMenuItemConfig[]> {
