@@ -24,7 +24,10 @@ function isTauriAndroidInvocation() {
     if (!raw) return false
     const obj = JSON.parse(raw)
     const original = Array.isArray(obj?.original) ? obj.original : []
-    return original.includes('android')
+    const cooked = Array.isArray(obj?.cooked) ? obj.cooked : []
+    const remain = Array.isArray(obj?.remain) ? obj.remain : []
+    const all = original.concat(cooked).concat(remain)
+    return all.includes('android')
   } catch {
     return false
   }
@@ -68,4 +71,3 @@ function main() {
 }
 
 main()
-
