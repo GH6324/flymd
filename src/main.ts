@@ -854,6 +854,94 @@ const AUDIO_TRANSCRIBE_PROXY_URL = 'https://flymd.llingfei.com/ai/audio_proxy.ph
 const AUDIO_RECORD_FOLDER_URI_KEY = 'flymd_audio_record_folder_uri'
 const FLYMD_CLIENT_TOKEN_SECRET = 'flymd-rolling-secret-v1'
 const FLYMD_CLIENT_TOKEN_WINDOW_SECONDS = 120
+const MANUAL_TRANSCRIBE_STORE_KEY = 'manual_transcribe'
+
+type ManualTranscribeMode = 'official' | 'volc'
+type ManualTranscribeConfig = {
+  mode: ManualTranscribeMode
+  volc?: {
+    endpoint?: string
+    appKey: string
+    accessKey: string
+    resourceId?: string
+    language?: string
+    enableDdc?: boolean
+  }
+}
+
+async function manualTranscribeStoreGet(): Promise<ManualTranscribeConfig> {
+  try {
+    const store = await getAppStore()
+    const raw = (await store.get(MANUAL_TRANSCRIBE_STORE_KEY)) as any
+    const mode = String(raw?.mode || '').trim()
+    if (mode === 'volc') return raw as any
+  } catch {}
+  return { mode: 'official' }
+}
+
+async function manualTranscribeStoreSet(patch: Partial<ManualTranscribeConfig>): Promise<void> {
+  const store = await getAppStore()
+  const prev = await manualTranscribeStoreGet()
+  const next: ManualTranscribeConfig = { ...(prev as any), ...(patch as any) }
+  await store.set(MANUAL_TRANSCRIBE_STORE_KEY, next as any)
+}
+
+function manualTranscribeProviderLabel(cfg: ManualTranscribeConfig): string {
+  if (cfg?.mode === 'volc') return '火山引擎（用户自配，不计费）'
+  return '硅基流动提供模型支持'
+}
+
+async function openManualTranscribeSettingsFromMenu(): Promise<void> {
+  try {
+    const cur = await manualTranscribeStoreGet()
+    const curMode = cur?.mode === 'volc' ? 'volc' : 'official'
+    const pick = String(prompt(
+      '手动转写使用哪种接口？\n' +
+      '0 = 官方默认（计费/走自带后端）\n' +
+      '1 = 火山引擎（用户自配，不计费；仅影响：开始录音/录音文件转文本）\n\n' +
+      `当前：${curMode === 'volc' ? '1' : '0'}\n` +
+      '请输入 0 或 1：',
+      curMode === 'volc' ? '1' : '0'
+    ) || '').trim()
+    if (!pick) return
+    if (pick === '0') {
+      await manualTranscribeStoreSet({ mode: 'official', volc: undefined })
+      pluginNotice('手动转写已切回官方默认', 'ok', 2200)
+      return
+    }
+    if (pick !== '1') {
+      pluginNotice('输入无效：请输入 0 或 1', 'err', 2200)
+      return
+    }
+
+    // 火山：参考 BiBi Keyboard（openspeech.bytedance.com 的 X-Api-* 头）
+    const endpoint = String(prompt(
+      '火山接口地址（可直接回车用默认）：',
+      String(cur?.volc?.endpoint || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash')
+    ) || '').trim() || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash'
+    const appKey = String(prompt('X-Api-App-Key（必填）：', String(cur?.volc?.appKey || '')) || '').trim()
+    if (!appKey) { pluginNotice('未填写 X-Api-App-Key', 'err', 2200); return }
+    const accessKey = String(prompt('X-Api-Access-Key（必填）：', String(cur?.volc?.accessKey || '')) || '').trim()
+    if (!accessKey) { pluginNotice('未填写 X-Api-Access-Key', 'err', 2200); return }
+    const resourceId = String(prompt(
+      'X-Api-Resource-Id（可回车用默认 volc.seedasr.auc）：',
+      String(cur?.volc?.resourceId || 'volc.seedasr.auc')
+    ) || '').trim() || 'volc.seedasr.auc'
+    const language = String(prompt(
+      'language（可选；留空=自动）：',
+      String(cur?.volc?.language || '')
+    ) || '').trim()
+    const enableDdc = await confirmNative('启用 enable_ddc（语义顺滑）？\n确定：启用\n取消：关闭', '火山转写设置')
+
+    await manualTranscribeStoreSet({
+      mode: 'volc',
+      volc: { endpoint, appKey, accessKey, resourceId, language, enableDdc }
+    })
+    pluginNotice('火山转写配置已保存（仅手动转写生效）', 'ok', 2600)
+  } catch (e) {
+    pluginNotice('打开转写设置失败：' + String((e as any)?.message || e || ''), 'err', 2600)
+  }
+}
 
 type ActiveSpeechRecorder = {
   recorder: MediaRecorder
@@ -868,7 +956,7 @@ let transcribeAudioFileBusy = false
 
 // Android：录音中的悬浮提示/一键停止
 const SPEECH_RECORD_FAB_ID = 'flymd-speech-record-fab'
-const SPEECH_RECORD_FAB_DEFAULT_TEXT = '录音（硅基流动提供模型支持）'
+const SPEECH_RECORD_FAB_DEFAULT_TEXT = '录音（停止后转写）'
 const BIBI_SPEECH_INSTALL_URL = 'https://bibi.brycewg.com/'
 type SpeechRecordFabState = {
   el: HTMLButtonElement
@@ -2407,7 +2495,165 @@ async function readAudioBlobFromPickedPath(path: string, nameHint: string): Prom
   return { blob: new Blob([bytes as any], { type: mimeType }), mimeType, name }
 }
 
+function makeUuid(): string {
+  try {
+    const c: any = (globalThis as any).crypto
+    if (c && typeof c.randomUUID === 'function') return String(c.randomUUID())
+  } catch {}
+  // 兜底：不追求完美，只要足够随机即可
+  const rnd = () => Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0')
+  return `${rnd()}-${rnd()}-${rnd()}-${rnd()}`
+}
+
+function pcm16ToWavBytes(pcm: Int16Array, sampleRate: number): Uint8Array {
+  const dataSize = pcm.byteLength
+  const buf = new ArrayBuffer(44 + dataSize)
+  const dv = new DataView(buf)
+  const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i) & 0xff) }
+
+  writeStr(0, 'RIFF')
+  dv.setUint32(4, 36 + dataSize, true)
+  writeStr(8, 'WAVE')
+  writeStr(12, 'fmt ')
+  dv.setUint32(16, 16, true) // PCM
+  dv.setUint16(20, 1, true) // audio format = PCM
+  dv.setUint16(22, 1, true) // channels = 1
+  dv.setUint32(24, sampleRate, true)
+  dv.setUint32(28, sampleRate * 2, true) // byte rate = sr * ch * 2
+  dv.setUint16(32, 2, true) // block align = ch * 2
+  dv.setUint16(34, 16, true) // bits per sample
+  writeStr(36, 'data')
+  dv.setUint32(40, dataSize, true)
+
+  const out = new Uint8Array(buf)
+  out.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), 44)
+  return out
+}
+
+async function decodeAudioDataCompat(ctx: AudioContext, buf: ArrayBuffer): Promise<AudioBuffer> {
+  return await new Promise((resolve, reject) => {
+    try {
+      const anyCtx: any = ctx as any
+      const p = anyCtx.decodeAudioData(buf, (ab: AudioBuffer) => resolve(ab), (e: any) => reject(e))
+      if (p && typeof p.then === 'function') p.then(resolve, reject)
+    } catch (e) {
+      reject(e)
+    }
+  })
+}
+
+async function audioBlobToWav16kBase64(blob: Blob): Promise<{ base64: string; durationSec: number }> {
+  const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext
+  if (!Ctx) throw new Error('当前环境不支持音频解码（缺少 AudioContext）')
+  const ctx: AudioContext = new Ctx()
+  try {
+    const ab = await blob.arrayBuffer()
+    const audioBuf = await decodeAudioDataCompat(ctx, ab.slice(0))
+    const durationSec = Number(audioBuf.duration || 0) || 0
+    if (!Number.isFinite(durationSec) || durationSec <= 0) throw new Error('音频时长无效')
+    if (durationSec > 60 * 60) throw new Error('音频过长（超过 1 小时），请分段后再转写')
+
+    // 合成单声道
+    const len = audioBuf.length
+    const chs = audioBuf.numberOfChannels || 1
+    let mono: Float32Array
+    if (chs <= 1) {
+      mono = audioBuf.getChannelData(0).slice(0)
+    } else {
+      mono = new Float32Array(len)
+      for (let c = 0; c < chs; c++) {
+        const src = audioBuf.getChannelData(c)
+        for (let i = 0; i < len; i++) mono[i] += (src[i] || 0)
+      }
+      for (let i = 0; i < len; i++) mono[i] /= chs
+    }
+
+    const pcm16 = resampleTo16kInt16(mono, audioBuf.sampleRate || ANDROID_ASR_SAMPLE_RATE)
+    const wav = pcm16ToWavBytes(pcm16, ANDROID_ASR_SAMPLE_RATE)
+    const wavBlob = new Blob([wav], { type: 'audio/wav' })
+    const base64 = await blobToBase64Payload(wavBlob)
+    if (!base64) throw new Error('音频编码失败（base64 为空）')
+    return { base64, durationSec }
+  } finally {
+    try { await (ctx as any).close?.() } catch {}
+  }
+}
+
+async function volcTranscribeWav16kBase64(
+  base64Wav: string,
+  cfg: NonNullable<ManualTranscribeConfig['volc']>
+): Promise<string> {
+  const endpoint = String(cfg.endpoint || '').trim() || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash'
+  const appKey = String(cfg.appKey || '').trim()
+  const accessKey = String(cfg.accessKey || '').trim()
+  const resourceId = String(cfg.resourceId || '').trim() || 'volc.seedasr.auc'
+  if (!appKey || !accessKey) throw new Error('火山配置缺失：X-Api-App-Key / X-Api-Access-Key')
+
+  const bodyObj: any = {
+    user: { uid: appKey },
+    audio: { data: base64Wav, format: 'wav', rate: ANDROID_ASR_SAMPLE_RATE, bits: 16, channel: 1 },
+    request: {
+      model_name: 'bigmodel',
+      enable_itn: true,
+      enable_punc: true,
+      enable_ddc: cfg.enableDdc !== false,
+    },
+  }
+  const lang = String(cfg.language || '').trim()
+  if (lang) bodyObj.audio.language = lang
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json; charset=utf-8',
+    'X-Api-App-Key': appKey,
+    'X-Api-Access-Key': accessKey,
+    'X-Api-Resource-Id': resourceId,
+    'X-Api-Request-Id': makeUuid(),
+    'X-Api-Sequence': '-1',
+  }
+
+  // 优先走 tauri plugin-http，绕开 WebView CORS；失败再回退到 fetch
+  let text = ''
+  let status = 0
+  try {
+    const http = await getHttpClient()
+    if (http && typeof http.fetch === 'function') {
+      const req: any = { method: 'POST', headers, responseType: http.ResponseType?.Text }
+      req.body = (http.Body && typeof http.Body.json === 'function') ? http.Body.json(bodyObj) : JSON.stringify(bodyObj)
+      const resp: any = await http.fetch(endpoint, req)
+      status = Number(resp?.status || 0) || 0
+      const ok = resp?.ok === true || (status >= 200 && status < 300)
+      text = typeof resp?.text === 'function' ? String(await resp.text()) : String(resp?.data || '')
+      if (!ok) throw new Error(`HTTP ${status || 0}：${text || 'unknown'}`)
+    } else {
+      throw new Error('no http client')
+    }
+  } catch {
+    const resp2 = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(bodyObj) })
+    status = resp2.status
+    text = await resp2.text()
+    if (!resp2.ok) throw new Error(`HTTP ${status}：${text || 'unknown'}`)
+  }
+
+  const data = (() => { try { return JSON.parse(text) } catch { return null } })()
+  const out = String((data && data.result && (data.result.text ?? data.result?.Text)) || '').trim()
+  if (!out) throw new Error('火山转写结果为空')
+  return out
+}
+
 async function transcribeAudioBlob(blob: Blob, name: string, mimeType: string): Promise<string> {
+  const cfg = await manualTranscribeStoreGet()
+  if (cfg.mode === 'volc') {
+    const v = cfg.volc
+    if (!v || !String(v.appKey || '').trim() || !String(v.accessKey || '').trim()) {
+      // 不破坏用户：配置不完整则回退官方默认
+      pluginNotice('火山配置不完整：已回退官方默认转写（可在“更多 → 转写设置”里配置）', 'err', 3200)
+    } else {
+      const wav = await audioBlobToWav16kBase64(blob)
+      return await volcTranscribeWav16kBase64(wav.base64, v)
+    }
+  }
+
+  // 官方默认：走自带后端（proxy.php）
   const fallbackName = String(name || '').trim() || ((blob instanceof File) ? String((blob as any).name || '') : '') || 'audio'
   const fallbackType = String(mimeType || '').trim() || String((blob as any)?.type || '') || 'application/octet-stream'
   const file = (() => {
@@ -2426,9 +2672,7 @@ async function transcribeAudioBlob(blob: Blob, name: string, mimeType: string): 
   const headers: Record<string, string> = { 'X-Flymd-Token': buildRollingClientToken() }
   const resp = await fetch(AUDIO_TRANSCRIBE_PROXY_URL, { method: 'POST', headers, body: form })
   const text = await resp.text()
-  if (!resp.ok) {
-    throw new Error(`转写失败（HTTP ${resp.status}）：${text || 'unknown'}`)
-  }
+  if (!resp.ok) throw new Error(`转写失败（HTTP ${resp.status}）：${text || 'unknown'}`)
   const data = (() => { try { return JSON.parse(text) } catch { return null } })()
   const out = String((data && (data.text ?? data?.data?.text)) || '').trim()
   if (!out) throw new Error('转写结果为空')
@@ -2455,8 +2699,10 @@ async function maybeOrganizeTranscription(rawText: string): Promise<void> {
 }
 
 async function transcribeFromAudioFileMenu(): Promise<void> {
+  const cfg = await (async () => { try { return await manualTranscribeStoreGet() } catch { return { mode: 'official' as const } } })()
+  const providerLabel = manualTranscribeProviderLabel(cfg as any)
   if (transcribeAudioFileBusy) {
-    pluginNotice('正在转写音频（硅基流动提供模型支持），请稍候…', 'err', 2000)
+    pluginNotice(`正在转写音频（${providerLabel}），请稍候…`, 'err', 2000)
     return
   }
   transcribeAudioFileBusy = true
@@ -2497,7 +2743,7 @@ async function transcribeFromAudioFileMenu(): Promise<void> {
       name = r.name
     }
 
-    try { if (noticeId) NotificationManager.updateMessage(noticeId, '正在转写音频（硅基流动提供模型支持）…') } catch {}
+    try { if (noticeId) NotificationManager.updateMessage(noticeId, `正在转写音频（${providerLabel}）…`) } catch {}
     const out = await transcribeAudioBlob(blob, name, mimeType)
     insertAtCursor(out)
     try { renderPreview() } catch {}
@@ -2646,7 +2892,13 @@ async function toggleRecordAndTranscribeMenu(): Promise<void> {
     } catch {}
 
     recorder.start()
-    try { setSpeechRecordFabVisible(true, activeSpeechRecorder.startedAt) } catch {}
+    try {
+      const cfg = await manualTranscribeStoreGet()
+      const label = manualTranscribeProviderLabel(cfg)
+      setSpeechRecordFabVisible(true, activeSpeechRecorder.startedAt, `录音（${label}）`, '停止录音并转写', 'rec')
+    } catch {
+      try { setSpeechRecordFabVisible(true, activeSpeechRecorder.startedAt) } catch {}
+    }
     pluginNotice('已开始录音。点右下角悬浮按钮“停止”即可结束并转写。', 'ok', 3500)
   } catch (e) {
     console.error('录音流程异常', e)
@@ -9084,6 +9336,7 @@ function showMobileQuickMenu() {
     ...(isAndroidUi ? ([
       { label: '录音文件转文本…', action: () => { void transcribeFromAudioFileMenu() } },
       { label: activeSpeechRecorder ? '停止录音并转写' : '开始录音', action: () => { void toggleRecordAndTranscribeMenu() } },
+      { label: '转写设置（自定义模型）…', action: () => { void openManualTranscribeSettingsFromMenu() } },
       { label: activeAndroidAsrNote ? (activeAndroidAsrNote.running ? '暂停自动语音笔记' : '继续自动语音笔记') : '自动语音笔记', action: () => { void toggleAndroidAsrNoteFromMenu() } },
       { label: '语音笔记余额/充值…', action: () => { void openAndroidAsrBillingEntry() } },
     ] as TopMenuItemSpec[]) : []),
