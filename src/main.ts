@@ -1287,6 +1287,9 @@ type ActiveAndroidAsrNote = {
   paused: boolean
   ending: 'pause' | 'stop' | ''
 
+  // WS 握手状态：必须先发 start（含 token），否则服务端会拒绝音频数据
+  wsStarted: boolean
+
   // 编辑器草稿段（partial 覆盖写这里）
   draftStart: number
   draftLen: number
@@ -1549,6 +1552,7 @@ function asrNoteQueueFlush(note: ActiveAndroidAsrNote): void {
   try {
     const ws = note.ws
     if (!ws || ws.readyState !== WebSocket.OPEN) return
+    if (!note.wsStarted) return
     while (note.qLen >= ANDROID_ASR_CHUNK_BYTES) {
       const chunk = new Uint8Array(ANDROID_ASR_CHUNK_BYTES)
       let filled = 0
@@ -1576,6 +1580,7 @@ function asrNoteQueueFlushFinal(note: ActiveAndroidAsrNote): void {
     asrNoteQueueFlush(note)
     const ws = note.ws
     if (!ws || ws.readyState !== WebSocket.OPEN) return
+    if (!note.wsStarted) return
     if (!note.qLen || !note.q.length) return
 
     const chunk = new Uint8Array(ANDROID_ASR_CHUNK_BYTES)
@@ -1726,6 +1731,7 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
     running: true,
     paused: false,
     ending: '',
+    wsStarted: false,
     draftStart: startPos,
     draftLen: 0,
     lastPartial: '',
@@ -1753,6 +1759,7 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
   note.ws = ws
 
   ws.onopen = () => {
+    let started = false
     try {
       const client = {
         platform: 'android',
@@ -1760,6 +1767,12 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
         device: String(navigator.userAgent || '').slice(0, 120),
       }
       ws.send(JSON.stringify({ type: 'start', token, hold_ms: 120000, client, volc: { language: 'zh' } }))
+      started = true
+    } catch {}
+    try {
+      if (!activeAndroidAsrNote || activeAndroidAsrNote !== note) return
+      note.wsStarted = started
+      if (started) asrNoteQueueFlush(note)
     } catch {}
     try { const s = _speechRecordFab; if (s?.textEl) s.textEl.textContent = '语音笔记：请开始说话…' } catch {}
   }
@@ -1783,7 +1796,8 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
       }
       if (t === 'error') {
         const err = String((msg as any).error || '语音网关错误')
-        pluginNotice('语音笔记失败：' + err, 'err', 3200)
+        const hint = /请先发送start/i.test(err) ? '请点击继续重试' : err
+        pluginNotice('语音笔记失败：' + hint, 'err', 3200)
         note.ending = note.ending || 'pause'
         void finishAndroidAsrNoteSession(note, true)
         return
