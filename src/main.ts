@@ -1289,6 +1289,8 @@ type ActiveAndroidAsrNote = {
 
   // WS 握手状态：必须先发 start（含 token），否则服务端会拒绝音频数据
   wsStarted: boolean
+  // 服务端 ready（start 完成：已扣款/建 session），ready 前不发送音频，避免“请先发送 start”
+  wsReady: boolean
 
   // 防锁屏（可选：浏览器/系统支持则保持屏幕常亮）
   wakeLock: any
@@ -1590,7 +1592,7 @@ function asrNoteQueueFlush(note: ActiveAndroidAsrNote): void {
   try {
     const ws = note.ws
     if (!ws || ws.readyState !== WebSocket.OPEN) return
-    if (!note.wsStarted) return
+    if (!note.wsReady) return
     while (note.qLen >= ANDROID_ASR_CHUNK_BYTES) {
       const chunk = new Uint8Array(ANDROID_ASR_CHUNK_BYTES)
       let filled = 0
@@ -1618,7 +1620,7 @@ function asrNoteQueueFlushFinal(note: ActiveAndroidAsrNote): void {
     asrNoteQueueFlush(note)
     const ws = note.ws
     if (!ws || ws.readyState !== WebSocket.OPEN) return
-    if (!note.wsStarted) return
+    if (!note.wsReady) return
     if (!note.qLen || !note.q.length) return
 
     const chunk = new Uint8Array(ANDROID_ASR_CHUNK_BYTES)
@@ -1770,6 +1772,7 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
     paused: false,
     ending: '',
     wsStarted: false,
+    wsReady: false,
     wakeLock: null,
     draftStart: startPos,
     draftLen: 0,
@@ -1812,9 +1815,8 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
     try {
       if (!activeAndroidAsrNote || activeAndroidAsrNote !== note) return
       note.wsStarted = started
-      if (started) asrNoteQueueFlush(note)
     } catch {}
-    try { const s = _speechRecordFab; if (s?.textEl) s.textEl.textContent = '语音笔记：请开始说话…' } catch {}
+    try { const s = _speechRecordFab; if (s?.textEl) s.textEl.textContent = '语音笔记：准备中…' } catch {}
   }
 
   ws.onmessage = (ev) => {
@@ -1824,6 +1826,12 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
       if (!msg || typeof msg !== 'object') return
       const t = String((msg as any).type || '')
 
+      if (t === 'ready') {
+        note.wsReady = true
+        asrNoteQueueFlush(note)
+        try { const s = _speechRecordFab; if (s?.textEl) s.textEl.textContent = '语音笔记：请开始说话…' } catch {}
+        return
+      }
       if (t === 'partial') {
         const text = String((msg as any).text || '')
         if (text) asrNoteUpdateDraft(note, text)
@@ -1834,9 +1842,10 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
         if (text) asrNoteUpdateDraft(note, text)
         return
       }
+      if (t === 'billing') return
       if (t === 'error') {
         const err = String((msg as any).error || '语音网关错误')
-        const hint = /请先发送start/i.test(err) ? '请点击继续重试' : err
+        const hint = /请先发送\\s*start/i.test(err) ? '请点击继续重试' : err
         pluginNotice('语音笔记失败：' + hint, 'err', 3200)
         note.ending = note.ending || 'pause'
         void finishAndroidAsrNoteSession(note, true)
