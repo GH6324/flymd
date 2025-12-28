@@ -1295,6 +1295,12 @@ type ActiveAndroidAsrNote = {
   // 防锁屏（可选：浏览器/系统支持则保持屏幕常亮）
   wakeLock: any
 
+  // 自动重连 + 心跳
+  reconnectTries: number
+  reconnectTimer: number | null
+  pingTimer: number | null
+  lastPongAt: number
+
   // 编辑器草稿段（partial 覆盖写这里）
   draftStart: number
   draftLen: number
@@ -1544,6 +1550,168 @@ function asrWakeLockRelease(note: ActiveAndroidAsrNote): void {
   } catch {}
 }
 
+function asrNoteClearTimers(note: ActiveAndroidAsrNote): void {
+  try { if (note.reconnectTimer != null) window.clearTimeout(note.reconnectTimer) } catch {}
+  note.reconnectTimer = null
+  try { if (note.pingTimer != null) window.clearInterval(note.pingTimer) } catch {}
+  note.pingTimer = null
+}
+
+function asrNoteStartPing(note: ActiveAndroidAsrNote): void {
+  try {
+    if (note.pingTimer != null) return
+    note.lastPongAt = Date.now()
+    note.pingTimer = window.setInterval(() => {
+      try {
+        if (!activeAndroidAsrNote || activeAndroidAsrNote !== note) return
+        if (!note.running || note.ending) return
+        const ws = note.ws
+        if (!ws || ws.readyState !== WebSocket.OPEN) return
+        if (!note.wsReady) return
+        ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }))
+
+        // 超时直接触发重连：不靠系统报错
+        const now = Date.now()
+        if (now - (note.lastPongAt || 0) > 60000) {
+          asrNoteScheduleReconnect(note, 'pong_timeout')
+        }
+      } catch {}
+    }, 20000)
+  } catch {}
+}
+
+function asrNoteCloseWs(note: ActiveAndroidAsrNote): void {
+  try { note.wsReady = false } catch {}
+  try { note.wsStarted = false } catch {}
+  try {
+    const ws = note.ws
+    note.ws = null
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close()
+  } catch {}
+}
+
+function asrNoteScheduleReconnect(note: ActiveAndroidAsrNote, reason: string): void {
+  try {
+    if (!activeAndroidAsrNote || activeAndroidAsrNote !== note) return
+    if (!note.running || note.ending) return
+    if (note.reconnectTimer != null) return
+
+    const maxTries = 5
+    if ((note.reconnectTries || 0) >= maxTries) {
+      pluginNotice('语音笔记连接已断开：请点击继续重试', 'err', 3200)
+      note.ending = note.ending || 'pause'
+      void finishAndroidAsrNoteSession(note, true)
+      return
+    }
+
+    note.reconnectTries = (note.reconnectTries || 0) + 1
+    const base = 500
+    const delay = Math.min(8000, base * Math.pow(2, note.reconnectTries - 1))
+    note.reconnectTimer = window.setTimeout(() => {
+      note.reconnectTimer = null
+      void asrNoteReconnectNow(note, reason)
+    }, delay)
+
+    try {
+      const s = _speechRecordFab
+      if (s?.textEl) s.textEl.textContent = '语音笔记：网络波动，重连中…'
+      asrFabSetPauseVisible(true, '暂停', false)
+    } catch {}
+  } catch {}
+}
+
+async function asrNoteReconnectNow(note: ActiveAndroidAsrNote, reason: string): Promise<void> {
+  try {
+    if (!activeAndroidAsrNote || activeAndroidAsrNote !== note) return
+    if (!note.running || note.ending) return
+
+    asrNoteClearTimers(note)
+    asrNoteCloseWs(note)
+
+    // 重新建连（会重新扣 hold；上一条连接会在服务端按 used_ms 结算并退回剩余）
+    const ws = new WebSocket(note.wsUrl)
+    note.ws = ws
+    note.wsStarted = false
+    note.wsReady = false
+
+    ws.onopen = () => {
+      let started = false
+      try {
+        const client = {
+          platform: 'android',
+          ver: APP_VERSION,
+          device: String(navigator.userAgent || '').slice(0, 120),
+          reconnect: { tries: note.reconnectTries, reason: String(reason || '') },
+        }
+        ws.send(JSON.stringify({ type: 'start', token: note.token, hold_ms: 120000, client, volc: { language: 'zh' } }))
+        started = true
+      } catch {}
+      note.wsStarted = started
+      try { const s = _speechRecordFab; if (s?.textEl) s.textEl.textContent = '语音笔记：准备中…' } catch {}
+    }
+
+    ws.onmessage = (ev) => {
+      try {
+        if (typeof ev.data !== 'string') return
+        const msg = (() => { try { return JSON.parse(ev.data) } catch { return null } })()
+        if (!msg || typeof msg !== 'object') return
+        const t = String((msg as any).type || '')
+
+        if (t === 'ready') {
+          note.wsReady = true
+          note.reconnectTries = 0
+          asrNoteQueueFlush(note)
+          asrNoteStartPing(note)
+          try { const s = _speechRecordFab; if (s?.textEl) s.textEl.textContent = '语音笔记：请开始说话…' } catch {}
+          return
+        }
+        if (t === 'pong') {
+          note.lastPongAt = Date.now()
+          return
+        }
+        if (t === 'partial') {
+          const text = String((msg as any).text || '')
+          if (text) asrNoteUpdateDraft(note, text)
+          return
+        }
+        if (t === 'final') {
+          const text = String((msg as any).text || '')
+          if (text) asrNoteUpdateDraft(note, text)
+          return
+        }
+        if (t === 'billing') return
+        if (t === 'error') {
+          const err = String((msg as any).error || '语音网关错误')
+          if (/请先发送\\s*start/i.test(err)) {
+            pluginNotice('语音笔记失败：请点击继续重试', 'err', 2600)
+            note.ending = note.ending || 'pause'
+            void finishAndroidAsrNoteSession(note, true)
+            return
+          }
+          pluginNotice('语音笔记失败：' + err, 'err', 3200)
+          note.ending = note.ending || 'pause'
+          void finishAndroidAsrNoteSession(note, true)
+          return
+        }
+        if (t === 'end') {
+          void finishAndroidAsrNoteSession(note, false)
+          return
+        }
+      } catch {}
+    }
+
+    ws.onerror = () => {
+      asrNoteScheduleReconnect(note, 'ws_error')
+    }
+
+    ws.onclose = () => {
+      if (!note.running) return
+      if (note.ending) return
+      asrNoteScheduleReconnect(note, 'ws_close')
+    }
+  } catch {}
+}
+
 async function asrNoteScheduleSave(note: ActiveAndroidAsrNote): Promise<void> {
   // 别傻到每个 partial 都写盘：节流一下，够“实时”也不炸 IO
   try {
@@ -1584,6 +1752,13 @@ function asrNoteQueuePush(note: ActiveAndroidAsrNote, bytes: Uint8Array): void {
     if (!bytes || !bytes.length) return
     note.q.push(bytes)
     note.qLen += bytes.length
+    // 断网/重连时避免无限堆内存：最多缓存约 8 秒音频，超出就丢最旧的
+    const maxBytes = ANDROID_ASR_CHUNK_BYTES * 40
+    while (note.qLen > maxBytes && note.q.length > 1) {
+      const head = note.q.shift()
+      if (!head) break
+      note.qLen -= head.length
+    }
     asrNoteQueueFlush(note)
   } catch {}
 }
@@ -1774,6 +1949,10 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
     wsStarted: false,
     wsReady: false,
     wakeLock: null,
+    reconnectTries: 0,
+    reconnectTimer: null,
+    pingTimer: null,
+    lastPongAt: Date.now(),
     draftStart: startPos,
     draftLen: 0,
     lastPartial: '',
@@ -1828,8 +2007,14 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
 
       if (t === 'ready') {
         note.wsReady = true
+        note.reconnectTries = 0
         asrNoteQueueFlush(note)
+        asrNoteStartPing(note)
         try { const s = _speechRecordFab; if (s?.textEl) s.textEl.textContent = '语音笔记：请开始说话…' } catch {}
+        return
+      }
+      if (t === 'pong') {
+        note.lastPongAt = Date.now()
         return
       }
       if (t === 'partial') {
@@ -1845,8 +2030,13 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
       if (t === 'billing') return
       if (t === 'error') {
         const err = String((msg as any).error || '语音网关错误')
-        const hint = /请先发送\\s*start/i.test(err) ? '请点击继续重试' : err
-        pluginNotice('语音笔记失败：' + hint, 'err', 3200)
+        if (/请先发送\\s*start/i.test(err)) {
+          pluginNotice('语音笔记失败：请点击继续重试', 'err', 2600)
+          note.ending = note.ending || 'pause'
+          void finishAndroidAsrNoteSession(note, true)
+          return
+        }
+        pluginNotice('语音笔记失败：' + err, 'err', 3200)
         note.ending = note.ending || 'pause'
         void finishAndroidAsrNoteSession(note, true)
         return
@@ -1859,15 +2049,13 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
   }
 
   ws.onerror = () => {
-    try { pluginNotice('语音笔记连接失败：网络或证书问题', 'err', 3200) } catch {}
-    note.ending = note.ending || 'pause'
-    void finishAndroidAsrNoteSession(note, true)
+    asrNoteScheduleReconnect(note, 'ws_error')
   }
 
   ws.onclose = () => {
     if (!note.running) return
-    note.ending = note.ending || 'pause'
-    void finishAndroidAsrNoteSession(note, false)
+    if (note.ending) return
+    asrNoteScheduleReconnect(note, 'ws_close')
   }
 
   // 启动音频采集（PCM 16k/16bit/mono）
@@ -1924,6 +2112,8 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
 
 async function finishAndroidAsrNoteSession(note: ActiveAndroidAsrNote, forceStopWs: boolean): Promise<void> {
   try {
+    asrNoteClearTimers(note)
+
     // 先停麦克风，别占着不放
     asrNoteStopAudioCapture(note)
     asrWakeLockRelease(note)
@@ -1937,6 +2127,8 @@ async function finishAndroidAsrNoteSession(note: ActiveAndroidAsrNote, forceStop
     try {
       if (forceStopWs && note.ws) note.ws.close()
     } catch {}
+    try { note.ws = null } catch {}
+    try { note.wsStarted = false; note.wsReady = false } catch {}
 
     note.running = false
 
