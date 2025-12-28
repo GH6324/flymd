@@ -2,6 +2,13 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.9.0
+- Added: New “Speech Transcribe” under Plugins: start/stop microphone transcription, transcribe an audio file, transcription settings (official backend proxy + custom model)
+- Added: New “ASR Notes” under Plugins: streaming dictation to notes, with sign-in, remaining minutes, recharge and redeem code
+- Improved: Unified microphone management; Speech Transcribe and ASR Notes are mutually exclusive to prevent recording conflicts
+- Improved: Added macOS microphone usage description to avoid silent permission denial on first use
+- Improved: macOS icon safe-area handling so the Dock/Finder icon doesn’t look oversized
+
 ## Update v0.8.6 - v0.8.9
 - Improved: Plugin text-edit APIs now integrate with the browser undo stack, so AI-generated inserts can be undone (Ctrl+Z)
 - Fixed: WYSIWYG scroll container and code-block copy overlay positioning/refresh issues (buttons could be missing until the first edit)
