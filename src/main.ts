@@ -1933,6 +1933,53 @@ async function stopAndroidAsrNoteFromFab(exitMode: boolean): Promise<void> {
   } catch {}
 }
 
+async function openAndroidAsrBillingEntry(): Promise<void> {
+  try {
+    const platform = await getPlatform()
+    if (platform !== 'android') {
+      pluginNotice('该功能仅 Android 可用', 'err', 2200)
+      return
+    }
+
+    let token = ''
+    try {
+      const t = await asrEnsureTokenInteractive()
+      if (!t) return
+      token = t
+    } catch (e) {
+      pluginNotice('登录失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+      return
+    }
+
+    const me = await asrApi('/api/auth/me/', { method: 'GET', token })
+    const username = String(me?.user?.username || '').trim()
+    const balMin = String(me?.billing?.balance_min || '').trim() || '0.00'
+    const price = String(me?.billing?.price_cny_per_min || '').trim() || '0.2000'
+    const payUrl = String(me?.billing?.pay?.url || '').trim()
+
+    const ok = await confirmNative(
+      `语音笔记账号：${username || '未知'}\n余额：${balMin} 分钟\n单价：${price} 元/分钟\n\n确定：打开充值页面\n取消：兑换卡密`,
+      '语音笔记余额/充值'
+    )
+    if (ok) {
+      if (!payUrl) {
+        pluginNotice('充值页面地址为空：请检查后端配置', 'err', 2600)
+        return
+      }
+      try { void openInBrowser(payUrl) } catch {}
+      return
+    }
+
+    const key = String(prompt('请输入充值卡密（支付页给你的卡号）', '') || '').trim()
+    if (!key) return
+    const r = await asrApi('/api/billing/redeem/', { method: 'POST', token, body: { token: key } })
+    const nextMin = String(r?.balance_min || r?.billing?.balance_min || '').trim()
+    pluginNotice('兑换成功，余额 ' + (nextMin || '已更新'), 'ok', 2600)
+  } catch (e) {
+    pluginNotice('操作失败：' + String((e as any)?.message || e || ''), 'err', 3200)
+  }
+}
+
 async function toggleAndroidAsrNoteFromMenu(): Promise<void> {
   try {
     const note = activeAndroidAsrNote
@@ -8782,6 +8829,7 @@ function showMobileQuickMenu() {
       { label: '录音文件转文本…', action: () => { void transcribeFromAudioFileMenu() } },
       { label: activeSpeechRecorder ? '停止录音并转写' : '开始录音', action: () => { void toggleRecordAndTranscribeMenu() } },
       { label: activeAndroidAsrNote ? (activeAndroidAsrNote.running ? '暂停自动语音笔记' : '继续自动语音笔记') : '自动语音笔记', action: () => { void toggleAndroidAsrNoteFromMenu() } },
+      { label: '语音笔记余额/充值…', action: () => { void openAndroidAsrBillingEntry() } },
     ] as TopMenuItemSpec[]) : []),
     { label: `${t('mode.edit')}/${t('mode.read')}`, action: () => { void handleToggleModeShortcut() } },
     { label: t('sync.title'), action: () => { try { void openWebdavSyncDialog() } catch {} } },
