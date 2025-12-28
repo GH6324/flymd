@@ -1290,6 +1290,9 @@ type ActiveAndroidAsrNote = {
   // WS 握手状态：必须先发 start（含 token），否则服务端会拒绝音频数据
   wsStarted: boolean
 
+  // 防锁屏（可选：浏览器/系统支持则保持屏幕常亮）
+  wakeLock: any
+
   // 编辑器草稿段（partial 覆盖写这里）
   draftStart: number
   draftLen: number
@@ -1489,18 +1492,53 @@ function asrNoteUpdateDraft(note: ActiveAndroidAsrNote, text: string): void {
     note.draftLen = t.length
     const pos = start + note.draftLen
     try { editor.selectionStart = editor.selectionEnd = pos } catch {}
+    // Android 上长文本时，textarea 偶发不跟随滚动；如果当前草稿插入点接近文末，强制滚到底让用户看到最新内容
+    try {
+      if (note.draftStart >= Math.max(0, editor.value.length - 4000)) {
+        const bottom = Math.max(0, editor.scrollHeight - editor.clientHeight)
+        if (bottom > 0) editor.scrollTop = bottom
+      }
+    } catch {}
     dirty = true
     refreshTitle()
     refreshStatus()
 
     // 悬浮条显示 partial（用户要看得到实时文字）
     try {
-      const hint = asrTruncateHint(t, 28)
+      const hint = asrTruncateTailHint(t, 28)
       const s = _speechRecordFab
       if (s?.textEl) s.textEl.textContent = hint ? ('语音笔记：' + hint) : '语音笔记：识别中…'
     } catch {}
 
     void asrNoteScheduleSave(note)
+  } catch {}
+}
+
+function asrTruncateTailHint(s: string, maxLen: number): string {
+  try {
+    const t = String(s || '').trim()
+    if (!t) return ''
+    if (t.length <= maxLen) return t
+    return '…' + t.slice(Math.max(0, t.length - Math.max(0, maxLen - 1)))
+  } catch {
+    return ''
+  }
+}
+
+async function asrWakeLockAcquire(note: ActiveAndroidAsrNote): Promise<void> {
+  try {
+    const nav: any = navigator as any
+    if (!nav || !nav.wakeLock || typeof nav.wakeLock.request !== 'function') return
+    try { if (note.wakeLock && typeof note.wakeLock.release === 'function') note.wakeLock.release() } catch {}
+    note.wakeLock = await nav.wakeLock.request('screen')
+  } catch {}
+}
+
+function asrWakeLockRelease(note: ActiveAndroidAsrNote): void {
+  try {
+    const w = note.wakeLock
+    note.wakeLock = null
+    if (w && typeof w.release === 'function') w.release()
   } catch {}
 }
 
@@ -1732,6 +1770,7 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
     paused: false,
     ending: '',
     wsStarted: false,
+    wakeLock: null,
     draftStart: startPos,
     draftLen: 0,
     lastPartial: '',
@@ -1748,6 +1787,7 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
     saveTimer: null,
   }
   activeAndroidAsrNote = note
+  void asrWakeLockAcquire(note)
 
   try {
     setSpeechRecordFabVisible(true, note.startedAt, '语音笔记：连接中…', '暂停/停止自动语音笔记', 'asr')
@@ -1877,6 +1917,7 @@ async function finishAndroidAsrNoteSession(note: ActiveAndroidAsrNote, forceStop
   try {
     // 先停麦克风，别占着不放
     asrNoteStopAudioCapture(note)
+    asrWakeLockRelease(note)
 
     // 如果 WS 还开着，尽量优雅结束（让服务端返 final/end 并结算）
     try {
