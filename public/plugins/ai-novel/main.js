@@ -213,6 +213,178 @@ function joinUrl(base, path) {
   return b + '/' + p
 }
 
+function _ainPickTauriHttpFetch() {
+  try {
+    const tauri = (globalThis && globalThis.__TAURI__) ? globalThis.__TAURI__ : null
+    if (!tauri) return null
+    // Tauri v2：插件 API
+    if (tauri.plugin && tauri.plugin.http && typeof tauri.plugin.http.fetch === 'function') return tauri.plugin.http.fetch
+    // 少数环境挂在 __TAURI__.http 上
+    if (tauri.http && typeof tauri.http.fetch === 'function') return tauri.http.fetch
+    return null
+  } catch {
+    return null
+  }
+}
+
+function _ainTryParseJson(text) {
+  try {
+    const s = safeText(text).trim()
+    if (!s) return null
+    return JSON.parse(s)
+  } catch {
+    return null
+  }
+}
+
+async function _ainHttpFetchText(url, init, timeoutMs) {
+  const ms = Math.max(1000, Number(timeoutMs) || 0)
+  const tf = _ainPickTauriHttpFetch()
+  if (tf) {
+    // 目标：优先用宿主侧 http（绕过 WebView CORS/预检）。失败再回退到原生 fetch。
+    try {
+      const opt = { ...(init || {}) }
+      if (opt.timeout == null && ms) opt.timeout = Math.ceil(ms / 1000)
+      const r = await tf(url, opt)
+      // Response-like
+      if (r && typeof r.text === 'function') {
+        const txt = await r.text()
+        return { ok: !!r.ok, status: Number(r.status || 0), text: txt, json: null, url: r.url || url }
+      }
+      // 一些实现直接给 data
+      if (r && typeof r === 'object') {
+        const status = Number(r.status || r.statusCode || 0)
+        const ok = (r.ok != null) ? !!r.ok : (status >= 200 && status < 300)
+        const data = (r.data != null) ? r.data : null
+        if (typeof data === 'string') return { ok, status, text: data, json: null, url }
+        if (data != null) return { ok, status, text: '', json: data, url }
+      }
+    } catch {}
+  }
+
+  const r = await fetchWithTimeout(url, init, ms || API_FETCH_TIMEOUT_MS)
+  const txt = await r.text()
+  return { ok: !!r.ok, status: Number(r.status || 0), text: txt, json: null, url: r.url || url }
+}
+
+function _ainPickChatTextFromUpstreamResp(json) {
+  const j = json && typeof json === 'object' ? json : null
+  if (!j) return ''
+
+  // OpenAI-compatible: { choices: [{ message: { content } }] }
+  try {
+    if (Array.isArray(j.choices) && j.choices[0]) {
+      const c0 = j.choices[0]
+      if (c0 && c0.message && c0.message.content != null) return String(c0.message.content || '')
+      if (c0 && c0.delta && c0.delta.content != null) return String(c0.delta.content || '')
+      if (c0 && c0.text != null) return String(c0.text || '')
+    }
+  } catch {}
+
+  // 兼容一些代理/后端包装：{ ok:true, data: <上游响应> }
+  try {
+    if (j.ok === true && j.data != null) return _ainPickChatTextFromUpstreamResp(j.data)
+  } catch {}
+
+  // 非标准：直接给 text/content
+  try {
+    if (typeof j.text === 'string') return j.text
+    if (typeof j.content === 'string') return j.content
+  } catch {}
+
+  return ''
+}
+
+function _ainPickUpstreamErrorMsg(json, fallback, status) {
+  const j = json && typeof json === 'object' ? json : null
+  try {
+    if (j && typeof j.error === 'string') return j.error
+    if (j && j.error && typeof j.error === 'object') {
+      if (typeof j.error.message === 'string') return j.error.message
+      if (typeof j.error.msg === 'string') return j.error.msg
+    }
+    if (j && typeof j.message === 'string') return j.message
+  } catch {}
+  const fb = safeText(fallback).trim()
+  if (fb) return fb
+  const st = Number(status || 0)
+  return st ? ('HTTP ' + String(st)) : 'error'
+}
+
+async function _ainUpstreamChatOnce(ctx, upstream, messages, opt) {
+  const up = upstream && typeof upstream === 'object' ? upstream : {}
+  const baseUrl = safeText(up.baseUrl).trim()
+  const model = safeText(up.model).trim()
+  if (!baseUrl || !model) throw new Error(t('请先在设置里填写上游 BaseURL 和模型', 'Please set upstream BaseURL and model in Settings first'))
+
+  const url = joinUrl(baseUrl, 'chat/completions')
+  const headers = { 'Content-Type': 'application/json' }
+  const apiKey = safeText(up.apiKey).trim()
+  if (apiKey) headers.Authorization = 'Bearer ' + apiKey
+
+  const o = (opt && typeof opt === 'object') ? opt : {}
+  const temperature = (o.temperature != null && Number.isFinite(Number(o.temperature))) ? Number(o.temperature) : undefined
+  const payload = { model, messages }
+  if (temperature != null) payload.temperature = temperature
+
+  const r = await _ainHttpFetchText(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  }, (o.timeoutMs != null ? Number(o.timeoutMs) : API_FETCH_TIMEOUT_MS))
+
+  const json = (r && r.json != null) ? r.json : _ainTryParseJson(r && r.text ? r.text : '')
+  if (!r || !r.ok) throw new Error(_ainPickUpstreamErrorMsg(json, r && r.text ? r.text : '', r && r.status ? r.status : 0))
+
+  const txt = safeText(_ainPickChatTextFromUpstreamResp(json)).trim()
+  if (!txt) throw new Error(t('上游返回空内容', 'Upstream returned empty response'))
+  return { text: txt, json: json || null }
+}
+
+function _ainBuildConsultSystemPrompt(input, opt) {
+  const inp = input && typeof input === 'object' ? input : {}
+  const o = (opt && typeof opt === 'object') ? opt : {}
+
+  const out = []
+  out.push([
+    '你是我的小说写作顾问。你只做“咨询”，不续写正文、不代写段落。',
+    '回答要像正常聊天：别用【结论】【诊断】【建议】这种模板；除非我明确要求，否则别堆公式化小标题。',
+    '信息不够时，先问 1-2 个关键澄清问题；再给出能落地的建议（可以有选项，但别流水账）。',
+    '不要虚构设定；不确定就直说不确定，并告诉我需要哪些信息。',
+  ].join('\n'))
+
+  const questionHint = safeText(o.questionHint).trim()
+  if (questionHint) out.push(questionHint)
+
+  const segs = []
+  const constraints = safeText(inp.constraints).trim()
+  const progress = safeText(inp.progress).trim()
+  const bible = safeText(inp.bible).trim()
+  const prev = safeText(inp.prev).trim()
+  const rag = Array.isArray(inp.rag) ? inp.rag : null
+
+  if (constraints) segs.push('【硬约束】\n' + constraints)
+  if (progress) segs.push('【进度脉络】\n' + progress)
+  if (bible) segs.push('【资料/圣经】\n' + bible)
+  if (prev) segs.push('【前文尾部】\n' + prev)
+  if (rag && rag.length) {
+    const lines = []
+    for (let i = 0; i < rag.length; i++) {
+      const src = safeText(rag[i] && rag[i].source).trim() || 'unknown'
+      const txt = safeText(rag[i] && rag[i].text).trim()
+      if (!txt) continue
+      lines.push(`- ${src}\n${txt}`)
+      if (lines.length >= 12) break
+    }
+    if (lines.length) segs.push('【检索命中】\n' + lines.join('\n\n'))
+  }
+
+  if (segs.length) {
+    out.push('下面是小说上下文（供你参考，不要原样复述）：\n' + segs.join('\n\n'))
+  }
+  return out.join('\n\n')
+}
+
 function fetchWithTimeout(url, init, timeoutMs) {
   const ms = Math.max(1000, Number(timeoutMs) || 0)
   // 极少数环境没 AbortController：只能退回原生 fetch（仍可能卡死，但至少不破坏功能）
@@ -3510,7 +3682,6 @@ async function openSettingsDialog(ctx) {
   btnUpCheck.onclick = async () => {
     try {
       cfg = await loadCfg(ctx)
-      if (!cfg.token) throw new Error(t('请先登录后端', 'Please login first'))
 
       const baseUrl = safeText(inpUpBase.inp.value).trim()
       const apiKey = safeText(inpUpKey.inp.value).trim()
@@ -3521,26 +3692,39 @@ async function openSettingsDialog(ctx) {
       const started = Date.now()
       upCheckHint.textContent = t('检查中…', 'Testing...')
 
-      const resp = await apiFetchConsultWithJob(ctx, cfg, {
-        upstream: { baseUrl, apiKey, model },
-        input: {
-          async: true,
-          mode: 'job',
-          question: '连接测试：请只回复 OK',
-          progress: '',
-          bible: '',
-          prev: '',
-          constraints: '',
-        }
-      }, {
-        timeoutMs: 60000,
-        onTick: ({ waitMs }) => {
-          const s = Math.max(0, Math.round(Number(waitMs || 0) / 1000))
-          upCheckHint.textContent = t('检查中… 已等待 ', 'Testing... waited ') + s + 's'
-        }
-      })
+      const testPrompt = '连接测试：请只回复 OK'
+      let txt = ''
 
-      const txt = safeText(resp && resp.text).trim()
+      // 优先直连上游（不依赖后端 token）；失败且已登录时再回退到后端 consult 轮询。
+      try {
+        const resp = await _ainUpstreamChatOnce(ctx, { baseUrl, apiKey, model }, [
+          { role: 'system', content: '你是严格的测试助手，只回复 OK。' },
+          { role: 'user', content: testPrompt }
+        ], { timeoutMs: 60000, temperature: 0 })
+        txt = safeText(resp && resp.text).trim()
+      } catch (e) {
+        if (!cfg.token) throw e
+        const resp2 = await apiFetchConsultWithJob(ctx, cfg, {
+          upstream: { baseUrl, apiKey, model },
+          input: {
+            async: true,
+            mode: 'job',
+            question: testPrompt,
+            progress: '',
+            bible: '',
+            prev: '',
+            constraints: '',
+          }
+        }, {
+          timeoutMs: 60000,
+          onTick: ({ waitMs }) => {
+            const s = Math.max(0, Math.round(Number(waitMs || 0) / 1000))
+            upCheckHint.textContent = t('检查中… 已等待 ', 'Testing... waited ') + s + 's'
+          }
+        })
+        txt = safeText(resp2 && resp2.text).trim()
+      }
+
       if (!txt) throw new Error(t('上游返回空内容', 'Upstream returned empty response'))
       const ms = Math.max(0, Date.now() - started)
       upCheckHint.textContent = t('连接正常，耗时 ', 'OK. Took ') + ms + 'ms'
@@ -9902,7 +10086,6 @@ async function openBootstrapDialog(ctx) {
 
 async function openConsultDialog(ctx) {
   let cfg = await loadCfg(ctx)
-  if (!cfg.token) throw new Error(t('请先登录后端', 'Please login first'))
   if (!cfg.upstream || !cfg.upstream.baseUrl || !cfg.upstream.model) {
     throw new Error(t('请先在设置里填写上游 BaseURL 和模型', 'Please set upstream BaseURL and model in Settings first'))
   }
@@ -9923,7 +10106,12 @@ async function openConsultDialog(ctx) {
   const out = document.createElement('div')
   out.className = 'ain-out'
   out.style.marginTop = '10px'
-  out.textContent = t('回答会显示在这里。', 'Answer will appear here.')
+  out.style.maxHeight = '380px'
+  out.style.overflow = 'auto'
+  out.style.display = 'flex'
+  out.style.flexDirection = 'column'
+  out.style.gap = '10px'
+  out.style.whiteSpace = 'normal'
 
   const rowBtn = document.createElement('div')
   rowBtn.style.marginTop = '10px'
@@ -9938,14 +10126,63 @@ async function openConsultDialog(ctx) {
   btnAppend.textContent = t('把建议追加到文末', 'Append advice to doc')
   btnAppend.disabled = true
 
+  const btnClear = document.createElement('button')
+  btnClear.className = 'ain-btn gray'
+  btnClear.textContent = t('清空对话', 'Clear')
+
   rowBtn.appendChild(btnAsk)
   rowBtn.appendChild(btnAppend)
+  rowBtn.appendChild(btnClear)
 
   sec.appendChild(rowBtn)
   sec.appendChild(out)
   body.appendChild(sec)
 
   let lastAdvice = ''
+  let history = [] // {role:'user'|'assistant', content:string}
+
+  function appendChat(role, text, opt) {
+    const o = (opt && typeof opt === 'object') ? opt : {}
+    const wrap = document.createElement('div')
+    wrap.style.border = '1px solid #334155'
+    wrap.style.borderRadius = '8px'
+    wrap.style.padding = '10px 12px'
+    wrap.style.background = role === 'user' ? 'rgba(59,130,246,.10)' : 'rgba(148,163,184,.06)'
+
+    const head = document.createElement('div')
+    head.className = 'ain-muted'
+    head.style.marginBottom = '6px'
+    head.textContent = role === 'user' ? t('你', 'You') : t('AI', 'AI')
+    wrap.appendChild(head)
+
+    const content = document.createElement('div')
+    content.style.whiteSpace = 'pre-wrap'
+    content.textContent = safeText(text)
+    wrap.appendChild(content)
+
+    if (o.pending) wrap.dataset.ainPending = '1'
+    out.appendChild(wrap)
+    try { out.scrollTop = out.scrollHeight } catch {}
+    return { wrap, content }
+  }
+
+  function clearChat() {
+    history = []
+    lastAdvice = ''
+    btnAppend.disabled = true
+    out.innerHTML = ''
+    appendChat('assistant', t('把问题发给我，我会结合进度/设定/前文来聊（不续写）。', 'Ask me; I will answer with context (no continuation).'))
+  }
+
+  function trimHistory(maxMsgs) {
+    const lim = Math.max(0, maxMsgs | 0)
+    if (!lim) return []
+    const arr = Array.isArray(history) ? history : []
+    if (arr.length <= lim) return arr
+    return arr.slice(arr.length - lim)
+  }
+
+  clearChat()
 
   async function doAsk() {
     const question = safeText(q.ta.value).trim()
@@ -9953,6 +10190,7 @@ async function openConsultDialog(ctx) {
       ctx.ui.notice(t('请先输入问题', 'Please input question'), 'err', 2000)
       return
     }
+    q.ta.value = ''
     cfg = await loadCfg(ctx)
 
     const prev = await getPrevTextForRequest(ctx, cfg)
@@ -9966,44 +10204,66 @@ async function openConsultDialog(ctx) {
 
     setBusy(btnAsk, true)
     btnAppend.disabled = true
-    out.textContent = t('咨询中…', 'Consulting...')
     lastAdvice = ''
+
+    history.push({ role: 'user', content: question })
+    appendChat('user', question)
+    const pending = appendChat('assistant', t('我在看上下文…', 'Thinking...'), { pending: true })
     try {
-      const json = await apiFetchConsultWithJob(ctx, cfg, {
-        upstream: {
-          baseUrl: cfg.upstream.baseUrl,
-          apiKey: cfg.upstream.apiKey,
-          model: cfg.upstream.model
-        },
-        input: {
-          async: true,
-          mode: 'job',
-          question,
-          progress,
-          bible,
-          prev,
-          constraints,
-          rag: rag || undefined
-        }
-      }, {
-        onTick: ({ waitMs }) => {
-          const s = Math.max(0, Math.round(waitMs / 1000))
-          out.textContent = t('咨询中… 已等待 ', 'Consulting... waited ') + s + 's'
-        }
-      })
-      lastAdvice = safeText(json && json.text).trim()
-      if (!lastAdvice) throw new Error(t('后端未返回内容', 'Backend returned empty text'))
-      out.textContent = lastAdvice
+      const input0 = { instruction: question, progress, bible, prev, constraints: constraints || undefined, rag: rag || undefined }
+      const b = _ainCtxApplyBudget(cfg, input0, { mode: 'consult' })
+      const inp = (b && b.input) ? b.input : input0
+      const sys = _ainBuildConsultSystemPrompt(inp, {})
+      const histForModel = trimHistory(12)
+      const messages = [{ role: 'system', content: sys }].concat(
+        histForModel.map((m) => ({ role: m.role, content: safeText(m.content) }))
+      )
+
+      let reply = ''
+      try {
+        const resp = await _ainUpstreamChatOnce(ctx, cfg.upstream, messages, { timeoutMs: 180000 })
+        reply = safeText(resp && resp.text).trim()
+      } catch (e) {
+        // 兼容旧行为：直连失败且已登录时，回退到后端 consult。
+        if (!cfg.token) throw e
+        const json = await apiFetchConsultWithJob(ctx, cfg, {
+          upstream: {
+            baseUrl: cfg.upstream.baseUrl,
+            apiKey: cfg.upstream.apiKey,
+            model: cfg.upstream.model
+          },
+          input: {
+            async: true,
+            mode: 'job',
+            question,
+            progress,
+            bible,
+            prev,
+            constraints,
+            rag: rag || undefined
+          }
+        }, {})
+        reply = safeText(json && json.text).trim()
+      }
+
+      lastAdvice = reply
+      if (!lastAdvice) throw new Error(t('上游未返回内容', 'Upstream returned empty text'))
+
+      history.push({ role: 'assistant', content: lastAdvice })
+      try { if (pending && pending.wrap && pending.wrap.parentNode) pending.wrap.parentNode.removeChild(pending.wrap) } catch {}
+      appendChat('assistant', lastAdvice)
       btnAppend.disabled = false
       ctx.ui.notice(t('已返回建议（未写入文档）', 'Advice returned (not inserted)'), 'ok', 1800)
     } catch (e) {
-      out.textContent = t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e))
+      const msg = t('失败：', 'Failed: ') + (e && e.message ? e.message : String(e))
+      try { if (pending && pending.content) pending.content.textContent = msg } catch {}
     } finally {
       setBusy(btnAsk, false)
     }
   }
 
   btnAsk.onclick = () => { doAsk().catch(() => {}) }
+  btnClear.onclick = () => { try { clearChat() } catch {} }
   btnAppend.onclick = () => {
     try {
       if (!lastAdvice) return
@@ -10013,6 +10273,14 @@ async function openConsultDialog(ctx) {
       ctx.ui.notice(t('追加失败：', 'Append failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
     }
   }
+
+  q.ta.addEventListener('keydown', (e) => {
+    const k = e && e.key ? String(e.key) : ''
+    if (k === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      doAsk().catch(() => {})
+    }
+  })
 }
 
 async function openAuditDialog(ctx) {
