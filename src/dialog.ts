@@ -12,6 +12,21 @@ export type DialogResult = 'save' | 'discard' | 'cancel'
 export type ConflictResult = 'local' | 'remote' | 'cancel'
 export type TwoChoiceResult = 'confirm' | 'cancel'
 export type BoolResult = boolean
+export type ActionDialogResult = string
+
+export type FormFieldKind = 'text' | 'password' | 'textarea' | 'select' | 'checkbox'
+export type FormFieldOption = { label: string; value: string }
+export type FormField = {
+  key: string
+  label: string
+  kind: FormFieldKind
+  value?: string | boolean
+  placeholder?: string
+  help?: string
+  required?: boolean
+  options?: FormFieldOption[]
+}
+export type FormDialogResult = Record<string, string | boolean>
 
 // 对话框样式
 const dialogStyles = `
@@ -139,6 +154,78 @@ const dialogStyles = `
 .custom-dialog-button:focus {
   outline: 2px solid #2563eb;
   outline-offset: 2px;
+}
+
+/* 表单控件（通用输入对话框） */
+.custom-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 18px 0;
+}
+
+.custom-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.custom-dialog-label {
+  font-size: 13px;
+  color: var(--fg);
+  opacity: 0.9;
+}
+
+.custom-dialog-help {
+  font-size: 12px;
+  color: var(--fg);
+  opacity: 0.65;
+  line-height: 1.4;
+}
+
+.custom-dialog-input,
+.custom-dialog-textarea,
+.custom-dialog-select {
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--border);
+  background: rgba(127, 127, 127, 0.06);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  outline: none;
+}
+
+.custom-dialog-textarea {
+  resize: vertical;
+  min-height: 90px;
+}
+
+.custom-dialog-input:focus,
+.custom-dialog-textarea:focus,
+.custom-dialog-select:focus {
+  border-color: rgba(37, 99, 235, 0.8);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
+.custom-dialog-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.custom-dialog-checkbox {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.custom-dialog-error {
+  font-size: 13px;
+  color: #dc2626;
+  margin: 0 0 12px 0;
+  line-height: 1.4;
+  white-space: pre-line;
 }
 
 /* 移动端：别假设 400px 的桌面宽度 */
@@ -649,4 +736,303 @@ export function showUploadMissingRemoteDialog(filename: string): Promise<TwoChoi
     }
     document.addEventListener('keydown', handleKeyDown)
   })
+}
+
+export type ActionButton = {
+  id: string
+  text: string
+  variant?: 'primary' | 'danger' | 'default'
+}
+
+export function showActionDialog(opts: {
+  title: string
+  message: string
+  buttons: ActionButton[]
+  cancelId?: string
+}): Promise<ActionDialogResult> {
+  return new Promise((resolve) => {
+    injectStyles()
+
+    const overlay = document.createElement('div')
+    overlay.className = 'custom-dialog-overlay'
+
+    const box = document.createElement('div')
+    box.className = 'custom-dialog-box'
+
+    const titleEl = document.createElement('div')
+    titleEl.className = 'custom-dialog-title'
+    titleEl.innerHTML = `<span class="custom-dialog-icon">ℹ️</span>${opts.title || ''}`
+
+    const messageEl = document.createElement('div')
+    messageEl.className = 'custom-dialog-message'
+    messageEl.textContent = opts.message || ''
+
+    const buttonsContainer = document.createElement('div')
+    buttonsContainer.className = 'custom-dialog-buttons'
+
+    const cancelId = String(opts.cancelId || 'cancel')
+    let closed = false
+    let handleKeyDown: ((e: KeyboardEvent) => void) | null = null
+    const closeDialog = (result: string) => {
+      if (closed) return
+      closed = true
+      try { if (handleKeyDown) document.removeEventListener('keydown', handleKeyDown) } catch {}
+      overlay.style.animation = 'dialogFadeIn 0.1s ease reverse'
+      setTimeout(() => {
+        overlay.remove()
+        resolve(result)
+      }, 100)
+    }
+
+    const btnEls: HTMLButtonElement[] = []
+    for (const b of (opts.buttons || [])) {
+      const btn = document.createElement('button')
+      btn.className = 'custom-dialog-button'
+      if (b.variant === 'primary') btn.classList.add('primary')
+      if (b.variant === 'danger') btn.classList.add('danger')
+      btn.textContent = b.text || ''
+      btn.onclick = () => closeDialog(String(b.id || ''))
+      buttonsContainer.appendChild(btn)
+      btnEls.push(btn)
+    }
+
+    box.appendChild(titleEl)
+    box.appendChild(messageEl)
+    box.appendChild(buttonsContainer)
+    overlay.appendChild(box)
+    document.body.appendChild(overlay)
+
+    setTimeout(() => {
+      const focusBtn = btnEls.find((b) => b.classList.contains('primary')) || btnEls[0]
+      try { focusBtn?.focus() } catch {}
+    }, 50)
+
+    overlay.onclick = (e) => {
+      if (e.target === overlay) closeDialog(cancelId)
+    }
+
+    handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeDialog(cancelId)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+  })
+}
+
+export function showFormDialog(opts: {
+  title: string
+  message?: string
+  fields: FormField[]
+  submitText?: string
+  cancelText?: string
+}): Promise<FormDialogResult | null> {
+  return new Promise((resolve) => {
+    injectStyles()
+
+    const overlay = document.createElement('div')
+    overlay.className = 'custom-dialog-overlay'
+
+    const box = document.createElement('div')
+    box.className = 'custom-dialog-box'
+
+    const titleEl = document.createElement('div')
+    titleEl.className = 'custom-dialog-title'
+    titleEl.innerHTML = `<span class="custom-dialog-icon">🧩</span>${opts.title || ''}`
+
+    const messageEl = document.createElement('div')
+    messageEl.className = 'custom-dialog-message'
+    messageEl.textContent = opts.message || ''
+    if (!opts.message) messageEl.style.display = 'none'
+
+    const errorEl = document.createElement('div')
+    errorEl.className = 'custom-dialog-error'
+    errorEl.style.display = 'none'
+
+    const formEl = document.createElement('form')
+    formEl.className = 'custom-dialog-form'
+
+    const inputs: Record<string, HTMLElement> = {}
+    for (const f of (opts.fields || [])) {
+      const row = document.createElement('div')
+      row.className = 'custom-dialog-field'
+
+      const labelEl = document.createElement('div')
+      labelEl.className = 'custom-dialog-label'
+      labelEl.textContent = f.label || f.key
+      row.appendChild(labelEl)
+
+      let control: HTMLElement | null = null
+      if (f.kind === 'textarea') {
+        const ta = document.createElement('textarea')
+        ta.className = 'custom-dialog-textarea'
+        ta.placeholder = f.placeholder || ''
+        ta.value = typeof f.value === 'string' ? f.value : ''
+        control = ta
+      } else if (f.kind === 'select') {
+        const sel = document.createElement('select')
+        sel.className = 'custom-dialog-select'
+        const opts2 = Array.isArray(f.options) ? f.options : []
+        for (const o of opts2) {
+          const opt = document.createElement('option')
+          opt.value = String(o.value || '')
+          opt.textContent = String(o.label || o.value || '')
+          sel.appendChild(opt)
+        }
+        const v = typeof f.value === 'string' ? f.value : ''
+        if (v) sel.value = v
+        control = sel
+      } else if (f.kind === 'checkbox') {
+        const wrap = document.createElement('label')
+        wrap.className = 'custom-dialog-checkbox-row'
+        const cb = document.createElement('input')
+        cb.type = 'checkbox'
+        cb.className = 'custom-dialog-checkbox'
+        cb.checked = !!f.value
+        const span = document.createElement('span')
+        span.textContent = f.placeholder || ''
+        wrap.appendChild(cb)
+        wrap.appendChild(span)
+        control = wrap
+        inputs[f.key] = cb
+      } else {
+        const inp = document.createElement('input')
+        inp.type = (f.kind === 'password') ? 'password' : 'text'
+        inp.className = 'custom-dialog-input'
+        inp.placeholder = f.placeholder || ''
+        inp.value = typeof f.value === 'string' ? f.value : ''
+        control = inp
+      }
+
+      if (control) row.appendChild(control)
+      if (f.kind !== 'checkbox' && control) inputs[f.key] = control
+
+      if (f.help) {
+        const helpEl = document.createElement('div')
+        helpEl.className = 'custom-dialog-help'
+        helpEl.textContent = f.help
+        row.appendChild(helpEl)
+      }
+
+      formEl.appendChild(row)
+    }
+
+    const buttonsContainer = document.createElement('div')
+    buttonsContainer.className = 'custom-dialog-buttons'
+
+    const cancelBtn = document.createElement('button')
+    cancelBtn.type = 'button'
+    cancelBtn.className = 'custom-dialog-button'
+    cancelBtn.textContent = opts.cancelText || t('dlg.cancel')
+
+    const submitBtn = document.createElement('button')
+    submitBtn.type = 'submit'
+    submitBtn.className = 'custom-dialog-button primary'
+    submitBtn.textContent = opts.submitText || t('dlg.ok')
+
+    let closed = false
+    let handleKeyDown: ((e: KeyboardEvent) => void) | null = null
+    const closeDialog = (result: FormDialogResult | null) => {
+      if (closed) return
+      closed = true
+      try { if (handleKeyDown) document.removeEventListener('keydown', handleKeyDown) } catch {}
+      overlay.style.animation = 'dialogFadeIn 0.1s ease reverse'
+      setTimeout(() => {
+        overlay.remove()
+        resolve(result)
+      }, 100)
+    }
+
+    const showError = (msg: string) => {
+      errorEl.textContent = msg
+      errorEl.style.display = msg ? '' : 'none'
+    }
+
+    cancelBtn.onclick = () => closeDialog(null)
+
+    formEl.onsubmit = (e) => {
+      e.preventDefault()
+      showError('')
+
+      const out: FormDialogResult = {}
+      for (const f of (opts.fields || [])) {
+        if (f.kind === 'checkbox') {
+          const cb = inputs[f.key] as HTMLInputElement | undefined
+          out[f.key] = !!cb?.checked
+          continue
+        }
+        const el = inputs[f.key] as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | undefined
+        const raw = el ? String((el as any).value ?? '') : ''
+        const v = (f.kind === 'password') ? raw : raw.trim()
+        if (f.required && !v) {
+          showError(`请填写：${f.label || f.key}`)
+          try { ;(el as any)?.focus?.() } catch {}
+          return
+        }
+        out[f.key] = v
+      }
+      closeDialog(out)
+    }
+
+    buttonsContainer.appendChild(cancelBtn)
+    buttonsContainer.appendChild(submitBtn)
+
+    box.appendChild(titleEl)
+    box.appendChild(messageEl)
+    box.appendChild(errorEl)
+    box.appendChild(formEl)
+    box.appendChild(buttonsContainer)
+    overlay.appendChild(box)
+    document.body.appendChild(overlay)
+
+    setTimeout(() => {
+      const first = opts.fields?.[0]
+      if (!first) return
+      const el = inputs[first.key] as any
+      try { el?.focus?.() } catch {}
+    }, 50)
+
+    overlay.onclick = (e) => {
+      if (e.target === overlay) closeDialog(null)
+    }
+
+    handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeDialog(null)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+  })
+}
+
+export async function showInputDialog(opts: {
+  title: string
+  message?: string
+  label: string
+  placeholder?: string
+  defaultValue?: string
+  submitText?: string
+  cancelText?: string
+  password?: boolean
+  required?: boolean
+}): Promise<string | null> {
+  const res = await showFormDialog({
+    title: opts.title,
+    message: opts.message,
+    submitText: opts.submitText,
+    cancelText: opts.cancelText,
+    fields: [{
+      key: 'value',
+      label: opts.label,
+      kind: opts.password ? 'password' : 'text',
+      placeholder: opts.placeholder,
+      value: opts.defaultValue ?? '',
+      required: !!opts.required,
+    }],
+  })
+  if (!res) return null
+  const v = res.value
+  return (typeof v === 'string') ? v : String(v || '')
 }

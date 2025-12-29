@@ -19,7 +19,7 @@ import { enableWysiwygV2, disableWysiwygV2, wysiwygV2ToggleBold, wysiwygV2Toggle
 // Tauri 插件（v2）
 // Tauri 对话框：使用 ask 提供原生确认，避免浏览器 confirm 在关闭事件中失效
 import { open, save, ask } from '@tauri-apps/plugin-dialog'
-import { showThreeButtonDialog } from './dialog'
+import { showThreeButtonDialog, showActionDialog, showFormDialog, showInputDialog } from './dialog'
 import { readTextFile, writeTextFile, readDir, stat, readFile, mkdir  , rename, remove, writeFile, exists, copyFile } from '@tauri-apps/plugin-fs'
 import { Store } from '@tauri-apps/plugin-store'
 import { open as openFileHandle, BaseDirectory } from '@tauri-apps/plugin-fs'
@@ -895,43 +895,91 @@ async function openManualTranscribeSettingsFromMenu(): Promise<void> {
   try {
     const cur = await manualTranscribeStoreGet()
     const curMode = cur?.mode === 'volc' ? 'volc' : 'official'
-    const pick = String(prompt(
-      '手动转写使用哪种接口？\n' +
-      '0 = 官方默认（计费/走自带后端）\n' +
-      '1 = 火山引擎（用户自配，不计费；仅影响：开始录音/录音文件转文本）\n\n' +
-      `当前：${curMode === 'volc' ? '1' : '0'}\n` +
-      '请输入 0 或 1：',
-      curMode === 'volc' ? '1' : '0'
-    ) || '').trim()
-    if (!pick) return
-    if (pick === '0') {
+
+    const pick = await showActionDialog({
+      title: '转写设置',
+      message:
+        '手动转写使用哪种接口？\n' +
+        '官方默认：计费/走自带后端\n' +
+        '火山引擎：用户自配，不计费；仅影响：开始录音/录音文件转文本\n\n' +
+        `当前：${curMode === 'volc' ? '火山引擎' : '官方默认'}`,
+      buttons: [
+        { id: 'official', text: '官方默认', variant: curMode === 'official' ? 'primary' : 'default' },
+        { id: 'volc', text: '火山引擎', variant: curMode === 'volc' ? 'primary' : 'default' },
+        { id: 'cancel', text: '取消', variant: 'default' },
+      ],
+      cancelId: 'cancel',
+    })
+    if (pick === 'cancel') return
+
+    if (pick === 'official') {
       await manualTranscribeStoreSet({ mode: 'official', volc: undefined })
       pluginNotice('手动转写已切回官方默认', 'ok', 2200)
       return
     }
-    if (pick !== '1') {
-      pluginNotice('输入无效：请输入 0 或 1', 'err', 2200)
-      return
-    }
+    if (pick !== 'volc') return
 
     // 火山：参考 BiBi Keyboard（openspeech.bytedance.com 的 X-Api-* 头）
-    const endpoint = String(prompt(
-      '火山接口地址（可直接回车用默认）：',
-      String(cur?.volc?.endpoint || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash')
-    ) || '').trim() || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash'
-    const appKey = String(prompt('X-Api-App-Key（必填）：', String(cur?.volc?.appKey || '')) || '').trim()
+    const defaultEndpoint = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash'
+    const form = await showFormDialog({
+      title: '火山转写设置',
+      message: '仅影响：开始录音/录音文件转文本（仅手动转写生效）',
+      submitText: '保存',
+      cancelText: '取消',
+      fields: [
+        {
+          key: 'endpoint',
+          label: '接口地址',
+          kind: 'text',
+          value: String(cur?.volc?.endpoint || defaultEndpoint),
+          placeholder: defaultEndpoint,
+        },
+        {
+          key: 'appKey',
+          label: 'X-Api-App-Key（必填）',
+          kind: 'text',
+          value: String(cur?.volc?.appKey || ''),
+          required: true,
+        },
+        {
+          key: 'accessKey',
+          label: 'X-Api-Access-Key（必填）',
+          kind: 'text',
+          value: String(cur?.volc?.accessKey || ''),
+          required: true,
+        },
+        {
+          key: 'resourceId',
+          label: 'X-Api-Resource-Id（可选）',
+          kind: 'text',
+          value: String(cur?.volc?.resourceId || 'volc.seedasr.auc'),
+          placeholder: 'volc.seedasr.auc',
+        },
+        {
+          key: 'language',
+          label: 'language（可选；留空=自动）',
+          kind: 'text',
+          value: String(cur?.volc?.language || ''),
+        },
+        {
+          key: 'enableDdc',
+          label: 'enable_ddc（语义顺滑）',
+          kind: 'checkbox',
+          value: !!cur?.volc?.enableDdc,
+          placeholder: '启用',
+        },
+      ],
+    })
+    if (!form) return
+
+    const endpoint = String(form.endpoint || '').trim() || defaultEndpoint
+    const appKey = String(form.appKey || '').trim()
     if (!appKey) { pluginNotice('未填写 X-Api-App-Key', 'err', 2200); return }
-    const accessKey = String(prompt('X-Api-Access-Key（必填）：', String(cur?.volc?.accessKey || '')) || '').trim()
+    const accessKey = String(form.accessKey || '').trim()
     if (!accessKey) { pluginNotice('未填写 X-Api-Access-Key', 'err', 2200); return }
-    const resourceId = String(prompt(
-      'X-Api-Resource-Id（可回车用默认 volc.seedasr.auc）：',
-      String(cur?.volc?.resourceId || 'volc.seedasr.auc')
-    ) || '').trim() || 'volc.seedasr.auc'
-    const language = String(prompt(
-      'language（可选；留空=自动）：',
-      String(cur?.volc?.language || '')
-    ) || '').trim()
-    const enableDdc = await confirmNative('启用 enable_ddc（语义顺滑）？\n确定：启用\n取消：关闭', '火山转写设置')
+    const resourceId = String(form.resourceId || '').trim() || 'volc.seedasr.auc'
+    const language = String(form.language || '').trim()
+    const enableDdc = !!form.enableDdc
 
     await manualTranscribeStoreSet({
       mode: 'volc',
@@ -1503,13 +1551,37 @@ async function asrEnsureTokenInteractive(): Promise<string | null> {
     }
   } catch {}
 
-  const isLogin = await confirmNative('语音笔记服务未登录。\n确定：登录\n取消：注册', '自动语音笔记')
-  const username = String(prompt('用户名（3~32）', '') || '').trim()
+  const action = await showActionDialog({
+    title: '自动语音笔记',
+    message: '语音笔记服务未登录。\n请选择：登录 / 注册',
+    buttons: [
+      { id: 'login', text: '登录', variant: 'primary' },
+      { id: 'register', text: '注册', variant: 'default' },
+      { id: 'cancel', text: '取消', variant: 'default' },
+    ],
+    cancelId: 'cancel',
+  })
+  if (action === 'cancel') return null
+  if (action !== 'login' && action !== 'register') return null
+
+  const form = await showFormDialog({
+    title: '自动语音笔记',
+    message: action === 'login' ? '登录语音笔记账号' : '注册语音笔记账号',
+    submitText: action === 'login' ? '登录' : '注册',
+    cancelText: '取消',
+    fields: [
+      { key: 'username', label: '用户名（3~32）', kind: 'text', value: '', required: true },
+      { key: 'password', label: action === 'login' ? '密码（6~64）' : '设置密码（6~64）', kind: 'password', value: '', required: true },
+    ],
+  })
+  if (!form) return null
+
+  const username = String(form.username || '').trim()
   if (!username) return null
-  const password = String(prompt(isLogin ? '密码（6~64）' : '设置密码（6~64）', '') || '')
+  const password = String(form.password || '')
   if (!password) return null
 
-  const apiPath = isLogin ? '/api/auth/login/' : '/api/auth/register/'
+  const apiPath = action === 'login' ? '/api/auth/login/' : '/api/auth/register/'
   const resp = await asrApi(apiPath, { method: 'POST', body: { username, password } })
   const tok = String(resp?.token || '').trim()
   if (!tok) throw new Error('登录失败：token 为空')
@@ -1978,13 +2050,38 @@ async function startAndroidAsrNote(createNewFile: boolean): Promise<void> {
     return
   }
   if (balMs <= 0) {
-    const ok = await confirmNative('余额不足。\n确定：打开充值页面\n取消：我已有卡密，去兑换', '自动语音笔记')
-    if (ok && payUrl) {
+    const pick = await showActionDialog({
+      title: '自动语音笔记',
+      message: '余额不足。\n请选择：打开充值页面 / 兑换卡密',
+      buttons: [
+        { id: 'pay', text: '打开充值页面', variant: 'primary' },
+        { id: 'redeem', text: '兑换卡密', variant: 'default' },
+        { id: 'cancel', text: '取消', variant: 'default' },
+      ],
+      cancelId: 'cancel',
+    })
+    if (pick === 'cancel') return
+    if (pick === 'pay') {
+      if (!payUrl) {
+        pluginNotice('充值页面地址为空：请检查后端配置', 'err', 2600)
+        return
+      }
       try { void openInBrowser(payUrl) } catch {}
       pluginNotice('充值完成后，把卡密粘贴到“兑换卡密”里即可。', 'ok', 2600)
       return
     }
-    const key = String(prompt('请输入充值卡密（支付页给你的卡号）', '') || '').trim()
+    if (pick !== 'redeem') return
+
+    const key = await showInputDialog({
+      title: '兑换卡密',
+      message: '把支付页给你的卡号粘贴到这里。',
+      label: '充值卡密',
+      placeholder: '',
+      defaultValue: '',
+      submitText: '兑换',
+      cancelText: '取消',
+      required: true,
+    })
     if (!key) return
     try {
       const r = await asrApi('/api/billing/redeem/', { method: 'POST', token, body: { token: key } })
@@ -2301,11 +2398,18 @@ async function openAndroidAsrBillingEntry(): Promise<void> {
     const price = String(me?.billing?.price_cny_per_min || '').trim() || '0.2000'
     const payUrl = String(me?.billing?.pay?.url || '').trim()
 
-    const ok = await confirmNative(
-      `语音笔记账号：${username || '未知'}\n余额：${balMin} 分钟\n单价：${price} 元/分钟\n\n确定：打开充值页面\n取消：兑换卡密`,
-      '语音笔记余额/充值'
-    )
-    if (ok) {
+    const pick = await showActionDialog({
+      title: '语音笔记余额/充值',
+      message: `语音笔记账号：${username || '未知'}\n余额：${balMin} 分钟\n单价：${price} 元/分钟`,
+      buttons: [
+        { id: 'pay', text: '打开充值页面', variant: 'primary' },
+        { id: 'redeem', text: '兑换卡密', variant: 'default' },
+        { id: 'cancel', text: '取消', variant: 'default' },
+      ],
+      cancelId: 'cancel',
+    })
+    if (pick === 'cancel') return
+    if (pick === 'pay') {
       if (!payUrl) {
         pluginNotice('充值页面地址为空：请检查后端配置', 'err', 2600)
         return
@@ -2314,7 +2418,18 @@ async function openAndroidAsrBillingEntry(): Promise<void> {
       return
     }
 
-    const key = String(prompt('请输入充值卡密（支付页给你的卡号）', '') || '').trim()
+    if (pick !== 'redeem') return
+
+    const key = await showInputDialog({
+      title: '兑换卡密',
+      message: '把支付页给你的卡号粘贴到这里。',
+      label: '充值卡密',
+      placeholder: '',
+      defaultValue: '',
+      submitText: '兑换',
+      cancelText: '取消',
+      required: true,
+    })
     if (!key) return
     const r = await asrApi('/api/billing/redeem/', { method: 'POST', token, body: { token: key } })
     const nextMin = String(r?.balance_min || r?.billing?.balance_min || '').trim()
