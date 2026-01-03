@@ -346,12 +346,22 @@ function _ainBuildConsultSystemPrompt(input, opt) {
   const o = (opt && typeof opt === 'object') ? opt : {}
 
   const out = []
-  out.push([
-    '你是我的小说写作顾问。你只做“咨询”，不续写正文、不代写段落。',
-    '回答要像正常聊天：别用【结论】【诊断】【建议】这种模板；除非我明确要求，否则别堆公式化小标题。',
-    '信息不够时，先问 1-2 个关键澄清问题；再给出能落地的建议（可以有选项，但别流水账）。',
-    '不要虚构设定；不确定就直说不确定，并告诉我需要哪些信息。',
-  ].join('\n'))
+  if (o.formal) {
+    out.push([
+      '你是我的小说写作顾问。你只做“咨询”，不续写正文、不代写段落。',
+      '请使用正式、专业、克制的书面表达：避免口语、网络用语、俚语、过度感叹；默认以“您”称呼我。',
+      '回答要条理清晰：优先用简短段落与列表组织观点；必要时可使用小标题，但不要模板化套话。',
+      '信息不够时，先提出 1-2 个关键澄清问题；再给出可执行的建议（可以提供少量可选路径，并说明取舍）。',
+      '不要虚构设定；不确定就直说不确定，并说明需要哪些信息才能判断。',
+    ].join('\n'))
+  } else {
+    out.push([
+      '你是我的小说写作顾问。你只做“咨询”，不续写正文、不代写段落。',
+      '回答要像正常聊天：别用【结论】【诊断】【建议】这种模板；除非我明确要求，否则别堆公式化小标题。',
+      '信息不够时，先问 1-2 个关键澄清问题；再给出能落地的建议（可以有选项，但别流水账）。',
+      '不要虚构设定；不确定就直说不确定，并告诉我需要哪些信息。',
+    ].join('\n'))
+  }
 
   const questionHint = safeText(o.questionHint).trim()
   if (questionHint) out.push(questionHint)
@@ -3116,9 +3126,13 @@ function closeDialog() {
 function ensureDialogStyle() {
   const id = 'ai-novel-style'
   const doc = document
-  if (!doc || doc.getElementById(id)) return
-  const st = doc.createElement('style')
-  st.id = id
+  if (!doc) return
+  let st = doc.getElementById(id)
+  if (!st) {
+    st = doc.createElement('style')
+    st.id = id
+    doc.head.appendChild(st)
+  }
   st.textContent = `
 .ain-overlay{position:fixed;inset:0;background:rgba(2,6,23,.75);z-index:999999;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
 .ain-dlg{width:min(980px,96vw);background:#0f172a;border:1px solid #334155;border-radius:10px;color:#e2e8f0;box-shadow:0 25px 50px -12px rgba(0,0,0,.5)}
@@ -3151,6 +3165,36 @@ function ensureDialogStyle() {
 .ain-ta{width:100%;min-height:120px;padding:10px 14px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;box-sizing:border-box;resize:vertical}
 .ain-ta:focus{border-color:#3b82f6;outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
 .ain-out{white-space:pre-wrap;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;min-height:120px;color:#cbd5e1}
+.ain-chat{background:
+  radial-gradient(900px 450px at 10% 0%, rgba(59,130,246,.08), transparent 60%),
+  radial-gradient(700px 380px at 90% 0%, rgba(148,163,184,.10), transparent 60%),
+  #1e293b;
+border:1px solid #334155;border-radius:10px;padding:12px;margin:12px 0;display:flex;flex-direction:column;gap:10px;height:min(72vh,640px)}
+.ain-chat-list{flex:1;min-height:240px;overflow:auto;padding:14px 12px;background:
+  radial-gradient(1200px 600px at 20% 0%, rgba(59,130,246,.10), transparent 55%),
+  radial-gradient(900px 500px at 80% 10%, rgba(34,197,94,.08), transparent 55%),
+  radial-gradient(1px 1px at 12px 12px, rgba(148,163,184,.22), rgba(148,163,184,0) 55%),
+  radial-gradient(1px 1px at 2px 2px, rgba(148,163,184,.10), rgba(148,163,184,0) 55%),
+  #0b1220;
+background-size:auto,auto,24px 24px,24px 24px,auto;
+background-position:center,center,0 0,12px 12px,center;
+border:1px solid rgba(148,163,184,.22);border-radius:10px;display:flex;flex-direction:column;gap:12px}
+.ain-chat-item{display:flex;gap:10px;width:100%;align-items:flex-end}
+.ain-chat-item.user{justify-content:flex-end}
+.ain-chat-item.assistant{justify-content:flex-start}
+.ain-chat-avatar{width:30px;height:30px;border-radius:999px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;font-size:12px;font-weight:700;user-select:none}
+.ain-chat-avatar.user{background:rgba(59,130,246,.22);border:1px solid rgba(59,130,246,.55);color:#cfe3ff}
+.ain-chat-avatar.assistant{background:rgba(148,163,184,.12);border:1px solid rgba(148,163,184,.35);color:#e2e8f0}
+.ain-chat-bubble{display:inline-block;max-width:min(62%,640px);border:1px solid rgba(148,163,184,.22);border-radius:14px;padding:10px 12px;white-space:pre-wrap;line-height:1.55;box-shadow:0 14px 35px -24px rgba(0,0,0,.85);backdrop-filter:blur(2px)}
+.ain-chat-bubble.user{background:linear-gradient(135deg, rgba(37,99,235,.92), rgba(29,78,216,.88));border-color:rgba(59,130,246,.55);color:#ffffff;border-bottom-right-radius:6px}
+.ain-chat-bubble.assistant{background:rgba(15,23,42,.82);border-color:rgba(148,163,184,.25);color:#e2e8f0;border-bottom-left-radius:6px}
+.ain-chat-inputbar{display:flex;gap:10px;align-items:flex-end}
+.ain-chat-ta{min-height:42px;max-height:160px;resize:none;line-height:1.5}
+.ain-chat-actions{display:flex;gap:8px;align-items:center;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end}
+.ain-chat-list::-webkit-scrollbar{width:10px}
+.ain-chat-list::-webkit-scrollbar-thumb{background:rgba(148,163,184,.22);border:2px solid rgba(0,0,0,0);background-clip:padding-box;border-radius:999px}
+.ain-chat-list::-webkit-scrollbar-thumb:hover{background:rgba(148,163,184,.35)}
+.ain-chat-list::-webkit-scrollbar-track{background:rgba(15,23,42,.35);border-radius:999px}
 .ain-diff{white-space:pre-wrap;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;min-height:120px}
 .ain-diff mark{background:rgba(34,197,94,.2);color:#86efac;padding:0 2px;border-radius:2px}
 .ain-diff del{background:rgba(239,68,68,.2);color:#fca5a5;text-decoration:line-through;padding:0 2px;border-radius:2px}
@@ -3190,7 +3234,6 @@ function ensureDialogStyle() {
 .ain-minibar .ain-minititle:active{cursor:grabbing}
 .ain-minibar .ain-winbtn{height:calc(var(--ain-bar-h,28px) - 4px);line-height:calc(var(--ain-bar-h,28px) - 4px);min-width:24px;border-radius:999px}
 `
-  doc.head.appendChild(st)
 }
 
 function _ainLineHeightPx() {
@@ -10090,31 +10133,20 @@ async function openConsultDialog(ctx) {
     throw new Error(t('请先在设置里填写上游 BaseURL 和模型', 'Please set upstream BaseURL and model in Settings first'))
   }
 
-  const { body } = createDialogShell(t('写作咨询（不续写）', 'Writing consult (no continuation)'))
+  const { body } = createDialogShell(t('写作咨询', 'Writing consult'))
 
   const sec = document.createElement('div')
-  sec.className = 'ain-card'
-  sec.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${t('咨询问题', 'Question')}</div>`
-
-  const q = mkTextarea(t('你想问什么？例如：后续走向、人物动机、节奏、伏笔回收、章节安排…', 'Ask about plot, motivation, pacing, foreshadowing...'), '')
-  sec.appendChild(q.wrap)
-  
-  const cons = mkTextarea(t('本次硬约束（可空，合并全局硬约束后一起生效）', 'Hard constraints (optional, merged with global constraints)'), '')
-  cons.ta.style.minHeight = '70px'
-  sec.appendChild(cons.wrap)
+  sec.className = 'ain-chat'
 
   const out = document.createElement('div')
-  out.className = 'ain-out'
-  out.style.marginTop = '10px'
-  out.style.maxHeight = '380px'
-  out.style.overflow = 'auto'
-  out.style.display = 'flex'
-  out.style.flexDirection = 'column'
-  out.style.gap = '10px'
-  out.style.whiteSpace = 'normal'
+  out.className = 'ain-chat-list'
 
-  const rowBtn = document.createElement('div')
-  rowBtn.style.marginTop = '10px'
+  const rowIn = document.createElement('div')
+  rowIn.className = 'ain-chat-inputbar'
+
+  const q = document.createElement('textarea')
+  q.className = 'ain-ta ain-chat-ta'
+  q.placeholder = t('输入消息，回车发送；Shift+回车换行…', 'Type message, Enter to send; Shift+Enter for newline...')
 
   const btnAsk = document.createElement('button')
   btnAsk.className = 'ain-btn'
@@ -10130,12 +10162,17 @@ async function openConsultDialog(ctx) {
   btnClear.className = 'ain-btn gray'
   btnClear.textContent = t('清空对话', 'Clear')
 
-  rowBtn.appendChild(btnAsk)
-  rowBtn.appendChild(btnAppend)
-  rowBtn.appendChild(btnClear)
+  const actions = document.createElement('div')
+  actions.className = 'ain-chat-actions'
+  actions.appendChild(btnAsk)
+  actions.appendChild(btnAppend)
+  actions.appendChild(btnClear)
 
-  sec.appendChild(rowBtn)
+  rowIn.appendChild(q)
+  rowIn.appendChild(actions)
+
   sec.appendChild(out)
+  sec.appendChild(rowIn)
   body.appendChild(sec)
 
   let lastAdvice = ''
@@ -10143,22 +10180,28 @@ async function openConsultDialog(ctx) {
 
   function appendChat(role, text, opt) {
     const o = (opt && typeof opt === 'object') ? opt : {}
+    const isUser = role === 'user'
     const wrap = document.createElement('div')
-    wrap.style.border = '1px solid #334155'
-    wrap.style.borderRadius = '8px'
-    wrap.style.padding = '10px 12px'
-    wrap.style.background = role === 'user' ? 'rgba(59,130,246,.10)' : 'rgba(148,163,184,.06)'
+    wrap.className = 'ain-chat-item ' + (isUser ? 'user' : 'assistant')
 
-    const head = document.createElement('div')
-    head.className = 'ain-muted'
-    head.style.marginBottom = '6px'
-    head.textContent = role === 'user' ? t('你', 'You') : t('AI', 'AI')
-    wrap.appendChild(head)
+    const avatar = document.createElement('div')
+    avatar.className = 'ain-chat-avatar ' + (isUser ? 'user' : 'assistant')
+    avatar.textContent = isUser ? t('你', 'You') : 'AI'
+
+    const bubble = document.createElement('div')
+    bubble.className = 'ain-chat-bubble ' + (isUser ? 'user' : 'assistant')
 
     const content = document.createElement('div')
-    content.style.whiteSpace = 'pre-wrap'
     content.textContent = safeText(text)
-    wrap.appendChild(content)
+    bubble.appendChild(content)
+
+    if (isUser) {
+      wrap.appendChild(bubble)
+      wrap.appendChild(avatar)
+    } else {
+      wrap.appendChild(avatar)
+      wrap.appendChild(bubble)
+    }
 
     if (o.pending) wrap.dataset.ainPending = '1'
     out.appendChild(wrap)
@@ -10171,7 +10214,7 @@ async function openConsultDialog(ctx) {
     lastAdvice = ''
     btnAppend.disabled = true
     out.innerHTML = ''
-    appendChat('assistant', t('把问题发给我，我会结合进度/设定/前文来聊（不续写）。', 'Ask me; I will answer with context (no continuation).'))
+    appendChat('assistant', t('把问题发给我，我会结合进度/设定/前文来聊。', 'Ask me; I will answer with context (no continuation).'))
   }
 
   function trimHistory(maxMsgs) {
@@ -10185,18 +10228,20 @@ async function openConsultDialog(ctx) {
   clearChat()
 
   async function doAsk() {
-    const question = safeText(q.ta.value).trim()
+    if (btnAsk && btnAsk.disabled) return
+    const question = safeText(q.value).trim()
     if (!question) {
       ctx.ui.notice(t('请先输入问题', 'Please input question'), 'err', 2000)
       return
     }
-    q.ta.value = ''
+    q.value = ''
+    try { q.focus() } catch {}
     cfg = await loadCfg(ctx)
 
     const prev = await getPrevTextForRequest(ctx, cfg)
     const progress = await getProgressDocText(ctx, cfg)
     const bible = await getBibleDocText(ctx, cfg)
-    const constraints = await mergeConstraintsWithCharState(ctx, cfg, safeText(cons.ta.value).trim())
+    const constraints = await mergeConstraintsWithCharState(ctx, cfg, '')
     let rag = null
     try {
       rag = await rag_get_hits(ctx, cfg, question + '\n\n' + sliceTail(prev, 2000))
@@ -10208,12 +10253,12 @@ async function openConsultDialog(ctx) {
 
     history.push({ role: 'user', content: question })
     appendChat('user', question)
-    const pending = appendChat('assistant', t('我在看上下文…', 'Thinking...'), { pending: true })
+    const pending = appendChat('assistant', t('思考中…', 'Thinking...'), { pending: true })
     try {
       const input0 = { instruction: question, progress, bible, prev, constraints: constraints || undefined, rag: rag || undefined }
       const b = _ainCtxApplyBudget(cfg, input0, { mode: 'consult' })
       const inp = (b && b.input) ? b.input : input0
-      const sys = _ainBuildConsultSystemPrompt(inp, {})
+      const sys = _ainBuildConsultSystemPrompt(inp, { formal: true })
       const histForModel = trimHistory(12)
       const messages = [{ role: 'system', content: sys }].concat(
         histForModel.map((m) => ({ role: m.role, content: safeText(m.content) }))
@@ -10274,12 +10319,14 @@ async function openConsultDialog(ctx) {
     }
   }
 
-  q.ta.addEventListener('keydown', (e) => {
-    const k = e && e.key ? String(e.key) : ''
-    if (k === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault()
-      doAsk().catch(() => {})
-    }
+  q.addEventListener('keydown', (e) => {
+    if (!e) return
+    const k = e.key ? String(e.key) : ''
+    if (k !== 'Enter') return
+    if (e.isComposing) return
+    if (e.shiftKey) return
+    e.preventDefault()
+    doAsk().catch(() => {})
   })
 }
 
