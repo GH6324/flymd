@@ -490,35 +490,50 @@ async function dirHasSupportedDocRecursive(dir: string, allow: Set<string>, dept
 
 function makeTg(): HTMLElement { const s = document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('viewBox','0 0 24 24'); s.classList.add('lib-tg'); const p=document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d','M9 6l6 6-6 6'); s.appendChild(p); return s as any }
 
-// 实心填充文件夹图标
+// 轻量线条文件夹图标（Lucide 风格）
 function makeFolderSvg(): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('viewBox', '0 0 16 16')
+  svg.setAttribute('viewBox', '0 0 24 24')
   svg.setAttribute('width', '16')
   svg.setAttribute('height', '16')
   svg.classList.add('lib-ico', 'lib-ico-svg', 'lib-ico-folder')
-  // 实心文件夹：简洁无重影
+  // Lucide folder 图标
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  path.setAttribute('d', 'M1.5 3C1.5 2.72 1.72 2.5 2 2.5h4.5l1.5 1.5H14c.28 0 .5.22.5.5v8c0 .28-.22.5-.5.5H2c-.28 0-.5-.22-.5-.5V3z')
-  path.setAttribute('fill', 'currentColor')
-  path.setAttribute('opacity', '0.85')
+  path.setAttribute('d', 'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z')
+  path.setAttribute('fill', 'none')
+  path.setAttribute('stroke', 'currentColor')
+  path.setAttribute('stroke-width', '2')
+  path.setAttribute('stroke-linecap', 'round')
+  path.setAttribute('stroke-linejoin', 'round')
   svg.appendChild(path)
   return svg
 }
 
-// 书架/图书馆图标（用于顶级库）
+// 房子/Home 图标（用于顶级库）
 function makeLibrarySvg(): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('viewBox', '0 0 16 16')
+  svg.setAttribute('viewBox', '0 0 24 24')
   svg.setAttribute('width', '16')
   svg.setAttribute('height', '16')
   svg.classList.add('lib-ico', 'lib-ico-svg', 'lib-ico-library')
-  // 书架：三本书并排
+  // Lucide home 图标
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  path.setAttribute('d', 'M2 2.5h2.5v11H2V2.5zm3.5 1h2.5v10H5.5v-10zm3.5-1h2.5v11H9V2.5zm3.5 0.5H14l1 10.5h-2l-0.5-10.5z')
-  path.setAttribute('fill', 'currentColor')
-  path.setAttribute('opacity', '0.85')
+  path.setAttribute('d', 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z')
+  path.setAttribute('fill', 'none')
+  path.setAttribute('stroke', 'currentColor')
+  path.setAttribute('stroke-width', '2')
+  path.setAttribute('stroke-linecap', 'round')
+  path.setAttribute('stroke-linejoin', 'round')
   svg.appendChild(path)
+  // 门
+  const door = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  door.setAttribute('d', 'M9 22V12h6v10')
+  door.setAttribute('fill', 'none')
+  door.setAttribute('stroke', 'currentColor')
+  door.setAttribute('stroke-width', '2')
+  door.setAttribute('stroke-linecap', 'round')
+  door.setAttribute('stroke-linejoin', 'round')
+  svg.appendChild(door)
   return svg
 }
 
