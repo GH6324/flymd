@@ -2,6 +2,15 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.9.5
+- Added: Command palette (Ctrl+Shift+P)
+- Added: Global menu manager for centralized/dynamic menu updates
+- Improved: Narrower vertical menu with smaller icons
+- Improved: Updated folder icons in the file tree (top-level vs nested)
+- Fixed: macOS compact titlebar: window drag and minimize button could stop working
+- Fixed: macOS borderless window (`decorations: false`): `minimize()` could fail
+- Docs: Fixed license badge display in README
+
 ## Update v0.9.3
 - Fixed: Outline panel H1/H2 expand/collapse toggles work again
 - Fixed: Library sidebar folder/file icons are shown again (switched to VS Code-style SVG icons)
