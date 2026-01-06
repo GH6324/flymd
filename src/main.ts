@@ -5303,9 +5303,10 @@ function initPlatformClass() {
 function initWindowDrag() {
   const platform = (navigator.platform || '').toLowerCase()
   const isMac = platform.includes('mac')
-  // Windows 上原生 + -webkit-app-region 已足够；Linux 先不动，避免引入不必要的行为变化。
-  // macOS 上 -webkit-app-region 在无边框窗口下可能导致点击命中异常，因此仅在 macOS 用 startDragging 兜底。
-  if (!isMac) return
+  const isLinux = platform.includes('linux')
+  // Windows 上原生 + -webkit-app-region 已足够。
+  // macOS / Linux：webview 对 -webkit-app-region 支持不一致，且 macOS 上还可能吞点击，这里统一用 startDragging 兜底。
+  if (!isMac && !isLinux) return
 
   // 当前主布局使用 tabbar-row；titlebar 仅为旧布局兼容
   const titlebar = document.querySelector('.tabbar-row, .titlebar') as HTMLElement | null
@@ -5335,6 +5336,19 @@ function initWindowDrag() {
 
 // 窗口边缘 resize 初始化：为 decorations: false 时提供窗口调整大小功能
 function initWindowResize() {
+  const platform = (navigator.platform || '').toLowerCase()
+  const isLinux = platform.includes('linux')
+  const resizeDirMap = {
+    top: 'North',
+    bottom: 'South',
+    left: 'West',
+    right: 'East',
+    'corner-nw': 'NorthWest',
+    'corner-ne': 'NorthEast',
+    'corner-sw': 'SouthWest',
+    'corner-se': 'SouthEast',
+  } as const
+
   // 创建 resize handles 容器
   const container = document.createElement('div')
   container.className = 'window-resize-handles'
@@ -5351,6 +5365,7 @@ function initWindowResize() {
 
   // resize 状态
   let resizing = false
+  let ready = false
   let startX = 0
   let startY = 0
   let startWidth = 0
@@ -5365,14 +5380,26 @@ function initWindowResize() {
   container.addEventListener('mousedown', async (e: MouseEvent) => {
     const target = e.target as HTMLElement
     if (!target.classList.contains('window-resize-handle')) return
+    if (!document.body.classList.contains('no-native-decorations')) return
 
     e.preventDefault()
     e.stopPropagation()
 
-    resizing = true
     direction = target.dataset.resizeDir || ''
     startX = e.screenX
     startY = e.screenY
+
+    // Linux：使用 Tauri 原生 resize dragging，避免自己算尺寸/位置导致的各种边界 bug。
+    if (isLinux && direction in resizeDirMap) {
+      try {
+        const win = getCurrentWindow()
+        await win.startResizeDragging(resizeDirMap[direction as keyof typeof resizeDirMap])
+        return
+      } catch {}
+    }
+
+    ready = false
+    resizing = false
 
     try {
       const win = getCurrentWindow()
@@ -5382,12 +5409,25 @@ function initWindowResize() {
       startHeight = size.height
       startPosX = pos.x
       startPosY = pos.y
-    } catch {}
+      ready = true
+      resizing = true
+    } catch {
+      resizing = false
+      direction = ''
+      ready = false
+    }
   })
 
   // mousemove：执行 resize
   document.addEventListener('mousemove', async (e: MouseEvent) => {
-    if (!resizing) return
+    if (!resizing || !ready) return
+    // mouseup 可能发生在窗口外（Linux 上更常见），用 buttons 状态兜底，避免“松开鼠标还在 resize”
+    if ((e.buttons & 1) === 0) {
+      resizing = false
+      direction = ''
+      ready = false
+      return
+    }
 
     const deltaX = e.screenX - startX
     const deltaY = e.screenY - startY
@@ -5429,6 +5469,14 @@ function initWindowResize() {
   document.addEventListener('mouseup', () => {
     resizing = false
     direction = ''
+    ready = false
+  })
+
+  // 失焦/隐藏时强制结束 resize，避免状态卡死
+  window.addEventListener('blur', () => {
+    resizing = false
+    direction = ''
+    ready = false
   })
 }
 

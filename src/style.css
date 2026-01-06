@@ -7403,6 +7403,7 @@ body.sticky-note-mode .flymd-context-menu .context-menu-note {
 
 /* resize handles 容器 */
 .window-resize-handles {
+  display: none;
   position: fixed;
   top: 0;
   left: 0;
@@ -7410,6 +7411,11 @@ body.sticky-note-mode .flymd-context-menu .context-menu-note {
   bottom: 0;
   pointer-events: none;
   z-index: 99999;
+}
+
+/* 仅在隐藏原生窗口装饰（decorations: false）时启用 resize handles，避免干扰正常交互 */
+body.no-native-decorations .window-resize-handles {
+  display: block;
 }
 
 /* 通用 resize handle 样式 */
