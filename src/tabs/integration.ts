@@ -298,8 +298,7 @@ export async function initTabSystem(): Promise<void> {
   // 注意：不 await，避免阻塞标签系统主流程；失败（非 Tauri 环境）也无所谓
   try { void initTabTransferReceiver({ tabManager, undoManager }) } catch {}
 
-  // 启动文件路径同步监听（处理直接调用 openFile2 的情况）
-  startPathSyncWatcher()
+  // 不再启用“路径轮询同步”：openFile2 已在 main.ts 内部改为优先代理到 flymdOpenFile（标签系统入口）
 
   // 监听文件重命名事件（例如从库侧栏重命名文档），同步更新标签中的文件路径
   window.addEventListener('flymd-file-renamed', (ev: Event) => {
@@ -514,9 +513,20 @@ function createHooks(): TabManagerHooks {
       // 重新加载文件（用于 PDF 等特殊文件）
       // 暂停轮询检测，避免冲突
       pausePathWatcher(1500)
-      // 使用原始的 openFile2，绕过标签系统的钩子
+      const isPdf = String(filePath || '').toLowerCase().endsWith('.pdf')
+      if (isPdf && typeof flymd.flymdShowPdfPreview === 'function') {
+        // 切回 PDF 标签时复用已加载的 iframe，避免反复重载
+        await flymd.flymdShowPdfPreview(filePath, { updateRecent: false })
+        return
+      }
+      // 其它类型：使用原始的 openFile2，绕过标签系统的钩子
       if (flymd.flymdOpenFileOriginal) {
-        await flymd.flymdOpenFileOriginal(filePath)
+        try {
+          flymd.__flymdOpenFileInternal = true
+          await flymd.flymdOpenFileOriginal(filePath)
+        } finally {
+          try { flymd.__flymdOpenFileInternal = false } catch {}
+        }
       } else if (flymd.flymdOpenFile) {
         await flymd.flymdOpenFile(filePath)
       }
@@ -568,8 +578,13 @@ function hookOpenFile(): void {
       pausePathWatcher(1500)
     }
 
-    // 调用原始打开逻辑
-    await originalOpenFile(preset)
+    // 调用原始打开逻辑（标记为内部调用，避免 openFile2 反向再代理回 flymdOpenFile 造成递归）
+    try {
+      flymd.__flymdOpenFileInternal = true
+      await originalOpenFile(preset)
+    } finally {
+      try { flymd.__flymdOpenFileInternal = false } catch {}
+    }
 
     // 获取打开后的文件路径和内容
     const afterPath = flymd.flymdGetCurrentFilePath?.()
@@ -582,6 +597,8 @@ function hookOpenFile(): void {
       if (activeTab) {
         tabManager.updateCurrentTabPath(afterPath)
         tabManager.updateTabContent(activeTab.id, content)
+        // 打开新文档后同步一次库侧栏选中态（避免“新标签先切换但路径尚未写入”导致高亮停留在旧文档）
+        syncFileTreeSelectionToActiveTab()
 
         // 打开新文档后，将当前 textarea 内容作为该标签的撤销基线
         // 避免首次编辑时撤销回到旧文档或空文档
@@ -591,26 +608,6 @@ function hookOpenFile(): void {
         if (isPdf) {
           // 标记为 PDF 标签
           activeTab.isPdf = true
-
-          // 最笨的办法：打开 PDF 后自动模拟“切换一次标签再切回来”
-          // 加一个小延时，确保当前标签状态/预览渲染完成再切换
-          try {
-            const tabs = tabManager.getTabs()
-            if (tabs.length > 1) {
-              const idx = tabs.findIndex(t => t.id === activeTab.id)
-              if (idx !== -1) {
-                const otherIdx = (idx + 1) % tabs.length
-                const otherId = tabs[otherIdx].id
-                if (otherId !== activeTab.id) {
-                  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-                  await delay(200)
-                  await tabManager.switchToTab(otherId)
-                  await delay(200)
-                  await tabManager.switchToTab(activeTab.id)
-                }
-              }
-            }
-          } catch {}
         }
       }
     }

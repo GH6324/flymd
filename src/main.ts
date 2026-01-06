@@ -191,6 +191,19 @@ let mermaidReady = false
 import { isMermaidCacheDisabled, getMermaidScale, setMermaidScaleClamped, adjustExistingMermaidSvgsForScale, exportMermaidViaDialog, createMermaidToolsFor, mermaidSvgCache, mermaidSvgCacheVersion, getCachedMermaidSvg, cacheMermaidSvg, normalizeMermaidSvg, postAttachMermaidSvgAdjust, invalidateMermaidSvgCache, MERMAID_SCALE_MIN, MERMAID_SCALE_MAX, MERMAID_SCALE_STEP } from './core/mermaid'
 // 当前 PDF 预览 URL（iframe 使用），用于页内跳转
 let _currentPdfSrcUrl: string | null = null
+let _currentPdfIframe: HTMLIFrameElement | null = null
+type PdfViewCacheEntry = {
+  filePath: string
+  srcUrl: string
+  wrap: HTMLDivElement
+  iframe: HTMLIFrameElement
+  lastActiveAt: number
+  mtime: number
+}
+const _pdfViewCache = new Map<string, PdfViewCacheEntry>()
+const PDF_VIEW_CACHE_MAX = 4
+let _previewMdHost: HTMLDivElement | null = null
+let _previewPdfHost: HTMLDivElement | null = null
 // 大纲缓存（Markdown/WYSIWYG）：避免重复重建 DOM
 let _outlineLastSignature = ''
 // PDF 目录缓存：按文件路径缓存解析结果与 mtime，用于自动失效
@@ -1246,6 +1259,84 @@ try { initWindowResize() } catch {}
 const editor = document.getElementById('editor') as HTMLTextAreaElement
 const preview = document.getElementById('preview') as HTMLDivElement
 const filenameLabel = document.getElementById('filename') as HTMLDivElement
+
+function ensurePreviewHosts(): { mdHost: HTMLDivElement; pdfHost: HTMLDivElement } {
+  try {
+    const mdExisting = preview.querySelector('#preview-md-host') as HTMLDivElement | null
+    const pdfExisting = preview.querySelector('#preview-pdf-host') as HTMLDivElement | null
+    if (mdExisting && pdfExisting) {
+      _previewMdHost = mdExisting
+      _previewPdfHost = pdfExisting
+      return { mdHost: mdExisting, pdfHost: pdfExisting }
+    }
+
+    const mdHost = mdExisting || document.createElement('div')
+    mdHost.id = 'preview-md-host'
+    mdHost.className = 'preview-md-host'
+    mdHost.style.width = '100%'
+    mdHost.style.minHeight = '100%'
+
+    const pdfHost = pdfExisting || document.createElement('div')
+    pdfHost.id = 'preview-pdf-host'
+    pdfHost.className = 'preview-pdf-host'
+    pdfHost.style.width = '100%'
+    pdfHost.style.height = '100%'
+
+    // 若 preview 已经被旧逻辑写入过内容，把现有节点迁移到 mdHost，避免“丢预览”
+    if (!mdExisting && !pdfExisting) {
+      const nodes = Array.from(preview.childNodes)
+      if (nodes.length > 0) {
+        nodes.forEach((n) => mdHost.appendChild(n))
+      }
+      preview.appendChild(mdHost)
+      preview.appendChild(pdfHost)
+    } else {
+      if (!mdExisting) preview.appendChild(mdHost)
+      if (!pdfExisting) preview.appendChild(pdfHost)
+    }
+
+    _previewMdHost = mdHost
+    _previewPdfHost = pdfHost
+    return { mdHost, pdfHost }
+  } catch {
+    // 极端兜底：不破坏现有行为
+    const mdHost = document.createElement('div')
+    mdHost.id = 'preview-md-host'
+    const pdfHost = document.createElement('div')
+    pdfHost.id = 'preview-pdf-host'
+    _previewMdHost = mdHost
+    _previewPdfHost = pdfHost
+    return { mdHost, pdfHost }
+  }
+}
+
+function setPreviewKind(kind: 'md' | 'pdf') {
+  const { mdHost, pdfHost } = ensurePreviewHosts()
+  if (kind === 'md') {
+    mdHost.style.display = ''
+    pdfHost.style.display = 'none'
+  } else {
+    mdHost.style.display = 'none'
+    pdfHost.style.display = ''
+  }
+}
+
+function prunePdfViewCache(keepKey: string) {
+  try {
+    if (_pdfViewCache.size <= PDF_VIEW_CACHE_MAX) return
+    const entries = Array.from(_pdfViewCache.entries()).sort((a, b) => (a[1].lastActiveAt - b[1].lastActiveAt))
+    for (const [k, v] of entries) {
+      if (_pdfViewCache.size <= PDF_VIEW_CACHE_MAX) break
+      if (k === keepKey) continue
+      try { v.iframe.src = 'about:blank' } catch {}
+      try { v.wrap.remove() } catch {}
+      _pdfViewCache.delete(k)
+    }
+  } catch {}
+}
+
+// 初始化预览宿主容器（Markdown / PDF 分离），避免互相覆盖导致 PDF 反复重载
+try { ensurePreviewHosts(); setPreviewKind('md') } catch {}
 // 窗口控制按钮（紧凑标题栏模式使用）
 try {
   const minBtn = document.getElementById('window-minimize') as HTMLButtonElement | null
@@ -1557,6 +1648,9 @@ function injectPreviewMeta(container: HTMLDivElement, meta: any | null) {
 
 // 轻渲染：仅生成安全的 HTML，不执行 Mermaid/代码高亮等重块
 async function renderPreviewLight() {
+  try { if ((currentFilePath || '').toLowerCase().endsWith('.pdf')) return } catch {}
+  try { setPreviewKind('md') } catch {}
+  const { mdHost } = ensurePreviewHosts()
   await ensureRenderer()
   let raw = editor.value
   try {
@@ -1700,10 +1794,10 @@ async function renderPreviewLight() {
     } catch (mainErr) {
       console.error('[KaTeX 导出] 主流程崩溃:', mainErr)
     }
-    try { preview.innerHTML = `<div class="preview-body">${tempDiv.innerHTML}</div>` } catch {}
+    try { mdHost.innerHTML = `<div class="preview-body">${tempDiv.innerHTML}</div>` } catch {}
   } catch {
     // 回退：如果 KaTeX 渲染失败，使用原始 HTML
-    try { preview.innerHTML = `<div class="preview-body">${safe}</div>` } catch {}
+    try { mdHost.innerHTML = `<div class="preview-body">${safe}</div>` } catch {}
   }
   // 轻渲染后也生成锚点，提升滚动同步体验
   // 旧所见模式移除：不再重建锚点表
@@ -2716,6 +2810,9 @@ async function renderPreview() {
   console.log('=== 开始渲染预览 ===')
   // 首次预览开始打点
   try { if (!(renderPreview as any)._firstLogged) { (renderPreview as any)._firstLogged = true; logInfo('打点:首次预览开始') } } catch {}
+  try { if ((currentFilePath || '').toLowerCase().endsWith('.pdf')) return } catch {}
+  try { setPreviewKind('md') } catch {}
+  const { mdHost } = ensurePreviewHosts()
   await ensureRenderer()
   let raw = editor.value
   // 所见模式：用一个“.”标记插入点，优先不破坏 Markdown 结构
@@ -3007,15 +3104,15 @@ async function renderPreview() {
     // 一次性替换预览 DOM
     try {
       try { injectPreviewMeta(buf, previewMeta) } catch {}
-      preview.innerHTML = ''
-      preview.appendChild(buf)
+      mdHost.innerHTML = ''
+      mdHost.appendChild(buf)
       // 预览脚注增强：跳转 + 悬浮
       try {
         const footnoteMod = await import('./plugins/markdownItFootnote')
         const enhance = (footnoteMod as any).enhanceFootnotes as ((root: HTMLElement) => void) | undefined
-        if (typeof enhance === 'function') enhance(preview)
+        if (typeof enhance === 'function') enhance(mdHost)
       } catch {}
-      try { decorateCodeBlocks(preview) } catch {}
+      try { decorateCodeBlocks(mdHost) } catch {}
       // 便签模式：为待办项添加推送和提醒按钮，并自动调整窗口高度
       try { if (stickyNoteMode) { addStickyTodoButtons(); scheduleAdjustStickyHeight() } } catch {}
       // 预览更新后自动刷新大纲（节流由内部逻辑与渲染频率保障）
@@ -3027,7 +3124,7 @@ async function renderPreview() {
   // 所见模式下，确保“模拟光标 _”在预览区可见
   // 旧所见模式移除：不再调整模拟光标
   // 外链安全属性
-  preview.querySelectorAll('a[href]').forEach((a) => {
+  mdHost.querySelectorAll('a[href]').forEach((a) => {
     const el = a as HTMLAnchorElement
     const href = el.getAttribute('href') || ''
     // 脚注/反向脚注链接：保持为页内跳转，不改 target
@@ -3038,7 +3135,7 @@ async function renderPreview() {
   // 处理本地图片路径为 asset: URL，确保在 Tauri 中可显示
   try {
     const base = currentFilePath ? currentFilePath.replace(/[\\/][^\\/]*$/, '') : null
-    preview.querySelectorAll('img[src]').forEach((img) => {
+    mdHost.querySelectorAll('img[src]').forEach((img) => {
       // WYSIWYG: nudge caret after image render when editor has no scroll space
       try {
         const el = img as HTMLImageElement
@@ -3824,6 +3921,106 @@ async function openFile(preset?: string) {
   }
 }
 
+async function showPdfPreview(filePathRaw: string, opts?: { updateRecent?: boolean; forceReload?: boolean }) {
+  const filePath = normalizePath(filePathRaw || '')
+  if (!filePath) return
+
+  // 先退出所见模式：所见模式会隐藏 preview，PDF 必须占用 preview 区域
+  try { if (wysiwyg) await setWysiwygEnabled(false) } catch {}
+
+  // 基础状态：路径/标题/模式
+  currentFilePath = filePath as any
+  dirty = false
+  refreshTitle()
+  try { editor.value = '' } catch {}
+
+  mode = 'preview'
+  try { preview.classList.remove('hidden') } catch {}
+  try { syncToggleButton() } catch {}
+  try { notifyModeChange() } catch {}
+
+  // PDF 视图：复用 iframe，避免切回标签反复重载
+  setPreviewKind('pdf')
+  const { pdfHost } = ensurePreviewHosts()
+
+  const key = filePath.replace(/\\/g, '/')
+  const now = Date.now()
+  let entry = _pdfViewCache.get(key) || null
+  if (!entry || opts?.forceReload) {
+    // 统一从 convertFileSrc 生成 URL，避免字符串拼接造成注入/转义问题
+    const srcUrl: string = typeof convertFileSrc === 'function' ? convertFileSrc(filePath) : (filePath as any)
+    _currentPdfSrcUrl = srcUrl
+
+    // 若已有条目但要求强制重载，复用 DOM，避免反复创建 iframe
+    if (entry && opts?.forceReload) {
+      try { entry.iframe.src = srcUrl } catch {}
+      entry.srcUrl = srcUrl
+      entry.lastActiveAt = now
+      _currentPdfIframe = entry.iframe
+    } else {
+      // 创建新 PDF iframe 容器
+      const wrap = document.createElement('div')
+      wrap.className = 'pdf-preview'
+      wrap.style.width = '100%'
+      wrap.style.height = '100%'
+      const iframe = document.createElement('iframe')
+      iframe.title = 'PDF 预览'
+      iframe.style.width = '100%'
+      iframe.style.height = '100%'
+      iframe.style.border = '0'
+      iframe.setAttribute('allow', 'fullscreen')
+      iframe.src = srcUrl
+      wrap.appendChild(iframe)
+
+      // 隐藏其它 PDF 视图，仅显示当前
+      for (const v of _pdfViewCache.values()) {
+        try { v.wrap.style.display = 'none' } catch {}
+      }
+      pdfHost.appendChild(wrap)
+
+      let mtime = 0
+      try {
+        const st = await stat(filePath as any)
+        const cand = (st as any)?.mtimeMs ?? (st as any)?.mtime ?? (st as any)?.modifiedAt
+        mtime = Number(cand) || 0
+      } catch {}
+
+      entry = { filePath, srcUrl, wrap, iframe, lastActiveAt: now, mtime }
+      _pdfViewCache.set(key, entry)
+      _currentPdfIframe = iframe
+      prunePdfViewCache(key)
+    }
+  } else {
+    entry.lastActiveAt = now
+    _currentPdfSrcUrl = entry.srcUrl
+    _currentPdfIframe = entry.iframe
+  }
+
+  // 确保当前条目可见
+  try {
+    for (const [k, v] of _pdfViewCache.entries()) {
+      v.wrap.style.display = (k === key) ? '' : 'none'
+    }
+  } catch {}
+
+  // 若大纲面板当前可见，切到 PDF 后刷新一次（避免显示上一个文档的大纲）
+  try {
+    const outline = document.getElementById('lib-outline') as HTMLDivElement | null
+    if (outline && !outline.classList.contains('hidden')) {
+      _outlineLastSignature = ''
+      setTimeout(() => { try { renderOutlinePanel() } catch {} }, 0)
+    }
+  } catch {}
+
+  const updateRecent = opts?.updateRecent !== false
+  if (updateRecent) {
+    try { await pushRecent(currentFilePath) } catch {}
+    try { await renderRecentPanel(false) } catch {}
+  }
+
+  logInfo('PDF 预览就绪', { path: filePath, cached: !!(entry && !opts?.forceReload) })
+}
+
 // 全新的文件打开实现（避免历史遗留的路径处理问题）
 async function openFile2(preset?: unknown) {
   try {
@@ -3834,6 +4031,17 @@ async function openFile2(preset?: unknown) {
         preset = undefined
       }
     }
+
+    // 若标签系统已挂钩 flymdOpenFile，则优先走挂钩入口（否则会绕过“新标签打开”等逻辑）
+    try {
+      const anyWin = window as any
+      const hooked = anyWin?.flymdOpenFile
+      const internal = !!anyWin?.__flymdOpenFileInternal
+      if (!internal && typeof hooked === 'function' && hooked !== openFile2) {
+        await hooked(preset)
+        return
+      }
+    } catch {}
 
     if (!preset && dirty) {
       const confirmed = await confirmNative('当前文件尚未保存，是否放弃更改并继续打开？', '打开文件')
@@ -3887,33 +4095,15 @@ async function openFile2(preset?: unknown) {
     try {
       const ext = (selectedPath.split(/\./).pop() || '').toLowerCase()
       if (ext === 'pdf') {
-        currentFilePath = selectedPath as any
-        dirty = false
-        refreshTitle()
-        try { (editor as HTMLTextAreaElement).value = '' } catch {}
-        // 首选 convertFileSrc 以便 WebView 内置 PDF 查看器接管
-        let srcUrl: string = typeof convertFileSrc === 'function' ? convertFileSrc(selectedPath) : (selectedPath as any)
-        _currentPdfSrcUrl = srcUrl
-        preview.innerHTML = `
-          <div class="pdf-preview" style="width:100%;height:100%;">
-            <iframe src="${srcUrl}" title="PDF 预览" style="width:100%;height:100%;border:0;" allow="fullscreen"></iframe>
-          </div>
-        `
-        // 若当前处于所见模式，关闭所见，确保 PDF 预览正常显示
-        try { if (wysiwyg) { await setWysiwygEnabled(false) } } catch {}
-        mode = 'preview'
-        try { preview.classList.remove('hidden') } catch {}
-        try { syncToggleButton() } catch {}
-        try { notifyModeChange() } catch {}
-        await pushRecent(currentFilePath)
-        await renderRecentPanel(false)
-        logInfo('PDF 预览就绪', { path: selectedPath })
+        await showPdfPreview(selectedPath, { updateRecent: true, forceReload: reopeningSameFile })
         return
       }
     } catch {}
 
     // 读取文件内容：优先使用 fs 插件；若因路径权限受限（forbidden path / not allowed）回退到后端命令
     _currentPdfSrcUrl = null
+    _currentPdfIframe = null
+    try { setPreviewKind('md') } catch {}
     let content: string
     try {
       content = await readTextFileAnySafe(selectedPath as any)
@@ -4458,223 +4648,195 @@ function renderOutlinePanel() {
 async function renderPdfOutline(outlineEl: HTMLDivElement) {
   try {
     outlineEl.innerHTML = '<div class="empty">正在读取 PDF 目录…</div>'
-    logDebug('PDF 目录：开始解析', { path: currentFilePath })
+    const filePath = String(currentFilePath || '')
+    if (!filePath) { outlineEl.innerHTML = '<div class="empty">未打开 PDF</div>'; return }
+
+    const cacheKey = filePath.replace(/\\/g, '/')
+    let curMtime = 0
+    try {
+      const st = await stat(filePath as any)
+      const cand = (st as any)?.mtimeMs ?? (st as any)?.mtime ?? (st as any)?.modifiedAt
+      curMtime = Number(cand) || 0
+    } catch {}
+
+    const escHtml = (s: string) => String(s || '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[ch] || ch)
+
+    const renderItems = (items: Array<{ level: number; title: string; page: number }>, fromCache: boolean) => {
+      if (!items || items.length === 0) { outlineEl.innerHTML = '<div class="empty">目录为空</div>'; return }
+
+      // 计算是否有子级（用于折叠/展开，限制到 level<=2）
+      const hasChild = new Map<string, boolean>()
+      for (let i = 0; i < items.length; i++) {
+        const cur = items[i]
+        if (cur.level > 2) continue
+        let child = false
+        for (let j = i + 1; j < items.length; j++) {
+          if (items[j].level > cur.level) { child = true; break }
+          if (items[j].level <= cur.level) break
+        }
+        hasChild.set(String(i), child)
+      }
+
+      const keyCollapse = 'outline-collapsed:' + filePath
+      let collapsed = new Set<string>()
+      try { const raw = localStorage.getItem(keyCollapse); if (raw) collapsed = new Set(JSON.parse(raw)) } catch {}
+      const saveCollapsed = () => { try { localStorage.setItem(keyCollapse, JSON.stringify(Array.from(collapsed))) } catch {} }
+
+      outlineEl.innerHTML = items.map((it, idx) => {
+        const k = String(idx)
+        const canToggle = it.level <= 2 && !!hasChild.get(k)
+        const isCollapsed = collapsed.has(k)
+        const tg = canToggle ? `<span class="ol-tg" data-idx="${idx}">${isCollapsed ? '▸' : '▾'}</span>` : `<span class="ol-tg"></span>`
+        return `<div class="ol-item lvl-${it.level}" data-page="${it.page}" data-idx="${idx}">${tg}${escHtml(it.title)}</div>`
+      }).join('')
+
+      // 应用折叠：把“已折叠节点”的子级隐藏
+      const applyCollapse = () => {
+        try {
+          const nodes = Array.from(outlineEl.querySelectorAll('.ol-item')) as HTMLDivElement[]
+          nodes.forEach(n => n.classList.remove('hidden'))
+          nodes.forEach((n) => {
+            const idx = n.dataset.idx
+            if (idx == null || idx === '' || !collapsed.has(idx)) return
+            const m1 = n.className.match(/lvl-(\d)/)
+            const level = parseInt((m1?.[1] || '1'), 10)
+            const start = parseInt(idx, 10)
+            if (!Number.isFinite(start) || start < 0) return
+            for (let i = start + 1; i < nodes.length; i++) {
+              const m = nodes[i]
+              const m2 = m.className.match(/lvl-(\d)/)
+              const lv = parseInt((m2?.[1] || '6'), 10)
+              if (lv <= level) break
+              m.classList.add('hidden')
+            }
+          })
+        } catch {}
+      }
+
+      const existingToggleHandler = (outlineEl as any)._pdfToggleHandler
+      if (existingToggleHandler) outlineEl.removeEventListener('click', existingToggleHandler)
+      const toggleHandler = (ev: Event) => {
+        const tgEl = (ev.target as HTMLElement)
+        if (!tgEl.classList.contains('ol-tg')) return
+        ev.stopPropagation()
+        const el = tgEl.closest('.ol-item') as HTMLDivElement | null
+        if (!el) return
+        const idx = el.dataset.idx
+        const m1 = el.className.match(/lvl-(\d)/)
+        const level = parseInt((m1?.[1] || '1'), 10)
+        if (idx == null || idx === '' || level > 2) return
+        if (collapsed.has(idx)) { collapsed.delete(idx); tgEl.textContent = '▾' } else { collapsed.add(idx); tgEl.textContent = '▸' }
+        saveCollapsed(); applyCollapse()
+      }
+      ;(outlineEl as any)._pdfToggleHandler = toggleHandler
+      outlineEl.addEventListener('click', toggleHandler)
+
+      bindPdfOutlineClicks(outlineEl)
+      applyCollapse()
+
+      logDebug('PDF 目录：渲染完成', { fromCache, count: items.length })
+    }
+
+    // 先走缓存：只做一次 stat，不读 PDF 字节，不加载 PDF.js
+    try {
+      const cached = cacheKey ? _pdfOutlineCache.get(cacheKey) : null
+      if (cached && cached.items && cached.items.length > 0 && cached.mtime === curMtime) {
+        renderItems(cached.items, true)
+        return
+      }
+    } catch {}
+
+    logDebug('PDF 目录：开始解析（未命中缓存）', { path: filePath })
+
     // 动态加载 pdfjs-dist（若未安装或打包，则静默失败）
     let pdfjsMod: any = null
-    try { pdfjsMod = await import('pdfjs-dist'); logDebug('PDF 目录：模块已加载', Object.keys(pdfjsMod||{})) } catch (e) {
+    try {
+      pdfjsMod = await import('pdfjs-dist')
+      logDebug('PDF 目录：模块已加载', Object.keys(pdfjsMod || {}))
+    } catch (e) {
       outlineEl.innerHTML = '<div class="empty">未安装 pdfjs-dist，无法读取目录</div>'
       logWarn('PDF 目录：加载 pdfjs-dist 失败', e)
       return
     }
-    const pdfjs: any = (pdfjsMod && (pdfjsMod as any).getDocument) ? pdfjsMod : ((pdfjsMod && (pdfjsMod as any).default) ? (pdfjsMod as any).default : pdfjsMod)
-    // 优先使用 bundler worker（模块化），若失败则回退为禁用 worker
+    const pdfjs: any = (pdfjsMod && (pdfjsMod as any).getDocument)
+      ? pdfjsMod
+      : ((pdfjsMod && (pdfjsMod as any).default) ? (pdfjsMod as any).default : pdfjsMod)
+
+    // 优先使用 bundler worker（模块化），失败则回退到禁用 worker（主线程解析会更慢）
+    let disableWorker = true
     try {
       const workerMod: any = await import('pdfjs-dist/build/pdf.worker.min.mjs?worker')
       const WorkerCtor: any = workerMod?.default || workerMod
       const worker: Worker = new WorkerCtor()
       if ((pdfjs as any).GlobalWorkerOptions) {
         ;(pdfjs as any).GlobalWorkerOptions.workerPort = worker
+        disableWorker = false
         logDebug('PDF 目录：workerPort 已设置')
       }
     } catch (e) {
-      logWarn('PDF 目录：workerPort 设置失败（将尝试禁用 worker）', e)
+      logWarn('PDF 目录：workerPort 设置失败（将禁用 worker）', e)
       try { if ((pdfjs as any).GlobalWorkerOptions) (pdfjs as any).GlobalWorkerOptions.workerSrc = null } catch {}
     }
+
     // 读取本地 PDF 二进制
     let bytes: Uint8Array
-    try { bytes = await readFile(currentFilePath as any) as any; logDebug('PDF 目录：读取字节成功', { bytes: bytes?.length }) } catch (e) {
+    try {
+      bytes = await readFile(filePath as any) as any
+      logDebug('PDF 目录：读取字节成功', { bytes: bytes?.length })
+    } catch (e) {
       outlineEl.innerHTML = '<div class="empty">无法读取 PDF 文件</div>'
       logWarn('PDF 目录：读取文件失败', e)
       return
     }
-    // 缓存命中直接渲染（mtime 自动失效）
+
+    // 加载文档并提取 outline（优先走 worker）
+    const getDocOpts: any = { data: bytes }
+    if (disableWorker) getDocOpts.disableWorker = true
+    const task = (pdfjs as any).getDocument ? (pdfjs as any).getDocument(getDocOpts) : null
+    if (!task) { outlineEl.innerHTML = '<div class="empty">PDF.js 不可用</div>'; logWarn('PDF 目录：getDocument 不可用'); return }
+
+    const doc = (task as any).promise ? await (task as any).promise : await task
     try {
-      const key = String(currentFilePath || '')
-      if (false && key && _pdfOutlineCache.has(key)) {
-        // 获取当前 mtime
-        let curMtime = 0
-        try { const st = await stat(currentFilePath as any); const cand = (st as any)?.mtimeMs ?? (st as any)?.mtime ?? (st as any)?.modifiedAt; curMtime = Number(cand) || 0 } catch {}
-        const cached = _pdfOutlineCache.get(key)!
-        if (cached && cached.items && cached.items.length > 0 && cached.mtime === curMtime) {
-          const items = cached.items
-          // 构建大纲（带折叠）并绑定点击
-          // 计算是否有子级（用于折叠/展开，限制到 level<=2）
-          const hasChild = new Map<string, boolean>()
-          for (let i = 0; i < items.length; i++) {
-            const cur = items[i]
-            if (cur.level > 2) continue
-            let child = false
-            for (let j = i + 1; j < items.length; j++) { if (items[j].level > cur.level) { child = true; break } if (items[j].level <= cur.level) break }
-            hasChild.set(`${i}`, child)
+      logDebug('PDF 目录：文档已打开', { numPages: doc?.numPages, disableWorker })
+      const outline = await doc.getOutline()
+      logDebug('PDF 目录：outline 获取成功', { count: outline?.length })
+      if (!outline || outline.length === 0) { outlineEl.innerHTML = '<div class="empty">此 PDF 未提供目录（书签）</div>'; return }
+
+      // 展平目录，解析页码
+      const items: { level: number; title: string; page: number }[] = []
+      async function walk(nodes: any[], level: number) {
+        for (const n of nodes || []) {
+          const title = String(n?.title || '').trim() || '无标题'
+          let page = 1
+          try {
+            const destName = n?.dest
+            let dest: any = destName
+            if (typeof destName === 'string') dest = await doc.getDestination(destName)
+            const ref = Array.isArray(dest) ? dest[0] : null
+            if (ref) {
+              const idx = await doc.getPageIndex(ref)
+              page = (idx >>> 0) + 1
+            } else {
+              logDebug('PDF 目录：无 ref，使用默认页', { title })
+            }
+          } catch (e) {
+            logWarn('PDF 目录：解析书签页码失败', { title, err: String(e) })
           }
-          const keyCollapse = 'outline-collapsed:' + key
-          let collapsed = new Set<string>()
-          try { const raw = localStorage.getItem(keyCollapse); if (raw) collapsed = new Set(JSON.parse(raw)) } catch {}
-          const saveCollapsed = () => { try { localStorage.setItem(keyCollapse, JSON.stringify(Array.from(collapsed))) } catch {} }
-          outlineEl.innerHTML = items.map((it, idx) => {
-            const tg = (it.level <= 2 && hasChild.get(String(idx))) ? `<span class=\\"ol-tg\\" data-idx=\\"${idx}\\">▾</span>` : `<span class=\\"ol-tg\\"></span>`
-            return `<div class=\\"ol-item lvl-${it.level}\\" data-page=\\"${it.page}\\" data-idx=\\"${idx}\\">${tg}${it.title}</div>`
-          }).join('')
-          // 应用折叠
-          const applyCollapse = () => {
-            try {
-              const nodes = Array.from(outlineEl.querySelectorAll('.ol-item')) as HTMLDivElement[]
-              nodes.forEach(n => n.classList.remove('hidden'))
-              nodes.forEach((n) => {
-                const idx = n.dataset.idx || ''
-                if (!idx || !collapsed.has(idx)) return
-                const m1 = n.className.match(/lvl-(\d)/); const level = parseInt((m1?.[1]||'1'),10)
-                for (let i = (parseInt(idx||'-1',10) + 1); i < nodes.length; i++) {
-                  const m = nodes[i]
-                  const m2 = m.className.match(/lvl-(\d)/); const lv = parseInt((m2?.[1]||'6'),10)
-                  if (lv <= level) break
-                  m.classList.add('hidden')
-                }
-              })
-            } catch {}
-          }
-          const existingToggleHandler = (outlineEl as any)._pdfToggleHandler
-          if (existingToggleHandler) {
-            outlineEl.removeEventListener('click', existingToggleHandler)
-          }
-          const toggleHandler = (ev: Event) => {
-            const tgEl = (ev.target as HTMLElement)
-            if (!tgEl.classList.contains('ol-tg')) return
-            ev.stopPropagation()
-            const el = tgEl.closest('.ol-item') as HTMLDivElement | null
-            if (!el) return
-            const idx = el.dataset.idx || ''
-            const m1 = el.className.match(/lvl-(\d)/); const level = parseInt((m1?.[1]||'1'),10)
-            if (!idx || level > 2) return
-            if (collapsed.has(idx)) { collapsed.delete(idx); tgEl.textContent = '▾' } else { collapsed.add(idx); tgEl.textContent = '▸' }
-            saveCollapsed(); applyCollapse()
-          }
-          ;(outlineEl as any)._pdfToggleHandler = toggleHandler
-          outlineEl.addEventListener('click', toggleHandler)
-          bindPdfOutlineClicks(outlineEl)
-          applyCollapse()
-          logDebug('PDF 目录：使用缓存', { count: items.length })
-          return
+          items.push({ level, title, page })
+          if (Array.isArray(n?.items) && n.items.length > 0) await walk(n.items, Math.min(6, level + 1))
         }
       }
-    } catch {}
+      await walk(outline, 1)
+      if (items.length === 0) { outlineEl.innerHTML = '<div class="empty">目录为空</div>'; logWarn('PDF 目录：目录为空'); return }
 
-    // 加载文档并提取 outline
-    const task = (pdfjs as any).getDocument ? (pdfjs as any).getDocument({ data: bytes, disableWorker: true }) : null
-    if (!task) { outlineEl.innerHTML = '<div class="empty">PDF.js 不可用</div>'; logWarn('PDF 目录：getDocument 不可用'); return }
-    const doc = (task as any).promise ? await (task as any).promise : await task
-    logDebug('PDF 目录：文档已打开', { numPages: doc?.numPages })
-    const outline = await doc.getOutline(); logDebug('PDF 目录：outline 获取成功', { count: outline?.length })
-    if (!outline || outline.length === 0) { outlineEl.innerHTML = '<div class="empty">此 PDF 未提供目录（书签）</div>'; return }
-    // 展平目录，解析页码
-    const items: { level: number; title: string; page: number }[] = []
-    async function walk(nodes: any[], level: number) {
-      for (const n of nodes || []) {
-        const title = String(n?.title || '').trim() || '无标题'
-        let page = 1
-        try {
-          const destName = n?.dest
-          let dest: any = destName
-          if (typeof destName === 'string') dest = await doc.getDestination(destName)
-          const ref = Array.isArray(dest) ? dest[0] : null
-          if (ref) { const idx = await doc.getPageIndex(ref); page = (idx >>> 0) + 1 } else { logDebug('PDF 目录：无 ref，使用默认页', { title }) }
-        } catch (e) { logWarn('PDF 目录：解析书签页码失败', { title, err: String(e) }) }
-        items.push({ level, title, page })
-        if (Array.isArray(n?.items) && n.items.length > 0) { await walk(n.items, Math.min(6, level + 1)) }
-      }
-    }
-    await walk(outline, 1)
-    if (items.length === 0) { outlineEl.innerHTML = '<div class="empty">目录为空</div>'; logWarn('PDF 目录：目录为空'); return }
-    // PDF 目录缓存复用
-    // 写入缓存（含 mtime）
-    try {
-      const k = String(currentFilePath || '')
-      if (k) {
-        let curMtime = 0
-        try { const st = await stat(currentFilePath as any); const cand = (st as any)?.mtimeMs ?? (st as any)?.mtime ?? (st as any)?.modifiedAt; curMtime = Number(cand) || 0 } catch {}
-        _pdfOutlineCache.set(k, { mtime: curMtime, items: items.slice() })
-      }
-    } catch {}
+      // 写入缓存（mtime 自动失效）
+      try { if (cacheKey) _pdfOutlineCache.set(cacheKey, { mtime: curMtime, items: items.slice() }) } catch {}
 
-    // 构建大纲（带折叠/展开与记忆）
-    const hasChild = new Map<string, boolean>()
-    for (let i = 0; i < items.length; i++) {
-      const cur = items[i]
-      if (cur.level > 2) continue
-      let child = false
-      for (let j = i + 1; j < items.length; j++) { if (items[j].level > cur.level) { child = true; break } if (items[j].level <= cur.level) break }
-      hasChild.set(`${i}`, child)
+      renderItems(items, false)
+    } finally {
+      try { await doc?.destroy?.() } catch {}
+      try { await task?.destroy?.() } catch {}
     }
-    const keyCollapse = 'outline-collapsed:' + (currentFilePath || '')
-    let collapsed = new Set<string>()
-    try { const raw = localStorage.getItem(keyCollapse); if (raw) collapsed = new Set(JSON.parse(raw)) } catch {}
-    const saveCollapsed = () => { try { localStorage.setItem(keyCollapse, JSON.stringify(Array.from(collapsed))) } catch {} }
-    outlineEl.innerHTML = items.map((it, idx) => {
-      const tg = (it.level <= 2 && hasChild.get(String(idx))) ? `<span class=\"ol-tg\" data-idx=\"${idx}\">▾</span>` : `<span class=\"ol-tg\"></span>`
-      return `<div class=\"ol-item lvl-${it.level}\" data-page=\"${it.page}\" data-idx=\"${idx}\">${tg}${it.title}</div>`
-    }).join('')
-    function navigatePdfPage(page) {
-      try {
-        const iframe = document.querySelector('.pdf-preview iframe')
-        if (!iframe) { logWarn('PDF 目录：未找到 iframe'); return }
-        const cur = iframe.src || _currentPdfSrcUrl || ''
-        if (!cur) { logWarn('PDF 目录：无有效 iframe.src/base'); return }
-        const baseNoHash = cur.split('#')[0]
-        // 1) 尝试仅修改 hash
-        try { if (iframe.contentWindow) { iframe.contentWindow.location.hash = '#page=' + page; logDebug('PDF 目录：hash 导航', { page }) } } catch {}
-        // 2) 直接设置 src
-        const next = baseNoHash + '#page=' + page
-        try { iframe.src = next; logDebug('PDF 目录：src 导航', { page, next }) } catch {}
-        // 3) 硬刷新防缓存
-        setTimeout(() => {
-          try {
-            const again = document.querySelector('.pdf-preview iframe')
-            if (!again) return
-            const hard = baseNoHash + '?_=' + Date.now() + '#page=' + page
-            again.src = hard
-            logDebug('PDF 目录：硬刷新导航', { page, hard })
-          } catch {}
-        }, 80)
-      } catch (e) { logWarn('PDF 目录：导航异常', e) }
-    }
-    // 应用折叠
-    const applyCollapse = () => {
-      try {
-        const nodes = Array.from(outlineEl.querySelectorAll('.ol-item')) as HTMLDivElement[]
-        nodes.forEach(n => n.classList.remove('hidden'))
-        nodes.forEach((n) => {
-          const idx = n.dataset.idx || ''
-          if (!idx || !collapsed.has(idx)) return
-          const m1 = n.className.match(/lvl-(\d)/); const level = parseInt((m1?.[1]||'1'),10)
-          for (let i = (parseInt(idx||'-1',10) + 1); i < nodes.length; i++) {
-            const m = nodes[i]
-            const m2 = m.className.match(/lvl-(\d)/); const lv = parseInt((m2?.[1]||'6'),10)
-            if (lv <= level) break
-            m.classList.add('hidden')
-          }
-        })
-      } catch {}
-    }
-    const existingToggleHandler = (outlineEl as any)._pdfToggleHandler
-    if (existingToggleHandler) {
-      outlineEl.removeEventListener('click', existingToggleHandler)
-    }
-    const toggleHandler = (ev: Event) => {
-      const tgEl = (ev.target as HTMLElement)
-      if (!tgEl.classList.contains('ol-tg')) return
-      ev.stopPropagation()
-      const el = tgEl.closest('.ol-item') as HTMLDivElement | null
-      if (!el) return
-      const idx = el.dataset.idx || ''
-      const m1 = el.className.match(/lvl-(\d)/); const level = parseInt((m1?.[1]||'1'),10)
-      if (!idx || level > 2) return
-      if (collapsed.has(idx)) { collapsed.delete(idx); tgEl.textContent = '▾' } else { collapsed.add(idx); tgEl.textContent = '▸' }
-      saveCollapsed(); applyCollapse()
-    }
-    ;(outlineEl as any)._pdfToggleHandler = toggleHandler
-    outlineEl.addEventListener('click', toggleHandler)
-    bindPdfOutlineClicks(outlineEl)
-    applyCollapse()
   } catch (e) {
     try { outlineEl.innerHTML = '<div class="empty">读取 PDF 目录失败</div>' } catch {}
     logWarn('PDF 目录：异常', e)
@@ -4694,23 +4856,23 @@ function bindPdfOutlineClicks(outlineEl: HTMLDivElement) {
       if (!target) return
       const p = Number(target.dataset.page || '1') || 1
       try {
-        const iframe = document.querySelector('.pdf-preview iframe') as HTMLIFrameElement | null
+        const iframe = _currentPdfIframe
         if (!iframe) { logWarn('PDF 目录：未找到 iframe'); return }
         const cur = iframe.src || _currentPdfSrcUrl || ''
         if (!cur) { logWarn('PDF 目录：无有效 iframe.src/base'); return }
         const baseNoHash = cur.split('#')[0]
-        try { if (iframe.contentWindow) { iframe.contentWindow.location.hash = '#page=' + p; logDebug('PDF 目录：hash 导航', { page: p }) } } catch {}
-        const next = baseNoHash + '#page=' + p
-        try { iframe.src = next; logDebug('PDF 目录：src 导航', { page: p, next }) } catch {}
-        setTimeout(() => {
-          try {
-            const again = document.querySelector('.pdf-preview iframe') as HTMLIFrameElement | null
-            if (!again) return
-            const hard = baseNoHash + '?_=' + Date.now() + '#page=' + p
-            again.src = hard
-            logDebug('PDF 目录：硬刷新导航', { page: p, hard })
-          } catch {}
-        }, 80)
+        let didHash = false
+        try {
+          if (iframe.contentWindow) {
+            iframe.contentWindow.location.hash = '#page=' + p
+            didHash = true
+            logDebug('PDF 目录：hash 导航', { page: p })
+          }
+        } catch {}
+        if (!didHash) {
+          const next = baseNoHash + '#page=' + p
+          try { if (iframe.src !== next) iframe.src = next; logDebug('PDF 目录：src 导航', { page: p, next }) } catch {}
+        }
       } catch (e) { logWarn('PDF 目录：导航异常', e) }
     }
     ;(outlineEl as any)._pdfOutlineClickHandler = handler
@@ -4857,6 +5019,7 @@ try {
     // 模式切换快捷逻辑（等价于 Ctrl+E）
     ;(window as any).flymdToggleModeShortcut = () => handleToggleModeShortcut()
     // 文件操作
+    ;(window as any).flymdShowPdfPreview = (path: string, opts?: any) => showPdfPreview(path, opts)
     ;(window as any).flymdOpenFile = openFile2
     ;(window as any).flymdNewFile = newFile
     ;(window as any).flymdSaveFile = saveFile
@@ -7752,7 +7915,13 @@ function bindEvents() {
       if (currentFilePath) {
         currentFilePath = null as any
         try { (editor as HTMLTextAreaElement).value = '' } catch {}
-        try { preview.innerHTML = '' } catch {}
+        try {
+          _currentPdfSrcUrl = null
+          _currentPdfIframe = null
+          const { mdHost } = ensurePreviewHosts()
+          mdHost.innerHTML = ''
+          setPreviewKind('md')
+        } catch {}
         refreshTitle()
       }
     },
