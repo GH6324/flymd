@@ -13,6 +13,7 @@ import { TabManager } from './TabManager'
 import { TabDocument, getTabDisplayName } from './types'
 import { moveTabToWindowLabel } from './tabTransferSender'
 import { createEditorWebviewWindow, findWebviewWindowLabelAtScreenPoint, getCurrentWebviewWindowLabel } from '../windows/editorWindows'
+import { createDragGhostWindow, type DragGhostWindow } from '../windows/dragGhostWindow'
 
 export interface TabBarOptions {
   container: HTMLElement
@@ -34,6 +35,12 @@ export class TabBar {
   private contextMenuEl: HTMLDivElement | null = null
   private contextMenuTargetTabId: string | null = null
   private contextMenuVisible = false
+
+  // 拖拽跨出窗口时的“幽灵窗口”（用于在窗口外显示拖拽提示）
+  private dragGhostWin: DragGhostWindow | null = null
+  private dragGhostLastMoveAt = 0
+  private dragGhostCreating = false
+  private dragGhostGen = 0
   private handleContextMenuOutside = (event: Event) => {
     if (!this.contextMenuVisible) return
     const target = event.target as Node | null
@@ -228,6 +235,8 @@ export class TabBar {
     }
 
     const cleanupDrag = () => {
+      // 先关掉“窗口外幽灵”，避免残留挡手
+      void this.destroyDragGhostWindow()
       tabEl.removeEventListener('pointermove', handlePointerMove)
       tabEl.removeEventListener('pointerup', handlePointerUp, true)
       tabEl.removeEventListener('pointercancel', handlePointerCancel, true)
@@ -284,6 +293,10 @@ export class TabBar {
         dragState.ghostEl.style.left = (e.clientX - dragState.offsetX) + 'px'
         dragState.ghostEl.style.top = (e.clientY - dragState.offsetY) + 'px'
       }
+
+      // 鼠标跨出窗口：DOM 幽灵会跑到视口外看不见，用一个透明置顶小窗口跟随鼠标作为提示
+      const outside = isOutsideWindow(e, 8)
+      void this.updateDragGhostWindow(outside, tab, e.screenX, e.screenY)
 
       // 指针捕获后，event.target 永远是 tabEl；必须用 elementFromPoint 找到“鼠标下的元素”。
       const under = elementFromClientPoint(e.clientX, e.clientY)
@@ -581,6 +594,8 @@ export class TabBar {
    * - 兼容旧行为：按住 Alt 拖出 → 仍用系统关联打开“新进程实例”（老功能不被砍掉）
    */
   private async detachTabByDropPoint(tabId: string, e: PointerEvent): Promise<void> {
+    // 拖放落地前先关掉“窗口外幽灵”，避免目标窗口被遮挡
+    try { await this.destroyDragGhostWindow() } catch {}
     // 老行为保留：给用户留后门，避免“习惯被硬改”
     if (e.altKey) {
       await this.detachTabToNewInstance(tabId)
@@ -620,6 +635,60 @@ export class TabBar {
     if (!r.ok && r.message) {
       try { alert('拖拽失败：' + r.message) } catch {}
     }
+  }
+
+  private async destroyDragGhostWindow(): Promise<void> {
+    const w = this.dragGhostWin
+    this.dragGhostWin = null
+    this.dragGhostLastMoveAt = 0
+    this.dragGhostCreating = false
+    this.dragGhostGen++
+    if (!w) return
+    try { await w.destroy() } catch {}
+  }
+
+  private async updateDragGhostWindow(outside: boolean, tab: TabDocument, screenX: number, screenY: number): Promise<void> {
+    // 只在 Tauri 桌面端生效，失败静默降级
+    if (!outside) {
+      if (this.dragGhostWin) {
+        await this.destroyDragGhostWindow()
+      }
+      return
+    }
+
+    // 节流：窗口移动是 IPC，别每个 pointermove 都打
+    const now = Date.now()
+    if (now - this.dragGhostLastMoveAt < 28 && this.dragGhostWin) return
+    this.dragGhostLastMoveAt = now
+
+    if (!this.dragGhostWin) {
+      if (this.dragGhostCreating) return
+      this.dragGhostCreating = true
+      const gen = this.dragGhostGen
+      let created: DragGhostWindow | null = null
+      try {
+        const name = getTabDisplayName(tab)
+        const dirtyMark = tab.dirty ? '● ' : ''
+        created = await createDragGhostWindow(dirtyMark + name)
+      } finally {
+        this.dragGhostCreating = false
+      }
+
+      if (!created) return
+      // 创建过程中如果已经被销毁/状态变化，立刻关掉，避免窗口泄漏
+      if (this.dragGhostGen !== gen || !outside || this.dragGhostWin) {
+        try { await created.destroy() } catch {}
+        return
+      }
+      this.dragGhostWin = created
+    }
+
+    if (!this.dragGhostWin) return
+
+    // 让幽灵稍微避开鼠标指针，别正好盖在指针下
+    const x = (Number.isFinite(screenX) ? screenX : 0) + 14
+    const y = (Number.isFinite(screenY) ? screenY : 0) + 18
+    void this.dragGhostWin.setPosition(x, y)
   }
 
   /**

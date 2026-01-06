@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>drag-ghost</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+      }
+      .wrap {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+      .ghost {
+        max-width: 220px;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        background: rgba(255, 255, 255, 0.88);
+        color: #111;
+        font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+      .icon {
+        width: 14px;
+        height: 14px;
+        flex: 0 0 auto;
+        opacity: 0.9;
+      }
+      .text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      @media (prefers-color-scheme: dark) {
+        .ghost {
+          border-color: rgba(255, 255, 255, 0.14);
+          background: rgba(30, 30, 30, 0.88);
+          color: rgba(255, 255, 255, 0.92);
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="ghost">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/>
+        </svg>
+        <div class="text" id="text">拖拽</div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        try {
+          const sp = new URLSearchParams(location.search);
+          const t = sp.get('text') || '';
+          const el = document.getElementById('text');
+          if (el) el.textContent = t;
+        } catch {}
+      })();
+    </script>
+  </body>
+</html>
+
