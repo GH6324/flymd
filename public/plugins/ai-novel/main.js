@@ -5175,33 +5175,78 @@ async function openWriteWithChoiceDialog(ctx) {
     const status = safeText(o.status).trim()
     const plan = safeText(o.plan).trim()
     const appear = o.appear == null ? true : !!o.appear
-    return { name, status, plan, appear }
+    // hidden/dead/pinned 仅影响“列表显示与约束压缩”，不改变人物状态文件本身
+    const hidden = !!o.hidden
+    const dead = !!o.dead
+    const pinned = !!o.pinned
+    return { name, status, plan, appear, hidden, dead, pinned }
   }
 
   function buildCastConstraintsText() {
     const arr0 = Array.isArray(_castState.items) ? _castState.items : []
     const seen = new Set()
-    const rows = []
     const must = []
+    const dead = []
+    const hidden = []
+    const details = []
+
+    // 把“80 人逐行塞进 system”这种垃圾输入扔掉：只输出必要信息。
+    function joinNamesCap(list, capChars) {
+      const arr = Array.isArray(list) ? list.map((x) => safeText(x).trim()).filter(Boolean) : []
+      if (!arr.length) return ''
+      const cap = Math.max(120, (capChars | 0) || 900)
+      let used = 0
+      const out = []
+      for (let i = 0; i < arr.length; i++) {
+        const nm = arr[i]
+        const add = (out.length ? 1 : 0) + nm.length
+        if (out.length && used + add > cap) { out.push('…'); break }
+        out.push(nm)
+        used += add
+      }
+      return out.join('、')
+    }
+
     for (let i = 0; i < arr0.length; i++) {
       const it = normCastItem(arr0[i])
       if (!it.name) continue
       const key = it.name
       if (seen.has(key)) continue
       seen.add(key)
+
+      if (it.dead) dead.push(it.name)
+      else if (it.hidden) hidden.push(it.name)
+
+      // 必出人物：只统计“活着且不隐藏”的，避免让系统强行补齐一堆本就不该出场的人
+      if (it.appear && !it.dead && !it.hidden) must.push(it.name)
+
+      // 细节仅对“用户真正关心”的人物输出（必出/写了走向），否则就是噪声
+      const wantDetail = (!!it.appear && !it.dead && !it.hidden) || !!it.plan
+      if (!wantDetail) continue
       const parts = []
       if (it.status) parts.push(t('上一章：', 'Prev: ') + it.status)
-      parts.push(t('下一章：', 'Next: ') + (it.appear ? t('出场', 'appear') : t('不出场', 'not appear')))
+      if (it.dead) parts.push(t('状态：死亡', 'State: dead'))
+      else if (it.hidden) parts.push(t('状态：隐藏/失踪', 'State: hidden/missing'))
+      parts.push(t('下一章：', 'Next: ') + (it.appear ? t('出场', 'appear') : t('不强制出场', 'not required')))
       if (it.plan) parts.push(t('走向：', 'Arc: ') + it.plan)
-      rows.push('- ' + it.name + (parts.length ? ('：' + parts.join('；')) : ''))
-      if (it.appear) must.push(it.name)
+      details.push('- ' + it.name + (parts.length ? ('：' + parts.join('；')) : ''))
     }
-    if (!rows.length) return ''
-    const mustLine = must.length ? (t('本章必须出场：', 'Must appear: ') + must.join('、')) : ''
+
+    const mustLine = must.length ? (t('本章必须出场：', 'Must appear: ') + joinNamesCap(must, 900)) : ''
+    const deadLine = dead.length ? (t('已死亡（禁止复活）：', 'Dead (no resurrection): ') + joinNamesCap(dead, 700)) : ''
+    const hiddenLine = hidden.length ? (t('隐藏/失踪（本章默认不强制出场）：', 'Hidden/missing (not required): ') + joinNamesCap(hidden, 700)) : ''
+
+    if (!mustLine && !deadLine && !hiddenLine && !details.length) return ''
+
     return [
       t('【人物走向（用户指定）】', '[Character steering (user)]'),
-      ...rows,
       mustLine,
+      deadLine,
+      hiddenLine,
+      details.length ? t('细节（仅列必出/有走向者）：', 'Details (must-appear / with arc only):') : '',
+      ...details.slice(0, 24),
+      (details.length > 24 ? t('（其余略）', '(more omitted)') : ''),
+      t('说明：未在以上清单中出现的人物，默认“不强制出场/不强制缺席”；不要为了凑名单硬塞戏。', 'Note: Characters not listed are neither required to appear nor required to be absent; do not bloat the prose just to mention names.'),
       t('硬性要求：勾选“出场”的人物，必须在正文叙事中点名出现（对话/行动/旁白交代均可），不允许只在总结/设定里提；缺席视为失败，需要改到满足为止。', 'Hard rule: Characters marked appear must be explicitly present in the prose (dialog/action/narration). Mentioning only in summary/notes is not acceptable; missing means failed and must be revised until satisfied.'),
       t('若“必须出场”人数过多：每人一句话交代即可，不要硬加长戏。', 'If too many must-appear characters: one sentence each is enough; do not bloat the prose.')
     ].filter(Boolean).join('\n')
@@ -5214,6 +5259,8 @@ async function openWriteWithChoiceDialog(ctx) {
     for (let i = 0; i < arr0.length; i++) {
       const it = normCastItem(arr0[i])
       if (!it.name || !it.appear) continue
+      // 死亡/隐藏角色不应被“强制补齐出场”逻辑拖累；需要出场就把它从死亡/隐藏里改回来。
+      if (it.dead || it.hidden) continue
       const key = it.name
       if (seen.has(key)) continue
       seen.add(key)
@@ -5379,14 +5426,158 @@ async function openWriteWithChoiceDialog(ctx) {
   castRawOut.style.display = 'none'
   castCard.appendChild(castRawOut)
 
-  const castList = document.createElement('div')
-  castList.style.marginTop = '8px'
-  castCard.appendChild(castList)
+  // 人物列表：加筛选/分组/隐藏/死亡，避免“全量塞一屏”这种反人类设计
+  let _castFilterText = ''
+  const _castGroupCollapsed = {
+    main: false,
+    secondary: true,
+    hidden: true,
+    dead: true,
+  }
+
+  // 每个项目一份“显示标记”（隐藏/死亡/主要），只影响 UI 与约束压缩，不改人物状态文件
+  const CAST_UI_META_PREFIX = 'aiNovel.castUiMeta.v1.'
+  let _castUiMeta = { version: 1, byName: {} }
+  let _castUiMetaKey = ''
+  let _castUiMetaLoaded = false
+
+  function _castNameKey(name) {
+    return safeText(name).trim()
+  }
+
+  function _castGuessDeadFromStatus(status) {
+    const s = safeText(status)
+    if (!s) return false
+    // 保守匹配：宁可不标也别误标
+    if (/\bdead\b/i.test(s)) return true
+    if (/(?:已|确认|当场|最终)?(?:死亡|死去|身亡|去世|殉职|牺牲|阵亡|毙命|遇害|被杀)/u.test(s)) return true
+    return false
+  }
+
+  function _castGuessHiddenFromStatus(status) {
+    const s = safeText(status)
+    if (!s) return false
+    if (/(?:失踪|下落不明|潜伏|隐藏|躲藏|隐匿|避难|离开|远走|不在场|未出现|未出场|缺席)/u.test(s)) return true
+    return false
+  }
+
+  async function _castEnsureUiMetaLoaded() {
+    if (_castUiMetaLoaded) return
+    _castUiMetaLoaded = true
+    try {
+      const inf = await inferProjectDir(ctx, cfg)
+      if (!inf || !inf.projectAbs) return
+      const key = await sha256Hex('ainovel:castUiMeta:' + normFsPath(inf.projectAbs))
+      _castUiMetaKey = CAST_UI_META_PREFIX + key
+      const raw = await ctx.storage.get(_castUiMetaKey)
+      if (!raw) return
+      const json = (raw && typeof raw === 'object')
+        ? raw
+        : (function () {
+          try { return JSON.parse(String(raw || '{}')) } catch { return null }
+        })()
+      const byName = json && typeof json === 'object' ? json.byName : null
+      if (byName && typeof byName === 'object') _castUiMeta = { version: 1, byName }
+    } catch {}
+  }
+
+  function _castUiMetaGet(name) {
+    const k = _castNameKey(name)
+    if (!k) return null
+    const byName = _castUiMeta && typeof _castUiMeta === 'object' ? _castUiMeta.byName : null
+    if (!byName || typeof byName !== 'object') return null
+    const v = byName[k]
+    return (v && typeof v === 'object') ? v : null
+  }
+
+  async function _castUiMetaSet(name, patch) {
+    const k = _castNameKey(name)
+    if (!k) return
+    const p = patch && typeof patch === 'object' ? patch : {}
+    const byName = (_castUiMeta && typeof _castUiMeta === 'object' && _castUiMeta.byName && typeof _castUiMeta.byName === 'object')
+      ? _castUiMeta.byName
+      : {}
+    const cur = (byName[k] && typeof byName[k] === 'object') ? byName[k] : {}
+    const next = { ...cur, ...p }
+    // 全 false 就删掉，避免无限膨胀
+    const keep = !!(next && (next.hidden || next.dead || next.pinned))
+    if (keep) byName[k] = { hidden: !!next.hidden, dead: !!next.dead, pinned: !!next.pinned }
+    else delete byName[k]
+    _castUiMeta = { version: 1, byName }
+    try {
+      if (_castUiMetaKey) await ctx.storage.set(_castUiMetaKey, _castUiMeta)
+    } catch {}
+  }
+
+  async function _castUiMetaPatchMany(list) {
+    const arr = Array.isArray(list) ? list : []
+    if (!arr.length) return
+    const byName = (_castUiMeta && typeof _castUiMeta === 'object' && _castUiMeta.byName && typeof _castUiMeta.byName === 'object')
+      ? _castUiMeta.byName
+      : {}
+    let changed = false
+    for (let i = 0; i < arr.length; i++) {
+      const it = arr[i] && typeof arr[i] === 'object' ? arr[i] : null
+      const name = it ? _castNameKey(it.name) : ''
+      const patch = it && it.patch && typeof it.patch === 'object' ? it.patch : null
+      if (!name || !patch) continue
+      const cur = (byName[name] && typeof byName[name] === 'object') ? byName[name] : {}
+      const next = { ...cur, ...patch }
+      const keep = !!(next && (next.hidden || next.dead || next.pinned))
+      if (keep) byName[name] = { hidden: !!next.hidden, dead: !!next.dead, pinned: !!next.pinned }
+      else delete byName[name]
+      changed = true
+    }
+    if (!changed) return
+    _castUiMeta = { version: 1, byName }
+    try {
+      if (_castUiMetaKey) await ctx.storage.set(_castUiMetaKey, _castUiMeta)
+    } catch {}
+  }
+
+  const castListWrap = document.createElement('div')
+  castListWrap.style.marginTop = '8px'
+
+  const castListBar = document.createElement('div')
+  castListBar.style.display = 'flex'
+  castListBar.style.flexWrap = 'wrap'
+  castListBar.style.gap = '8px'
+  castListBar.style.alignItems = 'center'
+
+  const inpCastFilter = document.createElement('input')
+  inpCastFilter.className = 'ain-in'
+  inpCastFilter.style.width = '220px'
+  inpCastFilter.placeholder = t('筛选人物/状态…', 'Filter name/status...')
+  inpCastFilter.oninput = () => {
+    _castFilterText = safeText(inpCastFilter.value).trim()
+    renderCastList()
+  }
+  castListBar.appendChild(inpCastFilter)
+
+  const btnCastClearFilter = document.createElement('button')
+  btnCastClearFilter.className = 'ain-btn gray'
+  btnCastClearFilter.textContent = t('清空筛选', 'Clear filter')
+  btnCastClearFilter.onclick = () => {
+    _castFilterText = ''
+    inpCastFilter.value = ''
+    renderCastList()
+  }
+  castListBar.appendChild(btnCastClearFilter)
+
+  const castListStat = document.createElement('div')
+  castListStat.className = 'ain-muted'
+  castListBar.appendChild(castListStat)
+
+  castListWrap.appendChild(castListBar)
+
+  const castListBody = document.createElement('div')
+  castListWrap.appendChild(castListBody)
+  castCard.appendChild(castListWrap)
   sec.appendChild(castCard)
 
   btnCastToggleList.onclick = () => {
     _castListCollapsed = !_castListCollapsed
-    castList.style.display = _castListCollapsed ? 'none' : ''
+    castListWrap.style.display = _castListCollapsed ? 'none' : ''
     btnCastToggleList.textContent = _castListCollapsed ? t('展开列表', 'Expand list') : t('折叠列表', 'Collapse list')
   }
 
@@ -5677,8 +5868,28 @@ async function openWriteWithChoiceDialog(ctx) {
       const hasItems = Array.isArray(items) && items.length
 
       if (overwriteItems || !(Array.isArray(_castState.items) && _castState.items.length)) {
+        await _castEnsureUiMetaLoaded()
+        let mainSet = null
+        try {
+          const rawMain = await getMainCharactersDocRaw(ctx, cfg)
+          const names = _ainParseNamesFromMainCharsDoc(rawMain).map(_ainNormName).filter(Boolean)
+          mainSet = new Set(names)
+        } catch {
+          mainSet = null
+        }
         _castState.items = hasItems
-          ? items.map((x) => ({ name: safeText(x.name).trim(), status: safeText(x.status).trim(), plan: '', appear: true }))
+          ? items.map((x) => {
+            const name = safeText(x.name).trim()
+            const status = safeText(x.status).trim()
+            const meta = _castUiMetaGet(name)
+            const dead = (meta && meta.dead != null) ? !!meta.dead : _castGuessDeadFromStatus(status)
+            const hidden = (meta && meta.hidden != null) ? !!meta.hidden : _castGuessHiddenFromStatus(status)
+            const pinned = (meta && meta.pinned != null)
+              ? !!meta.pinned
+              : !!(mainSet && mainSet.has(_ainNormName(name)))
+            // 默认不勾选“出场”：必须出场应由用户显式选择，否则会导致模型被迫塞人/漂移
+            return { name, status, plan: '', appear: false, hidden, dead, pinned }
+          })
           : []
         renderCastList()
       }
@@ -5694,31 +5905,91 @@ async function openWriteWithChoiceDialog(ctx) {
   }
 
   function renderCastList() {
-    castList.innerHTML = ''
+    castListBody.innerHTML = ''
     const arr = Array.isArray(_castState.items) ? _castState.items : []
     if (!arr.length) {
       const empty = document.createElement('div')
       empty.className = 'ain-muted'
       empty.textContent = t('暂无人物：可点“更新人物状态”或“添加人物”。', 'No characters: update states or add manually.')
-      castList.appendChild(empty)
+      castListBody.appendChild(empty)
+      castListStat.textContent = ''
       return
     }
 
     const head = document.createElement('div')
     head.className = 'ain-muted'
-    head.textContent = t('格式：出场 / 人物名 / 上一章状态 / 下一章走向（可空）', 'Format: appear / name / prev status / next arc (optional)')
-    castList.appendChild(head)
+    head.textContent = t(
+      '提示：勾选“出场”=本章必须点名出现；“主要/次要”只影响分组与检索提示，不改人物状态文件；隐藏人物可在“隐藏/失踪”分组点“恢复”，或把标签从“隐藏”改回“正常”。',
+      'Tip: checked “Appear” = must be explicitly present in prose. Main/Secondary are UI hints only. To restore hidden characters: use Hidden/Missing group → Restore, or switch tag Hidden → Normal.'
+    )
+    castListBody.appendChild(head)
+
+    // 先规范化一遍，避免历史数据缺字段导致渲染分组崩掉
+    for (let i = 0; i < arr.length; i++) arr[i] = normCastItem(arr[i])
+
+    const q = safeText(_castFilterText).trim().toLowerCase()
+    const forceExpand = !!q
+    // 分组只按“类别”来：主要/次要/隐藏/死亡；“出场”只是一个勾选状态，不应该导致人物在分组间乱跳
+    const groups = { main: [], secondary: [], hidden: [], dead: [] }
+    let mustShown = 0
+
+    function match(it) {
+      if (!q) return true
+      const a = safeText(it && it.name).toLowerCase()
+      const b = safeText(it && it.status).toLowerCase()
+      const c = safeText(it && it.plan).toLowerCase()
+      return a.includes(q) || b.includes(q) || c.includes(q)
+    }
 
     for (let i = 0; i < arr.length; i++) {
-      const it = normCastItem(arr[i])
-      arr[i] = it
+      const it = arr[i]
+      if (!match(it)) continue
+      if (!!it.appear && !(it.hidden || it.dead)) mustShown++
+      if (it.dead) groups.dead.push({ i, it })
+      else if (it.hidden) groups.hidden.push({ i, it })
+      else if (it.pinned) groups.main.push({ i, it })
+      else groups.secondary.push({ i, it })
+    }
+
+    const total = arr.length
+    const shown =
+      groups.main.length +
+      groups.secondary.length +
+      groups.hidden.length +
+      groups.dead.length
+    castListStat.textContent = [
+      t('总计 ', 'Total ') + String(total),
+      (q ? (t('；筛选命中 ', '；Matched ') + String(shown)) : ''),
+      t('；必出 ', '；Must ') + String(mustShown),
+      t('；主要 ', '；Main ') + String(groups.main.length),
+      t('；次要 ', '；Secondary ') + String(groups.secondary.length),
+      t('；隐藏 ', '；Hidden ') + String(groups.hidden.length),
+      t('；死亡 ', '；Dead ') + String(groups.dead.length),
+    ].filter(Boolean).join('')
+
+    function sortByImportance(list) {
+      const out = Array.isArray(list) ? list.slice(0) : []
+      out.sort((a, b) => {
+        const am = !!(a && a.it && a.it.appear)
+        const bm = !!(b && b.it && b.it.appear)
+        if (am !== bm) return am ? -1 : 1
+        const an = safeText(a && a.it && a.it.name).localeCompare(safeText(b && b.it && b.it.name))
+        return an
+      })
+      return out
+    }
+
+    function renderOneRow(ref) {
+      const it = ref && ref.it ? ref.it : null
+      if (!it) return
 
       const row = document.createElement('div')
       row.style.display = 'grid'
-      row.style.gridTemplateColumns = '70px 140px 1fr 1fr 60px'
+      row.style.gridTemplateColumns = '64px 120px minmax(0,1fr) minmax(0,1fr) 120px 60px'
       row.style.gap = '8px'
       row.style.alignItems = 'center'
       row.style.marginTop = '8px'
+      row.style.maxWidth = '100%'
 
       const lab = document.createElement('label')
       lab.className = 'ain-muted'
@@ -5728,9 +5999,19 @@ async function openWriteWithChoiceDialog(ctx) {
       const cb = document.createElement('input')
       cb.type = 'checkbox'
       cb.checked = !!it.appear
-      cb.onchange = () => { it.appear = !!cb.checked }
+      cb.disabled = !!it.dead
+      cb.onchange = () => {
+        if (it.dead) return
+        it.appear = !!cb.checked
+        // 勾选出场 => 自动取消“隐藏”（否则用户自己都看不到这人在哪）
+        if (it.appear && it.hidden) {
+          it.hidden = false
+          void _castUiMetaSet(it.name, { hidden: false })
+        }
+        renderCastList()
+      }
       const sp = document.createElement('span')
-      sp.textContent = t('出场', 'Appear')
+      sp.textContent = t('出场', 'Must')
       lab.appendChild(cb)
       lab.appendChild(sp)
 
@@ -5738,26 +6019,92 @@ async function openWriteWithChoiceDialog(ctx) {
       inpName.className = 'ain-in'
       inpName.value = it.name
       inpName.placeholder = t('人物名', 'Name')
-      inpName.oninput = () => { it.name = inpName.value }
+      inpName.style.minWidth = '0'
+      inpName.oninput = () => {
+        it.name = inpName.value
+        renderCastList()
+      }
 
       const inpStatus = document.createElement('input')
       inpStatus.className = 'ain-in'
       inpStatus.value = it.status
       inpStatus.placeholder = t('上一章状态（可空）', 'Prev status (optional)')
+      inpStatus.style.minWidth = '0'
       inpStatus.oninput = () => { it.status = inpStatus.value }
 
       const inpPlan = document.createElement('input')
       inpPlan.className = 'ain-in'
       inpPlan.value = it.plan
       inpPlan.placeholder = t('下一章走向（可空）', 'Next arc (optional)')
+      inpPlan.style.minWidth = '0'
       inpPlan.oninput = () => { it.plan = inpPlan.value }
+
+      const tagBox = document.createElement('div')
+      tagBox.style.display = 'grid'
+      tagBox.style.gridTemplateRows = 'auto auto'
+      tagBox.style.rowGap = '4px'
+      tagBox.style.alignItems = 'center'
+      tagBox.style.minWidth = '0'
+
+      const selTag = document.createElement('select')
+      selTag.className = 'ain-in ain-select'
+      selTag.style.width = '100%'
+      selTag.style.minWidth = '0'
+      ;[
+        { v: 'normal', zh: '正常', en: 'Normal' },
+        { v: 'hidden', zh: '隐藏', en: 'Hidden' },
+        { v: 'dead', zh: '死亡', en: 'Dead' },
+      ].forEach((x) => {
+        const op = document.createElement('option')
+        op.value = x.v
+        op.textContent = t(x.zh, x.en)
+        selTag.appendChild(op)
+      })
+      selTag.value = it.dead ? 'dead' : (it.hidden ? 'hidden' : 'normal')
+      selTag.onchange = () => {
+        const v = String(selTag.value || 'normal')
+        if (v === 'dead') {
+          it.dead = true
+          it.hidden = false
+          it.appear = false
+        } else if (v === 'hidden') {
+          it.hidden = true
+          it.dead = false
+          it.appear = false
+        } else {
+          it.dead = false
+          it.hidden = false
+        }
+        void _castUiMetaSet(it.name, { dead: !!it.dead, hidden: !!it.hidden })
+        renderCastList()
+      }
+      tagBox.appendChild(selTag)
+
+      const pinLab = document.createElement('label')
+      pinLab.className = 'ain-muted'
+      pinLab.style.display = 'flex'
+      pinLab.style.gap = '6px'
+      pinLab.style.alignItems = 'center'
+      const cbPin = document.createElement('input')
+      cbPin.type = 'checkbox'
+      cbPin.checked = !!it.pinned
+      cbPin.onchange = () => {
+        it.pinned = !!cbPin.checked
+        void _castUiMetaSet(it.name, { pinned: !!it.pinned })
+        renderCastList()
+      }
+      const spPin = document.createElement('span')
+      spPin.textContent = t('主要', 'Main')
+      pinLab.appendChild(cbPin)
+      pinLab.appendChild(spPin)
+      tagBox.appendChild(pinLab)
 
       const btnDel = document.createElement('button')
       btnDel.className = 'ain-btn gray'
       btnDel.textContent = t('删除', 'Del')
       btnDel.onclick = () => {
         try {
-          _castState.items = arr.filter((_, k) => k !== i)
+          _castState.items = arr.filter((_, k) => k !== (ref.i | 0))
         } catch {
           _castState.items = []
         }
@@ -5768,10 +6115,100 @@ async function openWriteWithChoiceDialog(ctx) {
       row.appendChild(inpName)
       row.appendChild(inpStatus)
       row.appendChild(inpPlan)
+      row.appendChild(tagBox)
       row.appendChild(btnDel)
 
-      castList.appendChild(row)
+      castListBody.appendChild(row)
     }
+
+    function renderGroup(key, title, list) {
+      const arr0 = sortByImportance(list)
+      if (!arr0.length) return
+      const collapsed = forceExpand ? false : !!_castGroupCollapsed[key]
+
+      const bar = document.createElement('div')
+      bar.style.display = 'flex'
+      bar.style.alignItems = 'center'
+      bar.style.gap = '8px'
+      bar.style.flexWrap = 'wrap'
+      bar.style.marginTop = '10px'
+
+      const btn = document.createElement('button')
+      btn.className = 'ain-btn gray'
+      btn.style.padding = '6px 10px'
+      btn.textContent = (collapsed ? '▶ ' : '▼ ') + title + ' (' + String(arr0.length) + ')'
+      btn.onclick = () => {
+        _castGroupCollapsed[key] = !_castGroupCollapsed[key]
+        renderCastList()
+      }
+      bar.appendChild(btn)
+
+      // 分类内操作：只影响该分类（好操作，且不会误伤其它分类）
+      function setAppearForList(v) {
+        for (let i = 0; i < arr0.length; i++) {
+          const it = arr0[i] && arr0[i].it ? arr0[i].it : null
+          if (!it) continue
+          if (it.dead) continue
+          // 隐藏人物默认不应强制出场；需要出场就先恢复为正常
+          if (it.hidden) continue
+          it.appear = !!v
+        }
+      }
+
+      if (key === 'main' || key === 'secondary') {
+        const btnAll = document.createElement('button')
+        btnAll.className = 'ain-btn gray'
+        btnAll.style.padding = '6px 10px'
+        btnAll.textContent = t('本类全选出场', 'Select all (appear)')
+        btnAll.onclick = () => { setAppearForList(true); renderCastList() }
+        bar.appendChild(btnAll)
+
+        const btnNone = document.createElement('button')
+        btnNone.className = 'ain-btn gray'
+        btnNone.style.padding = '6px 10px'
+        btnNone.textContent = t('本类取消出场', 'Clear (appear)')
+        btnNone.onclick = () => { setAppearForList(false); renderCastList() }
+        bar.appendChild(btnNone)
+      } else if (key === 'hidden') {
+        const btnRestore = document.createElement('button')
+        btnRestore.className = 'ain-btn gray'
+        btnRestore.style.padding = '6px 10px'
+        btnRestore.textContent = t('本类全部恢复', 'Restore all')
+        btnRestore.onclick = () => {
+          void (async () => {
+            const patches = []
+            for (let i = 0; i < arr0.length; i++) {
+              const it = arr0[i] && arr0[i].it ? arr0[i].it : null
+              if (!it) continue
+              it.hidden = false
+              patches.push({ name: it.name, patch: { hidden: false } })
+            }
+            await _castUiMetaPatchMany(patches)
+            renderCastList()
+          })()
+        }
+        bar.appendChild(btnRestore)
+      }
+      castListBody.appendChild(bar)
+
+      if (collapsed) return
+      for (let i = 0; i < arr0.length; i++) renderOneRow(arr0[i])
+    }
+
+    // 全筛选为空：给一个提示，避免用户以为“人没了”
+    if (shown <= 0 && q) {
+      const empty = document.createElement('div')
+      empty.className = 'ain-muted'
+      empty.style.marginTop = '8px'
+      empty.textContent = t('筛选无命中。', 'No matches.')
+      castListBody.appendChild(empty)
+      return
+    }
+
+    renderGroup('main', t('主要', 'Main'), groups.main)
+    renderGroup('secondary', t('次要', 'Secondary'), groups.secondary)
+    renderGroup('hidden', t('隐藏/失踪', 'Hidden/Missing'), groups.hidden)
+    renderGroup('dead', t('死亡', 'Dead'), groups.dead)
   }
 
   async function doUpdateCharacterState() {
@@ -5837,9 +6274,9 @@ async function openWriteWithChoiceDialog(ctx) {
   btnCastAdd.onclick = () => {
     try {
       _castState.items = (Array.isArray(_castState.items) ? _castState.items.slice(0) : [])
-      _castState.items.push({ name: '', status: '', plan: '', appear: true })
+      _castState.items.push({ name: '', status: '', plan: '', appear: true, hidden: false, dead: false, pinned: false })
     } catch {
-      _castState.items = [{ name: '', status: '', plan: '', appear: true }]
+      _castState.items = [{ name: '', status: '', plan: '', appear: true, hidden: false, dead: false, pinned: false }]
     }
     renderCastList()
   }
@@ -5848,7 +6285,9 @@ async function openWriteWithChoiceDialog(ctx) {
       const arr = Array.isArray(_castState.items) ? _castState.items.slice(0) : []
       for (let i = 0; i < arr.length; i++) {
         const it = normCastItem(arr[i])
-        it.appear = !!v
+        const want = !!v
+        // 全选不应该把“死亡/隐藏”也强行勾成必出
+        it.appear = want ? (!(it.dead || it.hidden)) : false
         arr[i] = it
       }
       _castState.items = arr
@@ -7522,6 +7961,76 @@ async function agentRunPlan(ctx, cfg, base, ui) {
     return sliceTail(merged, lim)
   }
 
+  // 从硬约束里提取“人物走向摘要”，用于 RAG/咨询提示，避免漫天胡搜导致命中漂移。
+  function _ainAgentSplitNameList(s) {
+    const raw = safeText(s).trim()
+    if (!raw) return []
+    const parts = raw.split(/[、,，]/g).map((x) => _ainNormName(x)).filter(Boolean)
+    return _ainUniqNames(parts).filter(_ainLikelyPersonName)
+  }
+
+  function _ainAgentExtractSteeringFromConstraints(text) {
+    const s0 = safeText(text).replace(/\r\n/g, '\n')
+    if (!s0.trim()) return { must: [], dead: [], hidden: [] }
+    const lines = s0.split('\n')
+    const must = []
+    const dead = []
+    const hidden = []
+    for (let i = 0; i < lines.length; i++) {
+      const line = String(lines[i] || '').trim()
+      if (!line) continue
+      let m = /^(?:本章必须出场：|Must appear:\s*)(.+)$/.exec(line)
+      if (m && m[1]) { must.push(..._ainAgentSplitNameList(m[1])); continue }
+      m = /^(?:已死亡（禁止复活）：|Dead \(no resurrection\):\s*)(.+)$/.exec(line)
+      if (m && m[1]) { dead.push(..._ainAgentSplitNameList(m[1])); continue }
+      m = /^(?:隐藏\/失踪（本章默认不强制出场）：|Hidden\/missing \(not required\):\s*)(.+)$/.exec(line)
+      if (m && m[1]) { hidden.push(..._ainAgentSplitNameList(m[1])); continue }
+    }
+    return { must: _ainUniqNames(must), dead: _ainUniqNames(dead), hidden: _ainUniqNames(hidden) }
+  }
+
+  function _ainAgentJoinNamesShort(names, capChars) {
+    const arr = Array.isArray(names) ? names.map((x) => _ainNormName(x)).filter(Boolean) : []
+    if (!arr.length) return ''
+    const cap = Math.max(80, (capChars | 0) || 180)
+    let used = 0
+    const out = []
+    for (let i = 0; i < arr.length; i++) {
+      const nm = arr[i]
+      const add = (out.length ? 1 : 0) + nm.length
+      if (out.length && used + add > cap) { out.push('…'); break }
+      out.push(nm)
+      used += add
+    }
+    return out.join('、')
+  }
+
+  const _agentSteer = _ainAgentExtractSteeringFromConstraints(base && base.constraints)
+
+  function _ainAgentBuildRagQuery(q0, kind) {
+    const baseQ = safeText(q0).trim()
+    const mustLine = (_agentSteer && _agentSteer.must && _agentSteer.must.length)
+      ? (t('本章必出人物：', 'Must-appear: ') + _ainAgentJoinNamesShort(_agentSteer.must, 220))
+      : ''
+    const deadLine = (_agentSteer && _agentSteer.dead && _agentSteer.dead.length)
+      ? (t('已死亡：', 'Dead: ') + _ainAgentJoinNamesShort(_agentSteer.dead, 220))
+      : ''
+    const hiddenLine = (_agentSteer && _agentSteer.hidden && _agentSteer.hidden.length)
+      ? (t('隐藏/失踪：', 'Hidden/missing: ') + _ainAgentJoinNamesShort(_agentSteer.hidden, 220))
+      : ''
+
+    const k = (kind === 'style' || kind === 'facts') ? kind : 'facts'
+    const focus = k === 'style'
+      ? t('检索重点：说话方式、口头禅、语气、行事习惯、情绪外显、底线与禁忌。', 'Focus: speech style, catchphrases, tone, habits, emotional tells, boundaries.')
+      : t('检索重点：人物当前状态/关系变化/死亡与失踪、时间线冲突、关键道具归属、伏笔回收。', 'Focus: current states/relations/dead&missing, timeline conflicts, item ownership, foreshadowing payoff.')
+    const prefer = k === 'style'
+      ? ''
+      : t('优先：06_人物状态、01_进度脉络、03_主要角色、04_人物关系、05_章节大纲、最近章节。', 'Prefer: character states/progress/main chars/relations/outline/recent chapters.')
+
+    const out = [baseQ, mustLine, deadLine, hiddenLine, focus, prefer].filter(Boolean).join('\n')
+    return out || baseQ
+  }
+
   for (let i = 0; i < items.length; i++) {
     const it = items[i]
     if (!it || !it.type) continue
@@ -7554,7 +8063,8 @@ async function agentRunPlan(ctx, cfg, base, ui) {
           const kind = (it.rag_kind === 'style' || it.rag_kind === 'facts') ? it.rag_kind : 'facts'
           const budget = kind === 'style' ? ragBudgetStyle : ragBudgetFacts
           const topK0 = Math.max(1, (ragCfg.topK | 0) || 6)
-          const hits = await rag_get_hits(ctx, cfg, q + '\n\n' + sliceTail(curPrev(), 3000), {
+          const q2 = _ainAgentBuildRagQuery(q, kind)
+          const hits = await rag_get_hits(ctx, cfg, q2 + '\n\n' + sliceTail(curPrev(), 3000), {
             // 风格片段更短更碎；事实片段允许更长
             topK: topK0,
             maxChars: budget,
@@ -7584,6 +8094,11 @@ async function agentRunPlan(ctx, cfg, base, ui) {
         const baseQ = safeText(it.instruction).trim() || t('给出写作建议', 'Give advice')
         const question = injectChecklist ? [
           baseQ,
+          '',
+          t(
+            '重点：设定一致性核对（人物状态/关系/死亡/时间线/道具/伏笔），把最容易漂移的点写成“必须/禁止/检查点”。',
+            'Focus: continuity checks (states/relations/death/timeline/items/foreshadowing) and turn drift-prone points into actionable MUST/DON’T/CHECK items.'
+          ),
           '',
           '输出格式（必须严格遵守，方便系统截断注入）：',
           '【写作检查清单】',
@@ -7655,6 +8170,12 @@ async function agentRunPlan(ctx, cfg, base, ui) {
           consultChecklist,
           '注意：不要在正文中复述/列出检查清单，只需要遵守它。'
         ].join('\n') : ''
+        const consistencyRuleBlock = [
+          '【一致性硬规则】',
+          '- 事实以资料为准（人物状态/主要角色/人物关系/进度脉络/故事圣经）；不确定就回避或写成不确定，禁止编造/改设定。',
+          '- 若必须改变人物状态：必须在剧情中写出原因与过程；禁止一句话“突然变设定”。',
+          '- 已死亡角色禁止复活；隐藏/失踪角色如要出场必须先交代合理回归。'
+        ].join('\n')
         const writingTipBlock = [
           '【本段写作提醒】',
           '- 检查句式：是否连续5句以上相同结构？如是，改变下一句的句式。',
@@ -7670,6 +8191,8 @@ async function agentRunPlan(ctx, cfg, base, ui) {
           instruction,
           '',
           checklistBlock,
+          '',
+          consistencyRuleBlock,
           '',
           writingTipBlock,
           '',
