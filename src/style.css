@@ -1369,10 +1369,10 @@ body > .block-menu { display: none !important; }
 }
 
 .preview-meta {
-  margin: 0 auto 10px auto;
-  padding: 8px 10px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
+  margin: 0 auto 12px auto;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: none;
   background: rgba(127,127,127,0.04);
   font-size: 12px;
   color: var(--muted);
@@ -1439,11 +1439,12 @@ body > .block-menu { display: none !important; }
   gap: 4px;
 }
 .preview-meta-chip {
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid rgba(127,127,127,0.5);
-  background: rgba(127,127,127,0.08);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: rgba(127,127,127,0.1);
   font-size: 11px;
+  font-weight: 500;
   color: var(--fg);
 }
 .preview-meta.collapsed .preview-meta-body {
@@ -3666,24 +3667,24 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 }
 
 /* === UI 美化补充（库侧栏与图床设置）=== */
-/* 库侧栏：紧凑模式（保留图标、无花哨悬浮） */
-.library .lib-node { min-height: 22px; gap: 6px; padding: 3px 8px; }
-.library .lib-node .lib-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; padding-left: 0; }
+/* 库侧栏：紧凑模式 */
+.library .lib-node { min-height: 26px; gap: 5px; padding: 2px 8px; }
+.library .lib-node .lib-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; padding-left: 0; font-size: 13px; }
 .library .lib-node .lib-tg { width: 14px; height: 14px; color: var(--muted); opacity: 0.3; }
 .library .lib-node.expanded .lib-tg { transform: rotate(90deg); color: var(--muted); opacity: 0.5; }
-/* 悬浮态：轻微文字颜色变化 */
-.library .lib-node:hover { background: transparent !important; transform: none !important; }
-.library .lib-node:hover .lib-name { color: var(--fg); opacity: 1; }
+/* 悬浮态 */
+.library .lib-node:hover { background: var(--hover-bg); }
+.library .lib-node:hover .lib-name { color: var(--fg); }
 .library .lib-node .lib-name { color: var(--muted); transition: color 0.15s ease; }
 /* 选中态 */
-.library .lib-node.selected { background: rgba(127,127,127,0.08); }
-.library .lib-node.selected .lib-name { color: var(--fg); }
+.library .lib-node.selected { background: rgba(37, 99, 235, 0.1); }
+.library .lib-node.selected .lib-name { color: var(--fg); font-weight: 500; }
 
 /* 文件夹名称微微加粗 */
 .library .lib-dir .lib-name { font-weight: 450; }
 
 /* 树形缩进 */
-.library .lib-children { margin-left: 8px; padding-left: 2px; }
+.library .lib-children { margin-left: 6px; padding-left: 6px; border-left: 1px solid rgba(127,127,127,0.1); }
 
 /* 不按扩展名上色：保持一致性 */
 
