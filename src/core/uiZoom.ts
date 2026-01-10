@@ -18,7 +18,7 @@ const CONTENT_FONT_SIZE_MAX = 24
 
 // 阅读/所见宽度（Shift + 滚轮）控制
 const PREVIEW_WIDTH_KEY = 'flymd:previewWidth'
-const PREVIEW_WIDTH_DEFAULT = 860
+const PREVIEW_WIDTH_DEFAULT = 960
 const PREVIEW_WIDTH_MIN = 600
 const PREVIEW_WIDTH_MAX = 1600
 export const PREVIEW_WIDTH_STEP = 40

@@ -795,11 +795,21 @@ body.compact-titlebar .window-btn.window-close:hover {
   /* 使用content-box时，高度需要减去上下padding（20px + 40px = 60px） */
   height: calc(100% - 60px - var(--workspace-bottom-gap, 0px));
   width: min(
-    var(--preview-max-width, 860px),
+    var(--preview-max-width, 960px),
     max(0px, calc(100% - var(--workspace-left-gap, 0px) - var(--workspace-right-gap, 0px)))
   );
   padding-left: calc(24px + var(--workspace-left-gap, 0px));
   padding-right: calc(24px + var(--workspace-right-gap, 0px));
+}
+
+/* 侧栏收起后：正文更靠边，减少大屏中间留白 */
+body:not(.sticky-note-mode) .container.library-hidden-left:not(.wysiwyg):not(.wysiwyg-v2) .editor {
+  margin-left: 0;
+  margin-right: auto;
+}
+body:not(.sticky-note-mode) .container.library-hidden-right:not(.wysiwyg):not(.wysiwyg-v2) .editor {
+  margin-left: auto;
+  margin-right: 0;
 }
 
 .preview {
@@ -1036,7 +1046,7 @@ body > .block-menu { display: none !important; }
   word-break: break-word;
   color: var(--fg);
   /* 居中与阅读宽度（对齐预览的 preview-body） */
-  max-width: var(--layout-content-max-width, var(--preview-max-width, 860px));
+  max-width: var(--layout-content-max-width, var(--preview-max-width, 960px));
   margin: 0 auto;
   background: transparent;
   box-sizing: border-box;
@@ -1045,6 +1055,9 @@ body > .block-menu { display: none !important; }
   line-height: var(--layout-line-height, 1.75);
   letter-spacing: 0.01em;
 }
+/* 侧栏收起后：所见正文靠边 */
+body:not(.sticky-note-mode) .container.wysiwyg-v2.library-hidden-left .ProseMirror { margin: 0 auto 0 0; }
+body:not(.sticky-note-mode) .container.wysiwyg-v2.library-hidden-right .ProseMirror { margin: 0 0 0 auto; }
 .container.wysiwyg-v2 .ProseMirror img,
 .container.wysiwyg-v2 .ProseMirror video { max-width: 100%; height: auto; }
 /* 所见模式图片排版：尽量对齐阅读模式的 .preview img 样式 */
@@ -1361,12 +1374,15 @@ body > .block-menu { display: none !important; }
 
 /* 预览正文容器：定宽居中，类似 Typora/Word 的阅读宽度 */
 .preview-body {
-  max-width: var(--layout-content-max-width, var(--preview-max-width, 860px));   /* 与所见模式一致 */
+  max-width: var(--layout-content-max-width, var(--preview-max-width, 960px));   /* 与所见模式一致 */
   margin: 0 auto;
   padding: 14px 16px 20px 16px; /* 与所见模式保持一致 */
   /* 添加过渡动画，配合侧栏展开 */
   transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
+/* 侧栏收起后：阅读正文靠边 */
+body:not(.sticky-note-mode) .container.library-hidden-left .preview-body { margin: 0 auto 0 0; }
+body:not(.sticky-note-mode) .container.library-hidden-right .preview-body { margin: 0 0 0 auto; }
 
 .preview-meta {
   margin: 0 auto 12px auto;
