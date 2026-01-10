@@ -64,6 +64,7 @@ FlyMD is a lightweight, high-performance local Markdown editor supporting high-p
 ### Advanced Features
 
 - **AI Assistant** - Writing assistance, polishing, and error correction with Markdown rendering and code highlighting, built-in free AI models ready to use
+- **Full-text / Knowledge-base Search** - Library sidebar quick search supports `:keyword` full-text search and `::keyword` semantic search (requires a flymd-RAG index)
 - **Smart Todo Reminder** - Auto-detect TODOs, push via WeChat, SMS, Email, DingTalk, Feishu, and more
 - **High-Precision PDF/Image Parsing** - Parse to MD or Docx format, supports translation
 - **One-Click Publish** - Supports Typecho / WordPress / Halo blog platforms
@@ -139,6 +140,7 @@ sudo xattr -r -d com.apple.quarantine /Applications/flymd.app
 | Open File | `Ctrl+O` | Toggle Edit/Preview | `Ctrl+E` |
 | Save File | `Ctrl+S` | Focus Mode | `Ctrl+Shift+F` |
 | New Tab | `Ctrl+T` | Find & Replace | `Ctrl+H` |
+| Command Palette | `Ctrl+Shift+P` | Library Sidebar Search | Click the search button |
 
 **Multi-Tab Operations**:
 - `Ctrl+T` - Open blank tab
@@ -158,6 +160,11 @@ sudo xattr -r -d com.apple.quarantine /Applications/flymd.app
 - `Shift + Mouse Wheel` - Adjust content width (margins)
 - `Ctrl + Mouse Wheel` - Enlarge text and images
 - `Shift + Right Click` - Open native menu (when right-click menu is occupied by plugins)
+
+**Library Sidebar Search**:
+- Default: type to filter by filename/path
+- Full-text: type `:keyword` and press Enter (you can continue with “Deep search”)
+- Knowledge-base: type `::keyword` and press Enter (requires flymd-RAG enabled and indexed)
 
 ---
 

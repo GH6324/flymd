@@ -75,6 +75,7 @@ FlyMD 是一款轻量级、高性能的本地 Markdown 编辑器,支持 PDF 高�
 ### 高级功能
 
 - **AI 助手** - 辅助写作、润色与改错,支持 Markdown 渲染与代码高亮,内置免费 AI 模型开箱即用
+- **全文搜索 / 知识库搜索** - 库侧栏快速搜索支持 `:关键词` 全文搜索与 `::关键词` 知识库语义搜索(需 flymd-RAG 索引)
 - **智能待办提醒** - 自动识别 TODO,支持微信、短信、邮箱、钉钉、飞书等多渠道推送
 - **高精度 PDF/图片解析** - 解析为 MD 或 Docx 格式,支持翻译
 - **一键发布** - 支持 Typecho / WordPress / Halo 博客平台
@@ -178,6 +179,7 @@ sudo xattr -r -d com.apple.quarantine /Applications/flymd.app
 | 打开文件 | `Ctrl+O` | 切换编辑/预览 | `Ctrl+E` |
 | 保存文件 | `Ctrl+S` | 专注模式 | `Ctrl+Shift+F` |
 | 新建标签页 | `Ctrl+T` | 查找替换 | `Ctrl+H` |
+| 命令面板 | `Ctrl+Shift+P` | 库侧栏搜索 | 点击搜索按钮 |
 
 **多标签页操作**:
 - `Ctrl+T` - 开启空白标签页
@@ -197,6 +199,11 @@ sudo xattr -r -d com.apple.quarantine /Applications/flymd.app
 - `Shift + 滚轮` - 调整内容区宽度(页边距)
 - `Ctrl + 滚轮` - 放大文字和图片
 - `Shift + 鼠标右键` - 呼出原生菜单(当右键菜单被插件占用时)
+
+**库侧栏搜索**:
+- 默认：直接输入关键字，过滤文件名/路径
+- 全文搜索：输入 `:关键词`，按 Enter 开始(可点“继续深度搜索”扫全文)
+- 知识库搜索：输入 `::关键词`，按 Enter 开始(需安装/启用 flymd-RAG 并完成索引)
 
 ---
 

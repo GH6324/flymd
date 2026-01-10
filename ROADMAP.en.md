@@ -2,6 +2,11 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v1.0.3
+- Added: Library sidebar search upgrade — filename/path filter; `:keyword` + Enter for full-text search (fast scan + optional deep search); `::keyword` + Enter for knowledge-base semantic search (requires flymd-RAG index)
+- Improved: New UI layout — unified library sidebar width/margins; adjusted content position and default width
+- Improved: Built-in “AI Assistant” plugin upgraded to v0.4.1 — improved context memory and budget strategy; better output quality and formatting
+
 ## Update v1.0.2
 - Fixed: PDF export could crop or miss images when using image hosting
 - Improved: WYSIWYG code blocks now have a background; refined code area styling
