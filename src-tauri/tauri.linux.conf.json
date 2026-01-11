@@ -4,18 +4,8 @@
     "windows": [
       {
         "label": "main",
-        "title": "飞速MarkDown",
-        "width": 960,
-        "height": 640,
-        "resizable": true,
-        "fullscreen": false,
-        "decorations": false,
-        "visible": false,
-        "transparent": true,
-        "backgroundColor": "#00000000",
-        "shadow": false,
-        "devtools": true,
-        "dragDropEnabled": true
+        "transparent": false,
+        "shadow": true
       }
     ]
   }

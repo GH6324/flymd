@@ -96,7 +96,7 @@
     --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
   }
-  body.transparent-window #app {
+  body.platform-windows #app {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25),
                 0 0 1px rgba(0, 0, 0, 0.3);
   }
@@ -130,8 +130,8 @@ body.light-mode {
   --c-com: #9ca3af;
 }
 
-html, body { height: 100%; margin: 0; padding: 0; }
-html { background: transparent; }
+html, body, #app { height: 100%; }
+html, body { margin: 0; padding: 0; }
 body {
   background: var(--bg);
   color: var(--fg);
@@ -140,10 +140,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  padding: 0;
 }
 #app {
-  height: 100%;
   background: var(--bg);
 }
 
@@ -152,13 +150,13 @@ body {
   display: none !important;
 }
 
-/* 透明窗口样式：启动后探测支持才启用（不支持则保持“之前状态”） */
-body.transparent-window {
+/* Windows：保持 1.0.4 的透明窗口 + 圆角阴影；Mac/Linux 回退到 673c 之前的纯色窗口 */
+body.platform-windows {
   background: transparent;
   padding: 12px; /* 为窗口阴影留出空间 */
   box-sizing: border-box;
 }
-body.transparent-window #app {
+body.platform-windows #app {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08),
               0 4px 16px rgba(0, 0, 0, 0.12),
               0 2px 6px rgba(0, 0, 0, 0.08);
@@ -5695,7 +5693,7 @@ body.dark-mode {
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
-body.dark-mode.transparent-window #app {
+body.platform-windows.dark-mode #app {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25),
               0 0 1px rgba(0, 0, 0, 0.3);
 }

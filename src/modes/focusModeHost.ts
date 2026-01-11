@@ -4,9 +4,14 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { Store } from '@tauri-apps/plugin-store'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './focusMode'
 
+function isWindowsPlatform(): boolean {
+  const platform = (navigator.platform || '').toLowerCase()
+  return platform.includes('win')
+}
+
 // 内部状态：专注模式与紧凑标题栏开关
 let focusMode = false
-let compactTitlebar = true // 强制开启：CSS 圆角阴影要求必须使用紧凑标题栏
+let compactTitlebar = isWindowsPlatform()
 
 // 对外同步当前专注模式状态（供主模块判断）
 export function isFocusModeEnabled(): boolean {
@@ -23,8 +28,7 @@ export function isCompactTitlebarEnabled(): boolean {
 }
 
 export function setCompactTitlebarFlag(enabled: boolean): void {
-  // 强制开启，忽略传入参数
-  compactTitlebar = true
+  compactTitlebar = isWindowsPlatform() ? true : !!enabled
 }
 
 // 专注模式切换：负责 body 类、自定义标题栏与窗口装饰
@@ -72,27 +76,44 @@ export async function getFocusMode(store: Store | null): Promise<boolean> {
   }
 }
 
-// 从 Store 读取紧凑标题栏状态（强制开启：CSS 圆角阴影要求）
+// 从 Store 读取紧凑标题栏状态
 export async function getCompactTitlebar(store: Store | null): Promise<boolean> {
-  // 强制返回 true，忽略存储值
-  compactTitlebar = true
-  return true
+  if (isWindowsPlatform()) {
+    compactTitlebar = true
+    return true
+  }
+  try {
+    if (!store) return compactTitlebar
+    const v = await store.get('compactTitlebar')
+    if (typeof v === 'boolean') {
+      compactTitlebar = v
+      return v
+    }
+    return compactTitlebar
+  } catch {
+    return compactTitlebar
+  }
 }
 
-// 设置紧凑标题栏状态（强制开启：CSS 圆角阴影要求）
+// 设置紧凑标题栏状态
 export async function setCompactTitlebar(
   enabled: boolean,
   store: Store | null,
   persist = true,
 ): Promise<void> {
-  // 强制开启，忽略传入参数
-  compactTitlebar = true
+  compactTitlebar = isWindowsPlatform() ? true : !!enabled
 
   try {
-    document.body.classList.add('compact-titlebar')
+    document.body.classList.toggle('compact-titlebar', compactTitlebar)
   } catch {}
 
-  // 不再持久化，始终为 true
+  if (persist && store && !isWindowsPlatform()) {
+    try {
+      await store.set('compactTitlebar', compactTitlebar)
+      await store.save()
+    } catch {}
+  }
+
   try {
     await applyWindowDecorationsCore(getCurrentWindow, focusMode, compactTitlebar)
   } catch {}
@@ -124,4 +145,3 @@ export async function resetFocusModeDecorations(): Promise<void> {
     } catch {}
   } catch {}
 }
-

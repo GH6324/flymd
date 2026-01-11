@@ -1287,8 +1287,6 @@ performance.mark('flymd-dom-ready')
 initPlatformIntegration().catch((e) => console.error('[Platform] Initialization failed:', e))
 // 初始化平台类（用于 CSS 平台适配，Windows 显示窗口控制按钮）
 try { initPlatformClass() } catch {}
-// 探测透明支持（mac/linux 不支持时自动回退到“之前状态”）
-initTransparentWindowMode().catch(() => {})
 // 应用已保存主题并挂载主题 UI
 try { applySavedTheme() } catch {}
 try { initThemeUI() } catch {}
@@ -5572,51 +5570,6 @@ function initPlatformClass() {
   }
 }
 
-let cachedTransparentSupport: boolean | null = null
-let transparentSupportDetecting = false
-
-function setTransparentSupport(supported: boolean): void {
-  cachedTransparentSupport = supported
-  ;(window as any).__flymdTransparentSupported = supported
-  try { document.body.classList.toggle('transparent-window', supported) } catch {}
-}
-
-// 启动后探测透明支持：支持则启用透明窗口样式；不支持则保持“之前状态”（无 padding/无圆角阴影）。
-async function initTransparentWindowMode(): Promise<void> {
-  const platform = (navigator.platform || '').toLowerCase()
-  const isWindows = platform.includes('win')
-
-  // 先乐观启用：启动后“发现不支持”才回退，避免误判导致所有平台直接变旧样式
-  try { document.body.classList.add('transparent-window') } catch {}
-  ;(window as any).__flymdTransparentSupported = true
-  if (isWindows) {
-    setTransparentSupport(true)
-    return
-  }
-
-  if (transparentSupportDetecting) return
-  transparentSupportDetecting = true
-
-  const maxAttempts = 10
-  const delayMs = 200
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      const supported = await invoke<boolean>('supports_transparent_window')
-      setTransparentSupport(!!supported)
-      transparentSupportDetecting = false
-      return
-    } catch (err) {
-      // 不把“调用失败”当作“不支持”：只在明确返回 false 时才回退
-      if (attempt === maxAttempts - 1) {
-        try { console.warn('[Window] 透明支持检测失败，保持透明模式', err) } catch {}
-      } else {
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
-      }
-    }
-  }
-
-  transparentSupportDetecting = false
-}
 
 // 窗口拖拽初始化：为 mac / Linux 上的紧凑标题栏补齐拖动支持
 function initWindowDrag() {

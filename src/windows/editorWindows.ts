@@ -13,6 +13,11 @@ export type EditorWindowCreateOpts = {
   y?: number
 }
 
+function isWindowsPlatform(): boolean {
+  const platform = (navigator.platform || '').toLowerCase()
+  return platform.includes('win')
+}
+
 export function isEditorWindowLabel(label: string): boolean {
   // 主窗口固定为 main；同进程新开的编辑器窗口统一用 main- 前缀
   return label === 'main' || label.startsWith('main-')
@@ -72,10 +77,6 @@ export async function findWebviewWindowLabelAtScreenPoint(
 export async function createEditorWebviewWindow(
   opts?: EditorWindowCreateOpts,
 ): Promise<{ label: string } | null> {
-  const preferTransparent = (): boolean => {
-    const v = (globalThis as any).__flymdTransparentSupported
-    return typeof v === 'boolean' ? v : true
-  }
   try {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
     const label =
@@ -92,8 +93,8 @@ export async function createEditorWebviewWindow(
       height,
       resizable: true,
       decorations: false,
-      transparent: preferTransparent(),
-      shadow: false,
+      transparent: isWindowsPlatform(),
+      shadow: !isWindowsPlatform(),
       x: typeof opts?.x === 'number' ? opts!.x : undefined,
       y: typeof opts?.y === 'number' ? opts!.y : undefined,
     })

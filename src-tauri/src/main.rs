@@ -22,67 +22,6 @@ fn init_linux_render_env() {
   }
 }
 
-#[cfg(target_os = "linux")]
-fn linux_transparency_supported() -> bool {
-  use std::env;
-
-  // Wayland 基本恒有 compositor；透明是否“好用”仍取决于 WebView，但这里做务实判断。
-  let session = env::var("XDG_SESSION_TYPE").unwrap_or_default().to_lowercase();
-  if session == "wayland" || env::var_os("WAYLAND_DISPLAY").is_some() {
-    return true;
-  }
-
-  // 无 DISPLAY 基本意味着没有桌面环境（或纯 Wayland 未导出），直接判不支持。
-  if env::var_os("DISPLAY").is_none() {
-    return false;
-  }
-
-  // X11：检查是否存在合成管理器（_NET_WM_CM_S{screen} selection owner）
-  use x11rb::protocol::xproto::ConnectionExt;
-  use x11rb::rust_connection::RustConnection;
-  let Ok((conn, screen_num)) = RustConnection::connect(None) else { return false; };
-
-  let atom_name = format!("_NET_WM_CM_S{screen_num}");
-  let atom_reply = match conn.intern_atom(false, atom_name.as_bytes()) {
-    Ok(cookie) => match cookie.reply() {
-      Ok(r) => r,
-      Err(_) => return false,
-    },
-    Err(_) => return false,
-  };
-
-  let owner_reply = match conn.get_selection_owner(atom_reply.atom) {
-    Ok(cookie) => match cookie.reply() {
-      Ok(r) => r,
-      Err(_) => return false,
-    },
-    Err(_) => return false,
-  };
-
-  owner_reply.owner != 0
-}
-
-#[tauri::command]
-fn supports_transparent_window() -> bool {
-  // 目标：默认尝试透明；如果平台/环境明显不支持，则前端回退到“之前状态”（不依赖透明）。
-  #[cfg(target_os = "windows")]
-  {
-    return true;
-  }
-  #[cfg(target_os = "macos")]
-  {
-    return true;
-  }
-  #[cfg(target_os = "linux")]
-  {
-    return linux_transparency_supported();
-  }
-  #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-  {
-    false
-  }
-}
-
 // 启动诊断日志：发布版也能落盘，便于定位“黑屏/卡初始化”等问题
 static STARTUP_LOG_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
 static PANIC_HOOK_INSTALLED: OnceLock<()> = OnceLock::new();
@@ -1041,7 +980,6 @@ fn main() {
       android_persist_uri_permission,
       get_cli_args,
       get_platform,
-      supports_transparent_window,
       get_virtual_screen_size,
       open_as_sticky_note
     ])

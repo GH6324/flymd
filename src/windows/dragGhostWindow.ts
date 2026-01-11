@@ -45,13 +45,14 @@ function stableLabel(ownerLabel: string): string {
   return LABEL_PREFIX + safe
 }
 
+function isWindowsPlatform(): boolean {
+  const platform = (navigator.platform || '').toLowerCase()
+  return platform.includes('win')
+}
+
 export async function createDragGhostWindow(text: string): Promise<DragGhostWindow | null> {
-  const transparentSupported = (): boolean => {
-    const v = (globalThis as any).__flymdTransparentSupported
-    return typeof v === 'boolean' ? v : true
-  }
-  // 透明窗口不支持时直接降级：避免出现遮挡鼠标的“黑块窗口”
-  if (!transparentSupported()) return null
+  // 仅 Windows 使用透明幽灵窗口；Mac/Linux 回退到无幽灵窗口（避免透明导致的黑块/不透明边缘问题）
+  if (!isWindowsPlatform()) return null
 
   try {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
