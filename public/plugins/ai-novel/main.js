@@ -5629,12 +5629,51 @@ async function openWriteWithChoiceDialog(ctx) {
     return safeText(name).trim()
   }
 
-  function _castGuessDeadFromStatus(status) {
-    const s = safeText(status)
+  function _castEscapeRegExp(s) {
+    return safeText(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+
+  function _castGuessDeadFromStatus(name, status, allNames) {
+    const s = safeText(status).trim()
     if (!s) return false
-    // 保守匹配：宁可不标也别误标
+
+    // 保守匹配：宁可不标也别误标。
+    // 现实里“上一章状态”经常写成“得知某某牺牲/目睹某某被杀”，这不等于当前人物死亡。
+
     if (/\bdead\b/i.test(s)) return true
-    if (/(?:已|确认|当场|最终)?(?:死亡|死去|身亡|去世|殉职|牺牲|阵亡|毙命|遇害|被杀)/u.test(s)) return true
+
+    // 强指示：基本等同于“此人已死”
+    if (/(?:已|确认|当场|最终)?(?:已死|死亡|死去|身亡|去世|已故|亡故|逝世)/u.test(s)) return true
+
+    // 弱指示：更容易误伤（牺牲/阵亡/遇害/被杀…），需要更严格的上下文判断
+    const weak = /(?:殉职|牺牲|阵亡|毙命|遇害|被杀)/u
+    if (!weak.test(s)) return false
+
+    // “得知/听闻/目睹…牺牲/遇害”大概率在说别人
+    if (/(?:得知|听闻|听说|听到|获知|得悉|发现|目睹|传来|消息称|噩耗|收到).{0,10}(?:殉职|牺牲|阵亡|毙命|遇害|被杀)/u.test(s)) return false
+
+    const cur = safeText(name).trim()
+    const names = Array.isArray(allNames) ? allNames : []
+
+    // 若“死亡词”紧贴出现了“别人的名字”，默认认为死的是别人，不是当前人物
+    for (let i = 0; i < names.length; i++) {
+      const n = safeText(names[i]).trim()
+      if (!n || (cur && n === cur)) continue
+      // 名字太短会造成大量误判（例如单字/代号），直接跳过
+      if (n.length < 2) continue
+      const re = new RegExp(_castEscapeRegExp(n) + '.{0,6}(?:殉职|牺牲|阵亡|毙命|遇害|被杀)', 'u')
+      if (re.test(s)) return false
+    }
+
+    // 若当前人物名字与“死亡词”紧贴出现，则基本可判定为当前人物死亡
+    if (cur && cur.length >= 2) {
+      const reSelf = new RegExp(_castEscapeRegExp(cur) + '.{0,6}(?:殉职|牺牲|阵亡|毙命|遇害|被杀)', 'u')
+      if (reSelf.test(s)) return true
+    }
+
+    // 没有任何名字可用时，只在“像是在描述当前人物结局”的句式里才猜测
+    if (/(?:为|替|因|在).{0,12}(?:殉职|牺牲|阵亡|毙命|遇害|被杀)/u.test(s)) return true
+
     return false
   }
 
@@ -6061,12 +6100,13 @@ async function openWriteWithChoiceDialog(ctx) {
         } catch {
           mainSet = null
         }
+        const allNames = hasItems ? items.map((x) => safeText(x.name).trim()).filter(Boolean) : []
         _castState.items = hasItems
           ? items.map((x) => {
             const name = safeText(x.name).trim()
             const status = safeText(x.status).trim()
             const meta = _castUiMetaGet(name)
-            const dead = (meta && meta.dead != null) ? !!meta.dead : _castGuessDeadFromStatus(status)
+            const dead = (meta && meta.dead != null) ? !!meta.dead : _castGuessDeadFromStatus(name, status, allNames)
             const hidden = (meta && meta.hidden != null) ? !!meta.hidden : _castGuessHiddenFromStatus(status)
             const pinned = (meta && meta.pinned != null)
               ? !!meta.pinned
