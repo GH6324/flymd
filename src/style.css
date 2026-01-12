@@ -914,6 +914,11 @@ body.compact-titlebar .window-btn.window-close:hover {
 .split-resize-handle.dragging {
   background: rgba(100, 150, 255, 0.3);
 }
+
+/* 分屏模式：缩小库侧栏自动唤醒热区，避免左侧编辑区误触发 */
+.container.split-preview #lib-edge {
+  width: 8px !important;
+}
 @media (prefers-color-scheme: dark) {
   body:not(.light-mode) .container.split-preview:not(.wysiwyg):not(.wysiwyg-v2)::before {
     border-left-color: rgba(255,255,255,0.25);
