@@ -8255,6 +8255,15 @@ function bindEvents() {
       }
       return
     }
+    // Ctrl+Shift+Z：显示/隐藏库侧栏（文件树）
+    // 只绑定 Ctrl（不绑定 Cmd），避免在 macOS 抢走 Cmd+Shift+Z 的“重做”。
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'z') {
+      e.preventDefault()
+      try { e.stopPropagation() } catch {}
+      try { (e as any).stopImmediatePropagation && (e as any).stopImmediatePropagation() } catch {}
+      try { await toggleLibraryFileTreeFromRibbon() } catch {}
+      return
+    }
     // 专注模式快捷键 Ctrl+Shift+F
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); await toggleFocusMode(); return }
     // 文件操作快捷键
@@ -8324,9 +8333,8 @@ function bindEvents() {
   // 库侧栏搜索按钮：快速文件搜索
   const btnSearch = document.getElementById('btn-search')
   if (btnSearch) btnSearch.addEventListener('click', guard(() => showQuickSearch()))
-  // Ribbon 文件树切换按钮
-  const btnFiletree = document.getElementById('btn-filetree')
-  if (btnFiletree) btnFiletree.addEventListener('click', guard(async () => {
+
+  async function toggleLibraryFileTreeFromRibbon(): Promise<void> {
     const lib = document.getElementById('library')
     const showing = lib && !lib.classList.contains('hidden')
     if (showing) { showLibrary(false); return }
@@ -8348,6 +8356,12 @@ function bindEvents() {
       await fileTree.refresh()
     }
     try { const s = await getLibrarySort(); fileTree.setSort(s); await fileTree.refresh() } catch {}
+  }
+
+  // Ribbon 文件树切换按钮
+  const btnFiletree = document.getElementById('btn-filetree')
+  if (btnFiletree) btnFiletree.addEventListener('click', guard(async () => {
+    await toggleLibraryFileTreeFromRibbon()
   }))
   // 非固定模式：点击库外空白自动隐藏
   document.addEventListener('mousedown', (ev) => {

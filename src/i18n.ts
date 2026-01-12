@@ -117,7 +117,7 @@ const dict = {
     'outline.pin.fixed': '固定',
 
     'lib.menu': '库',
-    'lib.toggle': '显示/隐藏文件树',
+    'lib.toggle': '显示/隐藏文件树 (Ctrl+Shift+Z)',
     'lib.choose': '库管理',
     'lib.refresh': '刷新',
     'lib.choose.short': '库管理',
@@ -533,7 +533,7 @@ const dict = {
     'outline.pin.fixed': 'Dock',
 
     'lib.menu': 'Library',
-    'lib.toggle': 'Show/Hide File Tree',
+    'lib.toggle': 'Show/Hide File Tree (Ctrl+Shift+Z)',
     'lib.choose': 'Manage',
     'lib.refresh': 'Refresh',
     'lib.choose.short': 'Manage',

@@ -166,6 +166,7 @@ export class TextareaUndoManager {
       const isCtrlOrMeta = e.ctrlKey || e.metaKey
       if (!isCtrlOrMeta) return
 
+      const isMeta = e.metaKey
       const key = e.key.toLowerCase()
       if (key === 'z' && !e.shiftKey) {
         // 只有在我们实际处理了撤销时才拦截快捷键
@@ -173,7 +174,7 @@ export class TextareaUndoManager {
         if (handled) {
           e.preventDefault()
         }
-      } else if ((key === 'z' && e.shiftKey) || key === 'y') {
+      } else if (key === 'y' || (isMeta && key === 'z' && e.shiftKey)) {
         const handled = this.redo()
         if (handled) {
           e.preventDefault()
