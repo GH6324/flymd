@@ -760,7 +760,7 @@ function toPluginAssetUrl(absDir: string | null, relPath: string): string {
   } catch { return '' }
 }
 const builtinPlugins: InstalledPlugin[] = [
-  { id: 'uploader-s3', name: '内置图床', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: '粘贴/拖拽图片自动上传，支持 S3/R2 或 ImgLa，使用设置中的凭据。' },
+  { id: 'uploader-s3', name: '图床管理', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: '粘贴/拖拽图片自动上传，支持 S3/R2 或 ImgLa，使用设置中的凭据。' },
   { id: 'webdav-sync', name: 'WebDAV 同步', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: 'F5/启动/关闭前同步，基于修改时间覆盖' }
 ]
 
