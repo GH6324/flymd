@@ -766,6 +766,9 @@ body.compact-titlebar .window-btn.window-close:hover {
   /* 大纲独立布局左右占位宽度（默认 0，仅在剥离模式下使用） */
   --gap-left-outline: 0px;
   --gap-right-outline: 0px;
+  /* 大纲定位偏移：仅用于避让“抽屉式侧栏”，不推挤编辑区 */
+  --outline-left-offset: 0px;
+  --outline-right-offset: 0px;
   /* 插件侧边/底部 Panel 推挤间距（包含 AI 助手等） */
   --ai-left: 300px;   /* 向后兼容旧 AI 助手：左侧宽度 */
   --ai-right: 300px;  /* 向后兼容旧 AI 助手：右侧宽度 */
@@ -1860,15 +1863,51 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   border-right: 1px solid var(--border);
 }
 .lib-outline.outline-floating.side-left {
-  /* 默认贴容器左侧；若库固定在左侧，则在库宽度之后紧贴显示 */
-  left: 0;
-}
-.container.with-library-left .lib-outline.outline-floating.side-left {
-  left: 240px; /* 与 .library 宽度保持一致，消除中间空隙 */
+  /* 左侧：贴在库占位之后；库为抽屉且可见时，再额外避让其宽度 */
+  left: calc(var(--gap-left-library, 0px) + var(--outline-left-offset, 0px));
 }
 .lib-outline.outline-floating.side-right {
   /* 右侧：始终贴在右侧 dock/插件面板的左边缘；若无插件则贴容器右侧 */
-  right: calc(var(--gap-right-library, 0px) + var(--dock-right-gap, 0px));
+  right: calc(var(--gap-right-library, 0px) + var(--dock-right-gap, 0px) + var(--outline-right-offset, 0px));
+}
+
+/* 大纲自动隐藏：不占位，通过 transform 滑入/滑出（类似侧栏） */
+.lib-outline.outline-floating.outline-autohide {
+  transition: transform var(--transition-normal), opacity var(--transition-normal);
+  will-change: transform, opacity;
+}
+.lib-outline.outline-floating.outline-autohide:not(.outline-autohide-open) {
+  opacity: 0;
+  pointer-events: none;
+}
+.lib-outline.outline-floating.side-left.outline-autohide:not(.outline-autohide-open) {
+  transform: translateX(calc(-100% - 2px));
+}
+.lib-outline.outline-floating.side-right.outline-autohide:not(.outline-autohide-open) {
+  transform: translateX(calc(100% + 2px));
+}
+.lib-outline.outline-floating.outline-autohide.outline-autohide-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+/* 大纲自动隐藏唤醒热区：仅在自动隐藏且收起时显示 */
+.outline-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 36px;
+  z-index: 14;
+  pointer-events: auto;
+  background: transparent;
+  display: none;
+}
+.outline-edge.side-left {
+  left: calc(var(--gap-left-library, 0px) + var(--outline-left-offset, 0px));
+}
+.outline-edge.side-right {
+  right: calc(var(--gap-right-library, 0px) + var(--dock-right-gap, 0px) + var(--outline-right-offset, 0px));
 }
 
 .lib-outline .ol-item {

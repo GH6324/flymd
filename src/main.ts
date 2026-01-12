@@ -162,6 +162,13 @@ import {
   syncDetachedOutlineVisibility,
 } from './ui/outlineAutoHide'
 import {
+  configureOutlineDockUi,
+  applyOutlineDockUi,
+  getOutlineDocked,
+  syncOutlineDockFromStore,
+  appendOutlineDockMenuItems,
+} from './ui/outlineDockUi'
+import {
   openPluginMenuManager,
   type PluginMenuManagerHost,
 } from './extensions/pluginMenuManager'
@@ -2516,6 +2523,15 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
           })
         }
     } catch {}
+  // 大纲固定/自动隐藏（剥离布局）：模块化 UI（尽量别再往 main.ts 堆逻辑）
+  try {
+    configureOutlineDockUi({
+      getStore: () => store as any,
+      t: (k) => t(k) as any,
+      getOutlineLayout: () => outlineLayout as any,
+      requestApplyOutlineLayout: () => { try { applyOutlineLayout() } catch {} },
+    })
+  } catch {}
   // 创建浮动展开按钮（侧栏隐藏时显示，仅在专注模式）
   try {
     const floatToggle = document.createElement('button')
@@ -4593,8 +4609,9 @@ function renderOutlinePanel() {
     }
 
     setOutlineHasContent(outline, items.length > 0)
-    const layoutChanged = syncDetachedOutlineVisibility(outlineLayout, container, outline)
+    const layoutChanged = syncDetachedOutlineVisibility(outlineLayout, container, outline, getOutlineDocked())
     if (layoutChanged) notifyWorkspaceLayoutChanged()
+    try { applyOutlineDockUi() } catch {}
 
     // 缓存命中：若本次大纲签名与上次相同，跳过重建，仅更新高亮
     try {
@@ -4721,11 +4738,11 @@ async function renderPdfOutline(outlineEl: HTMLDivElement) {
     // PDF 目录加载/错误信息也需要可见（剥离布局下不然用户啥都看不到）
     setOutlineHasContent(outlineEl, true)
     const container = document.querySelector('.container') as HTMLDivElement | null
-    if (syncDetachedOutlineVisibility(outlineLayout, container, outlineEl)) notifyWorkspaceLayoutChanged()
+    if (syncDetachedOutlineVisibility(outlineLayout, container, outlineEl, getOutlineDocked())) notifyWorkspaceLayoutChanged()
     const filePath = String(currentFilePath || '')
     if (!filePath) {
       setOutlineHasContent(outlineEl, false)
-      if (syncDetachedOutlineVisibility(outlineLayout, container, outlineEl)) notifyWorkspaceLayoutChanged()
+      if (syncDetachedOutlineVisibility(outlineLayout, container, outlineEl, getOutlineDocked())) notifyWorkspaceLayoutChanged()
       outlineEl.innerHTML = '<div class="empty">未打开 PDF</div>'
       return
     }
@@ -4743,7 +4760,8 @@ async function renderPdfOutline(outlineEl: HTMLDivElement) {
     const renderItems = (items: Array<{ level: number; title: string; page: number }>, fromCache: boolean) => {
       const hasContent = !!(items && items.length > 0)
       setOutlineHasContent(outlineEl, hasContent)
-      if (syncDetachedOutlineVisibility(outlineLayout, container, outlineEl)) notifyWorkspaceLayoutChanged()
+      if (syncDetachedOutlineVisibility(outlineLayout, container, outlineEl, getOutlineDocked())) notifyWorkspaceLayoutChanged()
+      try { applyOutlineDockUi() } catch {}
       if (!hasContent) { outlineEl.innerHTML = '<div class="empty">目录为空</div>'; return }
 
       // 计算是否有子级（用于折叠/展开，限制到 level<=2）
@@ -5270,6 +5288,7 @@ function applyOutlineLayout() {
       }
       outlineEl.classList.remove('outline-floating', 'side-left', 'side-right')
       container.classList.remove('with-outline-left', 'with-outline-right')
+      try { applyOutlineDockUi() } catch {}
 
       // 嵌入模式：按当前 Tab 决定显示目录/大纲，避免从剥离切回后两者同时可见
       const showOutline = !!tabOutline?.classList.contains('active') && !tabFiles?.classList.contains('active')
@@ -5291,7 +5310,8 @@ function applyOutlineLayout() {
 
     // 剥离模式：目录始终可见；大纲是否显示由“是否有内容”决定
     if (treeEl) treeEl.classList.remove('hidden')
-    syncDetachedOutlineVisibility(outlineLayout, container, outlineEl)
+    syncDetachedOutlineVisibility(outlineLayout, container, outlineEl, getOutlineDocked())
+    try { applyOutlineDockUi() } catch {}
 
     notifyWorkspaceLayoutChanged()
   } catch {}
@@ -5461,6 +5481,7 @@ async function persistLibraryVisible() {
       menu.appendChild(makeItem('内嵌模式', 'embedded'))
       menu.appendChild(makeItem('独立左侧', 'left'))
       menu.appendChild(makeItem('独立右侧', 'right'))
+      try { appendOutlineDockMenuItems(menu, outlineLayout) } catch {}
       const close = () => {
         try {
           document.removeEventListener('click', onDocClick, true)
@@ -8940,6 +8961,9 @@ function bindEvents() {
         removePluginDir: (dir: string) => removePluginDir(dir),
         openPluginSettings,
       })
+    } catch {}
+    try {
+      await syncOutlineDockFromStore()
     } catch {}
     try {
       const layout = await getOutlineLayout()

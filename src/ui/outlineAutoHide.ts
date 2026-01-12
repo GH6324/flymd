@@ -31,10 +31,13 @@ export function shouldUpdateOutlinePanel(layout: OutlineLayoutMode, outlineEl: H
 }
 
 // 同步剥离布局下的占位与显示状态（不负责 re-parent，仅负责“显隐 + 容器占位类”）
+// docked=true：固定列占位（推挤编辑区）
+// docked=false：自动隐藏模式不占位（由外层负责 hover 展开/收起动画）
 export function syncDetachedOutlineVisibility(
   layout: OutlineLayoutMode,
   containerEl: HTMLElement | null,
   outlineEl: HTMLElement | null,
+  docked: boolean = true,
 ): boolean {
   if (!containerEl || !outlineEl) return false
   if (layout === 'embedded') return false
@@ -50,10 +53,15 @@ export function syncDetachedOutlineVisibility(
   } else {
     const isLeft = layout === 'left'
     try { outlineEl.classList.remove('hidden') } catch {}
-    try {
-      containerEl.classList.toggle('with-outline-left', isLeft)
-      containerEl.classList.toggle('with-outline-right', !isLeft)
-    } catch {}
+    if (!docked) {
+      // 自动隐藏：不占位，避免 hover 时编辑区抖动
+      try { containerEl.classList.remove('with-outline-left', 'with-outline-right') } catch {}
+    } else {
+      try {
+        containerEl.classList.toggle('with-outline-left', isLeft)
+        containerEl.classList.toggle('with-outline-right', !isLeft)
+      } catch {}
+    }
   }
 
   const afterHidden = outlineEl.classList.contains('hidden')

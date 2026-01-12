@@ -113,6 +113,8 @@ const dict = {
     'tab.files.short': '目录',
     'tab.outline.short': '大纲',
     'outline.layout': '大纲布局',
+    'outline.pin.auto': '自动隐藏',
+    'outline.pin.fixed': '固定',
 
     'lib.menu': '库',
     'lib.toggle': '显示/隐藏文件树',
@@ -507,6 +509,8 @@ const dict = {
     'tab.files.short': 'Tree',
     'tab.outline.short': 'Outl',
     'outline.layout': 'Outline Layout',
+    'outline.pin.auto': 'Auto Hide',
+    'outline.pin.fixed': 'Dock',
 
     'lib.menu': 'Library',
     'lib.toggle': 'Show/Hide File Tree',
