@@ -2,6 +2,12 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v1.1.3
+- Added: Lsky (Lsky Pro+) image host support (ImgLa compatible, configurable base URL)
+- Fixed: HTML sanitization on paste could break code formatting
+- Changed: Built-in “Image Host Manager” copy update; refined provider labels (S3/R2, Lsky/ImgLa)
+- Fixed: Built-in “Image Gallery” plugin upgraded to v0.1.4 — fixed image preview issues; paginated S3/R2 local history (9 per page)
+
 ## Update v1.1.2
 - Added: Built-in image host: ImgLa uploader
 - Improved: Image upload flow and config storage (manual upload / S3 / ImgLa)
