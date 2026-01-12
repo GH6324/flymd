@@ -191,7 +191,7 @@ const dict = {
     'upl.desc': '用于将粘贴/拖拽的图片自动上传到所选图床，保存后即生效（仅在启用时）。',
     'upl.section.provider': '图床类型',
     'upl.provider': '选择图床',
-    'upl.provider.s3': '内置图床',
+    'upl.provider.s3': 'S3/R2图床',
     'upl.provider.imgla': 'ImgLa 图床',
     'upl.provider.hint': '只显示当前选择图床的配置项；切换不会清空另一种图床的配置',
     'upl.refresh': '刷新',
