@@ -2716,7 +2716,10 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
             <div class="upl-section-title" id="upl-sec-imgla">${t('upl.imgla.section')}</div>
             <label id="upl-imgla-home-label">${t('upl.imgla.home')}</label>
             <div class="upl-field">
-              <a id="upl-imgla-open" href="https://www.imgla.net/" target="_blank" rel="noopener noreferrer">https://www.imgla.net/</a>
+              <div class="upl-inline-row">
+                <a id="upl-imgla-open" href="https://www.imgla.net/" target="_blank" rel="noopener noreferrer">https://www.imgla.net/</a>
+                <span class="upl-inline-note">${t('upl.imgla.promo')}</span>
+              </div>
             </div>
             <label for="upl-imgla-baseurl">${t('upl.imgla.baseUrl')}</label>
             <div class="upl-field">

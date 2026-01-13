@@ -249,6 +249,7 @@ const dict = {
     // ImgLa（Lsky Pro+）
     'upl.imgla.section': '兰空/ImgLa（Lsky Pro+）',
     'upl.imgla.home': 'ImgLa图床官网',
+    'upl.imgla.promo': '使用优惠码 flymd 免费获得1年图床VIP',
     'upl.imgla.baseUrl': '接口地址',
     'upl.imgla.baseUrl.ph': '默认 https://www.imgla.net',
     'upl.imgla.baseUrl.hint': '兼容兰空（Lsky Pro+）API；留空则使用默认值（无需填写末尾 /）',
@@ -694,6 +695,7 @@ const dict = {
     // ImgLa (Lsky Pro+)
     'upl.imgla.section': 'Lsky/ImgLa (Lsky Pro+)',
     'upl.imgla.home': 'ImgLa Homepage',
+    'upl.imgla.promo': 'Use coupon code flymd to get 1 year VIP for free',
     'upl.imgla.baseUrl': 'Base URL',
     'upl.imgla.baseUrl.ph': 'Default https://www.imgla.net',
     'upl.imgla.baseUrl.hint': 'Lsky Pro+ compatible API; leave empty to use default (no trailing /)',

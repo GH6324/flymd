@@ -3813,6 +3813,20 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   word-break: break-all;
 }
 
+.upl-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.upl-inline-note {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .upl-grid button.btn-secondary {
   -webkit-app-region: no-drag;
   cursor: pointer;
