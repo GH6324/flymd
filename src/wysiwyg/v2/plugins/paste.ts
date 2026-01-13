@@ -7,6 +7,34 @@ import { transcodeToWebpIfNeeded } from '../../../utils/image'
 // 本地保存：在未启用图床或开启“总是保存到本地”时，将粘贴/拖拽的图片写入 images/ 或默认粘贴目录
 // 文件保存交给外层（main.ts）以避免在插件侧直接依赖 Tauri 插件
 
+function redactUploaderCfg(upCfg: AnyUploaderConfig | null): any {
+  if (!upCfg) return null
+  try {
+    const anyCfg: any = upCfg as any
+    const out: any = {
+      enabled: !!anyCfg.enabled,
+      provider: anyCfg.provider,
+      convertToWebp: !!anyCfg.convertToWebp,
+      webpQuality: anyCfg.webpQuality,
+    }
+    if (anyCfg.provider === 'imgla') {
+      out.baseUrl = anyCfg.baseUrl || anyCfg.imglaBaseUrl
+      out.strategyId = anyCfg.strategyId || anyCfg.imglaStrategyId
+      out.albumId = anyCfg.albumId ?? anyCfg.imglaAlbumId ?? null
+      out.hasToken = !!String(anyCfg.token ?? anyCfg.imglaToken ?? '').trim()
+    } else {
+      out.endpoint = anyCfg.endpoint
+      out.bucket = anyCfg.bucket
+      out.region = anyCfg.region
+      out.hasAccessKey = !!String(anyCfg.accessKeyId ?? '').trim()
+      out.hasSecret = !!String(anyCfg.secretAccessKey ?? '').trim()
+    }
+    return out
+  } catch {
+    return { provider: (upCfg as any)?.provider, enabled: !!(upCfg as any)?.enabled }
+  }
+}
+
 async function getAlwaysLocal(): Promise<boolean> {
   try { const fn = (window as any).flymdAlwaysSaveLocalImages; return typeof fn === 'function' ? !!(await fn()) : false } catch { return false }
 }
@@ -43,6 +71,17 @@ function toFileUri(p: string): string {
   } catch { return p }
 }
 
+function notifyPasteError(msg: string): void {
+  try {
+    const nm = (window as any).NotificationManager
+    if (nm && typeof nm.show === 'function') {
+      nm.show('paste', msg, 3600)
+      return
+    }
+  } catch {}
+  try { console.warn('[Paste]', msg) } catch {}
+}
+
 export const uploader: Uploader = async (files, schema) => {
   console.log('[Paste] uploader 被调用, files.length:', files.length)
   const images: File[] = []
@@ -66,27 +105,31 @@ export const uploader: Uploader = async (files, schema) => {
     const cfgGetter = (typeof window !== 'undefined') ? (window as any).flymdGetUploaderConfig : null
     const upCfg: AnyUploaderConfig | null = typeof cfgGetter === 'function' ? await cfgGetter() : null
     const uploaderEnabled = upCfg && upCfg.enabled
-    console.log('[Paste] uploaderEnabled:', uploaderEnabled, 'upCfg:', upCfg)
+    console.log('[Paste] uploaderEnabled:', uploaderEnabled, 'upCfg:', redactUploaderCfg(upCfg))
 
-    // 2) 先尝试保存本地（如果未启用图床，或启用了"总是保存到本地"）
-    if (!uploaderEnabled || alwaysLocal) {
-      console.log('[Paste] 尝试保存本地...')
+    const trySaveLocal = async (force: boolean): Promise<string | null> => {
+      console.log('[Paste] 尝试保存本地... force:', force)
       try {
         const saver = (window as any).flymdSaveImageToLocalAndGetPath
         console.log('[Paste] saver 函数存在:', typeof saver === 'function')
         if (typeof saver === 'function') {
-          localPath = await saver(img, img.name || 'image')
-          console.log('[Paste] 本地保存结果:', localPath)
+          const p = await saver(img, img.name || 'image', !!force)
+          console.log('[Paste] 本地保存结果:', p)
+          return p || null
         }
       } catch (e) {
         console.error('[Paste] 本地保存失败:', e)
       }
-    } else {
-      console.log('[Paste] 跳过本地保存（图床已启用且未勾选总是保存到本地）')
+      return null
     }
 
-    // 3) 再尝试上传图床（如果启用了图床）
-    if (uploaderEnabled) {
+    // 2) 不启用图床或启用“总是保存本地”：直接保存本地
+    if (!uploaderEnabled || alwaysLocal) {
+      localPath = await trySaveLocal(false)
+    }
+
+    // 3) 启用图床且未强制本地：优先上传；上传失败则强制保存本地（禁止 base64 兜底）
+    if (uploaderEnabled && !alwaysLocal) {
       console.log('[Paste] 尝试上传图床...')
       try {
         let fileForUpload: Blob = img
@@ -100,14 +143,17 @@ export const uploader: Uploader = async (files, schema) => {
             typeForUpload = r.type || 'image/webp'
           }
         } catch {}
+        console.log('[Paste] uploadImageToCloud args', { nameForUpload, typeForUpload, size: (fileForUpload as any)?.size })
         const res = await uploadImageToCloud(fileForUpload, nameForUpload, typeForUpload, upCfg)
         cloudUrl = res?.publicUrl || ''
         console.log('[Paste] 图床上传结果:', cloudUrl)
       } catch (e) {
         console.error('[Paste] 图床上传失败:', e)
       }
-    } else {
-      console.log('[Paste] 跳过图床上传（图床未启用）')
+
+      if (!cloudUrl) {
+        localPath = await trySaveLocal(true)
+      }
     }
 
     // 4) 根据结果决定使用哪个URL
@@ -132,32 +178,10 @@ export const uploader: Uploader = async (files, schema) => {
       }
     }
 
-    // 6) 兜底：base64（仅在所有方式都失败时使用）
-    console.warn('[Paste] 所有方式都失败，使用 base64 兜底')
-    try {
-      const dataUrl = await toDataUrl(img)
-      const n = schema.nodes.image.createAndFill({ src: dataUrl, alt: img.name }) as ProseNode
-      if (n) {
-        console.log('[Paste] base64 节点创建成功')
-        nodes.push(n)
-      }
-    } catch (e) {
-      console.error('[Paste] base64 兜底失败:', e)
-    }
+    // 6) 明确不允许 base64：失败就跳过，并提示用户
+    notifyPasteError('粘贴图片失败：无法上传且本地保存失败（已禁用 base64 兜底）')
   }
   console.log('[Paste] 返回节点数量:', nodes.length)
   return nodes
 }
-
-function toDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    try {
-      const fr = new FileReader()
-      fr.onerror = () => reject(fr.error || new Error('read error'))
-      fr.onload = () => resolve(String(fr.result || ''))
-      fr.readAsDataURL(file)
-    } catch (e) { reject(e) }
-  })
-}
-
 

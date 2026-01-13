@@ -1861,7 +1861,7 @@ async function renderPreviewLight() {
 }
 
 // 供所见 V2 调用：将粘贴/拖拽的图片保存到本地，并返回可写入 Markdown 的路径（自动生成不重复文件名）
-async function saveImageToLocalAndGetPath(file: File, fname: string): Promise<string | null> {
+async function saveImageToLocalAndGetPath(file: File, fname: string, force?: boolean): Promise<string | null> {
   return await saveImageToLocalAndGetPathCore(
     {
       getEditorValue: () => editor.value,
@@ -1885,6 +1885,7 @@ async function saveImageToLocalAndGetPath(file: File, fname: string): Promise<st
     },
     file,
     fname,
+    { force: !!force },
   )
 }
 
@@ -2729,7 +2730,11 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
             </div>
             <label for="upl-imgla-strategy">${t('upl.imgla.strategy')}</label>
             <div class="upl-field">
-              <input id="upl-imgla-strategy" type="number" min="1" step="1" placeholder="${t('upl.imgla.strategy.ph')}" />
+              <div style="display:flex;align-items:center;gap:8px;min-width:220px;">
+                <select id="upl-imgla-strategy-sel" style="flex:1;min-width:0;"></select>
+                <input id="upl-imgla-strategy" type="number" min="1" step="1" style="width:96px;" placeholder="1" />
+                <button type="button" id="upl-imgla-strategy-refresh" class="btn-secondary">${t('upl.refresh')}</button>
+              </div>
               <div class="upl-hint" id="upl-hint-imgla-strategy">${t('upl.imgla.strategy.hint')}</div>
             </div>
             <label for="upl-imgla-album">${t('upl.imgla.album')}</label>
@@ -5108,7 +5113,7 @@ try {
     ;(window as any).flymdGetCurrentFilePath = () => currentFilePath
     ;(window as any).flymdGetDefaultPasteDir = () => getDefaultPasteDir()
     ;(window as any).flymdAlwaysSaveLocalImages = () => getAlwaysSaveLocalImages()
-    ;(window as any).flymdSaveImageToLocalAndGetPath = (file: File, name: string) => saveImageToLocalAndGetPath(file, name)
+    ;(window as any).flymdSaveImageToLocalAndGetPath = (file: File, name: string, force?: boolean) => saveImageToLocalAndGetPath(file, name, force)
   }
 } catch {}
 

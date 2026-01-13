@@ -35,25 +35,58 @@ export type ImagePasteDeps = {
   getUserPicturesDir(): Promise<string | null>
 }
 
+function redactUploaderCfg(upCfg: AnyUploaderConfig | null): any {
+  if (!upCfg) return null
+  try {
+    const anyCfg: any = upCfg as any
+    const out: any = {
+      enabled: !!anyCfg.enabled,
+      provider: anyCfg.provider,
+      convertToWebp: !!anyCfg.convertToWebp,
+      webpQuality: anyCfg.webpQuality,
+      saveLocalAsWebp: !!anyCfg.saveLocalAsWebp,
+    }
+    if (anyCfg.provider === 'imgla') {
+      out.baseUrl = anyCfg.baseUrl || anyCfg.imglaBaseUrl
+      out.strategyId = anyCfg.strategyId || anyCfg.imglaStrategyId
+      out.albumId = anyCfg.albumId ?? anyCfg.imglaAlbumId ?? null
+      out.hasToken = !!String(anyCfg.token ?? anyCfg.imglaToken ?? '').trim()
+    } else {
+      out.endpoint = anyCfg.endpoint
+      out.bucket = anyCfg.bucket
+      out.region = anyCfg.region
+      out.hasAccessKey = !!String(anyCfg.accessKeyId ?? '').trim()
+      out.hasSecret = !!String(anyCfg.secretAccessKey ?? '').trim()
+    }
+    return out
+  } catch {
+    return { provider: (upCfg as any)?.provider, enabled: !!(upCfg as any)?.enabled }
+  }
+}
+
 // 供所见 V2 调用：将粘贴/拖拽的图片保存到本地，并返回可写入 Markdown 的路径
 export async function saveImageToLocalAndGetPathCore(
   deps: ImagePasteDeps,
   file: File,
   fname: string,
+  opts?: { force?: boolean },
 ): Promise<string | null> {
   console.log('[saveImageToLocal] 被调用, fname:', fname, 'file.size:', file.size)
   try {
+    const force = !!opts?.force
     const alwaysLocal = await deps.getAlwaysSaveLocalImages()
     const upCfg = await deps.getUploaderConfig()
-    console.log('[saveImageToLocal] alwaysLocal:', alwaysLocal, 'upCfg:', upCfg)
+    console.log('[saveImageToLocal] alwaysLocal:', alwaysLocal, 'upCfg:', redactUploaderCfg(upCfg))
 
     const uploaderEnabled = !!(upCfg && upCfg.enabled)
-    const shouldSaveLocal = !uploaderEnabled || alwaysLocal
+    const shouldSaveLocal = force || !uploaderEnabled || alwaysLocal
     console.log(
       '[saveImageToLocal] uploaderEnabled:',
       uploaderEnabled,
       'shouldSaveLocal:',
       shouldSaveLocal,
+      'force:',
+      force,
     )
 
     if (!shouldSaveLocal) {

@@ -192,6 +192,11 @@ export function createImageUploader(deps: ImageUploadDeps) {
           }
         }
 
+        // ===== 步骤 2b: 上传失败则强制本地保存（禁止 base64 兜底）=====
+        if (!localPath && !cloudUrl && uploaderEnabled && !alwaysLocal) {
+          localPath = await saveBlobLocallyWithPrefs(deps, fileOrBlob, fname)
+        }
+
         // ===== 步骤 3: 决定最终 URL =====
         if (localPath) {
           const needAngle =
@@ -206,25 +211,8 @@ export function createImageUploader(deps: ImageUploadDeps) {
           replaceUploadingPlaceholder(deps, id, `![${fname}](${cloudUrl})`)
           return
         }
-
-        // ===== 步骤 4: 兜底 base64 =====
-        const fallbackFile =
-          fileOrBlob instanceof File
-            ? fileOrBlob
-            : new File([fileOrBlob], fname, { type: mime || 'application/octet-stream' })
-        const dataUrl = await deps.fileToDataUrl(fallbackFile)
-        replaceUploadingPlaceholder(deps, id, `![${fname}](${dataUrl})`)
       } catch {
-        try {
-          const fallbackFile =
-            fileOrBlob instanceof File
-              ? fileOrBlob
-              : new File([fileOrBlob], fname, { type: mime || 'application/octet-stream' })
-          const dataUrl = await deps.fileToDataUrl(fallbackFile)
-          replaceUploadingPlaceholder(deps, id, `![${fname}](${dataUrl})`)
-        } catch {
-          // 完全失败时占位符保留，避免破坏文本
-        }
+        // 完全失败时占位符保留，避免插入 base64 破坏文档
       }
     })()
   }

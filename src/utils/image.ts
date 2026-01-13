@@ -8,6 +8,14 @@ export type TranscodeResult = {
   changed: boolean
 }
 
+function getExtLower(name: string): string {
+  try {
+    const s = String(name || '').trim().toLowerCase()
+    const m = s.match(/\.([a-z0-9]+)$/i)
+    return m ? m[1].toLowerCase() : ''
+  } catch { return '' }
+}
+
 // 将文件名后缀替换为 .webp
 function toWebpName(name: string): string {
   try {
@@ -86,13 +94,15 @@ export async function transcodeToWebpIfNeeded(input: Blob, origName: string, qua
   try {
     const type = (input.type || '').toLowerCase()
     const skipAnimated = !!opts?.skipAnimated
+    const ext = getExtLower(origName)
     // 已是 WebP：直接返回
     if (type.includes('image/webp')) {
       return { blob: input, type: 'image/webp', fileName: origName, changed: false }
     }
-    // 动图 GIF：跳过
-    if (skipAnimated && type.includes('image/gif')) {
-      try { const head = await readBlobBytes(input, 512 * 1024); if (isAnimatedGifBytes(head)) return { blob: input, type: 'image/gif', fileName: origName, changed: false } } catch {}
+    // GIF：按 UI 语义“Gif 直接跳过”（不要转 WebP）。
+    // 不能只靠 Blob.type：某些环境/来源会是 application/octet-stream 或空字符串。
+    if (skipAnimated && (type.includes('image/gif') || (ext === 'gif' && !type.includes('image/')))) {
+      return { blob: input, type: 'image/gif', fileName: origName, changed: false }
     }
     // APNG：跳过
     if (skipAnimated && type.includes('image/png')) {

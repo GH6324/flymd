@@ -69,7 +69,9 @@ export async function openUploaderDialog(deps: UploaderDialogDeps): Promise<void
   const inputAcl = overlay.querySelector('#upl-acl') as HTMLInputElement
   const inputImglaBaseUrl = overlay.querySelector('#upl-imgla-baseurl') as HTMLInputElement
   const inputImglaToken = overlay.querySelector('#upl-imgla-token') as HTMLInputElement
+  const selectImglaStrategy = overlay.querySelector('#upl-imgla-strategy-sel') as HTMLSelectElement
   const inputImglaStrategy = overlay.querySelector('#upl-imgla-strategy') as HTMLInputElement
+  const btnImglaStrategyRefresh = overlay.querySelector('#upl-imgla-strategy-refresh') as HTMLButtonElement
   const selectImglaAlbum = overlay.querySelector('#upl-imgla-album') as HTMLSelectElement
   const btnImglaAlbumRefresh = overlay.querySelector('#upl-imgla-album-refresh') as HTMLButtonElement
   const linkImglaOpen = overlay.querySelector('#upl-imgla-open') as HTMLAnchorElement
@@ -149,6 +151,55 @@ export async function openUploaderDialog(deps: UploaderDialogDeps): Promise<void
     }
   }
 
+  const refreshImglaStrategies = async () => {
+    try {
+      if (!selectImglaStrategy) return
+      const token = String(inputImglaToken?.value || '').trim()
+      if (!token) {
+        fillSelect(selectImglaStrategy, [{ value: '1', label: '请先填写 ImgLa 令牌' }], '1')
+        return
+      }
+      fillSelect(selectImglaStrategy, [{ value: '1', label: '加载中...' }], '1')
+      const baseUrl = String(inputImglaBaseUrl?.value || '').trim().replace(/\/+$/, '') || IMGLA_BASE_URL
+      const list: any = await invoke('flymd_imgla_list_strategies', { req: { baseUrl, token } } as any)
+      const strategies = Array.isArray(list) ? list : []
+      try {
+        console.log('[UploaderDialog] ImgLa strategies loaded', {
+          count: strategies.length,
+          sample: strategies[0] ? { id: strategies[0].id, name: strategies[0].name } : null,
+        })
+      } catch {}
+      const opts: Array<{ value: string; label: string }> = []
+      for (const s of strategies) {
+        const id = s && typeof s.id !== 'undefined' ? String(s.id) : ''
+        const name = s && typeof s.name === 'string' ? s.name : ''
+        const ty = s && typeof s.type === 'string' ? s.type : ''
+        const driver = s && typeof s.driver === 'string' ? s.driver : ''
+        const extra = (ty || driver) ? ` [${(ty || driver)}]` : ''
+        if (!id) continue
+        opts.push({ value: id, label: name ? `${name}${extra} (#${id})` : `#${id}` })
+      }
+      // 没拿到策略时也别空着：后端会抛错，这里只是兜底
+      if (opts.length === 0) opts.push({ value: '1', label: '未获取到策略列表（可手动输入右侧 ID）' })
+
+      const desired = String((selectImglaStrategy as any).dataset?.desired || (selectImglaStrategy as any).value || '')
+      const selected = desired || (opts[0]?.value || '1')
+      fillSelect(selectImglaStrategy, opts, selected)
+      try { delete (selectImglaStrategy as any).dataset.desired } catch {}
+      // 让数字输入同步到选中的策略 id（用户仍可手动改）
+      try {
+        if (inputImglaStrategy && selected) inputImglaStrategy.value = String(parseIntOr(selected, 1))
+      } catch {}
+    } catch (e) {
+      try { console.warn('[UploaderDialog] ImgLa 策略列表获取失败', e) } catch {}
+      try {
+        if (selectImglaStrategy) {
+          fillSelect(selectImglaStrategy, [{ value: '1', label: '策略列表获取失败（仍可手动输入右侧 ID）' }], '1')
+        }
+      } catch {}
+    }
+  }
+
   // 预填
   try {
     if (store) {
@@ -168,11 +219,17 @@ export async function openUploaderDialog(deps: UploaderDialogDeps): Promise<void
       inputAcl.checked = up?.aclPublicRead !== false
       inputImglaBaseUrl.value = (up?.imglaBaseUrl || up?.baseUrl || IMGLA_BASE_URL)
       inputImglaToken.value = up?.imglaToken || up?.token || ''
-      inputImglaStrategy.value = String(
+      const strategyStr = String(
         (typeof up?.imglaStrategyId === 'number' ? up.imglaStrategyId : parseIntOr(String(up?.imglaStrategyId || ''), 1)) ||
           (typeof up?.strategyId === 'number' ? up.strategyId : parseIntOr(String(up?.strategyId || ''), 1)) ||
           1,
       )
+      if (inputImglaStrategy) inputImglaStrategy.value = String(parseIntOr(strategyStr, 1))
+      if (selectImglaStrategy) {
+        ;(selectImglaStrategy as any).dataset.desired = strategyStr
+        // 先塞一个占位，后续 refresh 会替换为真实列表
+        fillSelect(selectImglaStrategy, [{ value: strategyStr, label: `#${strategyStr}` }], strategyStr)
+      }
       const albumId = up?.imglaAlbumId ?? up?.albumId
       const albumStr = (albumId === null || albumId === undefined || albumId === '') ? '' : String(albumId)
       if (selectImglaAlbum) {
@@ -189,6 +246,7 @@ export async function openUploaderDialog(deps: UploaderDialogDeps): Promise<void
 
   showUploaderOverlay(true)
   applyProviderVisibility()
+  try { await refreshImglaStrategies() } catch {}
   try { await refreshImglaAlbums() } catch {}
 
   // 打开 ImgLa 官网
@@ -258,14 +316,26 @@ export async function openUploaderDialog(deps: UploaderDialogDeps): Promise<void
     inputProvider?.addEventListener('change', () => {
       applyProviderVisibility()
       void applyImmediate()
+      void refreshImglaStrategies()
       void refreshImglaAlbums()
     })
     inputEnabled.addEventListener('change', () => { void applyImmediate() })
     inputAlwaysLocal.addEventListener('change', () => { void applyImmediate() })
-    inputImglaToken?.addEventListener('change', () => { void applyImmediate(); void refreshImglaAlbums() })
+    inputImglaToken?.addEventListener('change', () => { void applyImmediate(); void refreshImglaStrategies(); void refreshImglaAlbums() })
+    inputImglaBaseUrl?.addEventListener('change', () => { void refreshImglaStrategies(); void refreshImglaAlbums() })
+    // 下拉选择策略时同步数字输入，并立即保存
+    selectImglaStrategy?.addEventListener('change', () => {
+      try {
+        const v = String(selectImglaStrategy.value || '').trim()
+        if (v && inputImglaStrategy) inputImglaStrategy.value = String(parseIntOr(v, 1))
+      } catch {}
+      void applyImmediate()
+    })
+    // 手动输入策略 ID
     inputImglaStrategy?.addEventListener('change', () => { void applyImmediate() })
     selectImglaAlbum?.addEventListener('change', () => { void applyImmediate() })
     btnImglaAlbumRefresh?.addEventListener('click', (ev) => { ev.preventDefault(); void refreshImglaAlbums() })
+    btnImglaStrategyRefresh?.addEventListener('click', (ev) => { ev.preventDefault(); void refreshImglaStrategies() })
     inputWebpEnable.addEventListener('change', () => { void applyImmediate() })
     inputWebpQuality.addEventListener('input', () => {
       try {
