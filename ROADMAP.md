@@ -2,6 +2,14 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## 更新 v1.1.7
+- 新增：粘贴网址后是否自动抓取标题开关（可用 `Ctrl+Shift+V` 临时禁用）
+- 新增：插件机制 ASP（Additional Suffix Plugin）：允许插件注册自定义文件后缀的识别/图标/打开方式规则
+- 上架：后缀扩展插件（基于 ASP）
+- 新增：插件命令 `list_dir_any`（任意目录列表），用于兼容缺失 `latest.json` 时从快照目录推断最新备份
+- 改进：mac/Linux 紧凑标题栏默认开启，并隐藏开关
+- 改进：内置/扩展插件移动端适配与兼容性修复（Typecho 管理插件安卓安全区；图床相册移动端；AI 助手 http 请求兼容；editor-enhancer 新增“用...包裹”右键菜单与模板变量）
+
 ## 更新 v1.1.6
 - 新增：插件「editor-enhancer」支持 `/` 指令菜单，并上架扩展市场
 - 修复：另存为 PDF 时分页异常（减少半行被截断）

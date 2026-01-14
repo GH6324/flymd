@@ -2,6 +2,14 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v1.1.7
+- Added: Toggle to auto-fetch page title when pasting URLs (use `Ctrl+Shift+V` to temporarily bypass)
+- Added: ASP (Additional Suffix Plugin) API — plugins can register custom file suffix rules (type/icon/open behavior)
+- Added: “Suffix Extension” plugin now available in Extension Market (built on ASP)
+- Added: Plugin command `list_dir_any` (list any directory) — used to infer latest backups when `latest.json` is missing
+- Improved: macOS/Linux compact titlebar is enabled by default; the toggle is hidden
+- Improved: Built-in/market plugins mobile adaptations and compatibility fixes (Typecho Manager Android safe-area; Image Gallery mobile; AI Assistant HTTP request compatibility; editor-enhancer “Wrap with…” and template variables)
+
 ## Update v1.1.6
 - Added: “editor-enhancer” plugin with a `/` command menu, now available in Extension Market
 - Fixed: Page breaks when saving as PDF (less chance of cutting lines in half)
