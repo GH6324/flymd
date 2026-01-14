@@ -1422,49 +1422,13 @@ export function initThemeUI(): void {
       // 紧凑标题栏开关
       const compactToggle = panel.querySelector('#compact-titlebar-toggle') as HTMLInputElement | null
       if (compactToggle) {
-        // Windows：紧凑标题栏固定开启（1.0.4 样式依赖），不对用户暴露开关
-        if (document.body.classList.contains('platform-windows')) {
-          try {
-            const label = compactToggle.closest('label') as HTMLElement | null
-            if (label) label.style.display = 'none'
-            compactToggle.checked = true
-            compactToggle.disabled = true
-          } catch {}
-        } else {
-          // 初始化：同步 body 上的 compact-titlebar 类（第一次打开面板时）
-          const syncCompactToggle = () => {
-            try {
-              compactToggle.checked = document.body.classList.contains('compact-titlebar')
-            } catch {}
-          }
-          syncCompactToggle()
-
-          // 监听 body.class 变化：当主进程根据 Store 恢复紧凑标题栏时，自动更新开关状态
-          try {
-            const compactObserver = new MutationObserver((mutations) => {
-              for (const m of mutations) {
-                if (m.type === 'attributes' && m.attributeName === 'class') {
-                  syncCompactToggle()
-                  break
-                }
-              }
-            })
-            compactObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] })
-          } catch {}
-
-          compactToggle.addEventListener('change', async () => {
-            const enabled = compactToggle.checked
-            const setFunc = (window as any).flymdSetCompactTitlebar
-            if (typeof setFunc === 'function') {
-              await setFunc(enabled)
-            } else {
-              // 降级：仅切换 CSS 类并广播事件
-              document.body.classList.toggle('compact-titlebar', enabled)
-              const ev = new CustomEvent('flymd:compact-titlebar:toggle', { detail: { enabled } })
-              window.dispatchEvent(ev)
-            }
-          })
-        }
+        // 紧凑标题栏：固定开启（样式依赖），不对用户暴露开关
+        try {
+          const label = compactToggle.closest('label') as HTMLElement | null
+          if (label) label.style.display = 'none'
+          compactToggle.checked = true
+          compactToggle.disabled = true
+        } catch {}
       }
 
     // 默认模式相关开关（所见 / 源码）

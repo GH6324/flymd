@@ -11,7 +11,7 @@ function isWindowsPlatform(): boolean {
 
 // 内部状态：专注模式与紧凑标题栏开关
 let focusMode = false
-let compactTitlebar = isWindowsPlatform()
+let compactTitlebar = true
 
 // 对外同步当前专注模式状态（供主模块判断）
 export function isFocusModeEnabled(): boolean {
@@ -28,7 +28,7 @@ export function isCompactTitlebarEnabled(): boolean {
 }
 
 export function setCompactTitlebarFlag(enabled: boolean): void {
-  compactTitlebar = isWindowsPlatform() ? true : !!enabled
+  compactTitlebar = true
 }
 
 // 专注模式切换：负责 body 类、自定义标题栏与窗口装饰
@@ -78,21 +78,8 @@ export async function getFocusMode(store: Store | null): Promise<boolean> {
 
 // 从 Store 读取紧凑标题栏状态
 export async function getCompactTitlebar(store: Store | null): Promise<boolean> {
-  if (isWindowsPlatform()) {
-    compactTitlebar = true
-    return true
-  }
-  try {
-    if (!store) return compactTitlebar
-    const v = await store.get('compactTitlebar')
-    if (typeof v === 'boolean') {
-      compactTitlebar = v
-      return v
-    }
-    return compactTitlebar
-  } catch {
-    return compactTitlebar
-  }
+  compactTitlebar = true
+  return true
 }
 
 // 设置紧凑标题栏状态
@@ -101,7 +88,7 @@ export async function setCompactTitlebar(
   store: Store | null,
   persist = true,
 ): Promise<void> {
-  compactTitlebar = isWindowsPlatform() ? true : !!enabled
+  compactTitlebar = true
 
   try {
     document.body.classList.toggle('compact-titlebar', compactTitlebar)
