@@ -392,7 +392,7 @@
       "homepage": "https://github.com/TGU-HansJack/additional-suffix-plugin",
       "name": "后缀扩展（ASP）",
       "description": "通过插件声明额外后缀的展示与打开策略",
-      "author": "ZhiXu",
+      "author": "HansJack",
       "id": "additional-suffix-plugin",
       "category": "编辑增强",
       "install": {
