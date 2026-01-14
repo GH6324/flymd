@@ -4324,7 +4324,8 @@ async function exportCurrentDocToPdf(target: string): Promise<void> {
     throw new Error('writeFile not available')
   }
   status.textContent = '正在导出 PDF...'
-  await renderPreview()
+  // 导出应当按打印语义渲染：不带所见模式的模拟光标/交互标记
+  await renderPreview({ forPrint: true })
   const el = preview.querySelector('.preview-body') as HTMLElement | null
   if (!el) throw new Error('未找到预览内容容器')
   const { exportPdf } = await import('./exporters/pdf')
@@ -4382,7 +4383,8 @@ async function saveAs() {
       try {
         if (ext === 'pdf') {
           status.textContent = '正在导出 PDF...';
-          await renderPreview();
+          // 导出应当按打印语义渲染：不带所见模式的模拟光标/交互标记
+          await renderPreview({ forPrint: true });
           const el = preview.querySelector('.preview-body') as HTMLElement | null;
           if (!el) throw new Error('未找到预览内容容器');
           const { exportPdf } = await import('./exporters/pdf');
@@ -4390,7 +4392,8 @@ async function saveAs() {
           await writeFile(target as any, bytes as any);
         } else {
           status.textContent = '正在导出 ' + ext.toUpperCase() + '...';
-          await renderPreview();
+          // DOCX/WPS 同样按打印语义渲染，避免把所见模式的模拟光标导出进去
+          await renderPreview({ forPrint: true });
           const el = preview.querySelector('.preview-body') as HTMLElement | null;
           if (!el) throw new Error('未找到预览内容容器');
           const html = el.outerHTML;
