@@ -1258,10 +1258,107 @@ async function deleteRemoteFile(baseUrl: string, auth: { username: string; passw
   })
 }
 
+async function downloadFileAllow404(baseUrl: string, auth: { username: string; password: string }, remotePath: string): Promise<Uint8Array | null> {
+  const http = await getHttpClient(); if (!http) throw new Error('no http client')
+  const url = joinUrl(baseUrl, remotePath)
+  const authStr = btoa(`${auth.username}:${auth.password}`)
+  const headers: Record<string,string> = { Authorization: `Basic ${authStr}` }
+  let u8: Uint8Array | null = null
+  let status = 0
+  await withHttpRetry('[download-allow404] ' + remotePath, async () => {
+    const resp = await http.fetch(url, { method: 'GET', headers, responseType: (http as any).ResponseType?.Binary })
+    status = Number(resp?.status || 0)
+    if (status === 404) return true as any
+    const ok = resp?.ok === true || (typeof resp.status === 'number' && resp.status >= 200 && resp.status < 300)
+    if (!ok) throw new Error('HTTP ' + (resp?.status || ''))
+    const buf: any = (typeof resp.arrayBuffer === 'function') ? await resp.arrayBuffer() : resp.data
+    u8 = buf instanceof ArrayBuffer ? new Uint8Array(buf) : (buf as Uint8Array)
+    return true as any
+  })
+  if (status === 404) return null
+  if (!u8) throw new Error('download failed without data')
+  return u8
+}
+
+async function downloadFilePrefixAllow404(
+  baseUrl: string,
+  auth: { username: string; password: string },
+  remotePath: string,
+  maxBytes: number,
+): Promise<Uint8Array | null> {
+  const http = await getHttpClient(); if (!http) throw new Error('no http client')
+  const url = joinUrl(baseUrl, remotePath)
+  const authStr = btoa(`${auth.username}:${auth.password}`)
+  const headers: Record<string,string> = {
+    Authorization: `Basic ${authStr}`,
+    Range: `bytes=0-${Math.max(0, (Number(maxBytes) || 0) - 1)}`
+  }
+  let u8: Uint8Array | null = null
+  let status = 0
+  await withHttpRetry('[download-prefix] ' + remotePath, async () => {
+    const resp = await http.fetch(url, { method: 'GET', headers, responseType: (http as any).ResponseType?.Binary })
+    status = Number(resp?.status || 0)
+    if (status === 404) return true as any
+    const ok = resp?.ok === true || (typeof resp.status === 'number' && resp.status >= 200 && resp.status < 300)
+    if (!ok) throw new Error('HTTP ' + (resp?.status || ''))
+    const buf: any = (typeof resp.arrayBuffer === 'function') ? await resp.arrayBuffer() : resp.data
+    const raw = buf instanceof ArrayBuffer ? new Uint8Array(buf) : (buf as Uint8Array)
+    u8 = raw && raw.length > maxBytes ? raw.slice(0, maxBytes) : raw
+    return true as any
+  })
+  if (status === 404) return null
+  return u8
+}
+
 // WebDAV 内容加密：使用 AES-GCM + PBKDF2 派生密钥
 const ENC_MAGIC = 'FMDENC1'
 const ENC_MAGIC_BYTES = new TextEncoder().encode(ENC_MAGIC)
 const ENC_VERSION = 1
+
+// 加密“盐值”的共享问题：盐不是秘密，但必须跨设备一致，否则必然解密失败。
+// 以前盐值只存在本机 flymd-settings.json，新设备必定生成不同盐 -> 看到的就是 OperationError。
+// 解决方式：把盐值写到 WebDAV 远端一个小文件里（不参与正常同步白名单），各端启动同步时先对齐盐值。
+const REMOTE_ENC_META_FILE = 'flymd-webdav-enc.json'
+
+type RemoteEncMeta = {
+  version: number
+  algo: string
+  hash: string
+  iterations: number
+  salt: string
+  createdAt?: number
+}
+
+function buildRemoteEncMeta(salt: string): RemoteEncMeta {
+  return {
+    version: 1,
+    algo: 'AES-GCM-256',
+    hash: 'SHA-256',
+    iterations: 100_000,
+    salt: String(salt || ''),
+    createdAt: Date.now()
+  }
+}
+
+function tryParseRemoteEncMeta(data: Uint8Array): RemoteEncMeta | null {
+  try {
+    const txt = new TextDecoder().decode(data)
+    const obj = JSON.parse(txt)
+    if (!obj || typeof obj !== 'object') return null
+    const salt = typeof (obj as any).salt === 'string' ? (obj as any).salt.trim() : ''
+    if (!salt) return null
+    return {
+      version: Number((obj as any).version || 0) || 1,
+      algo: typeof (obj as any).algo === 'string' ? (obj as any).algo : 'AES-GCM-256',
+      hash: typeof (obj as any).hash === 'string' ? (obj as any).hash : 'SHA-256',
+      iterations: Number((obj as any).iterations || 100_000) || 100_000,
+      salt,
+      createdAt: Number((obj as any).createdAt || 0) || undefined
+    }
+  } catch {
+    return null
+  }
+}
 
 type EncryptionRuntimeConfig = {
   key: string
@@ -1277,6 +1374,158 @@ function getEncryptionRuntimeConfig(cfg: WebdavSyncConfig): EncryptionRuntimeCon
   if (!key || key.length < 8) return null
   if (!salt) return null
   return { key, salt }
+}
+
+type RemoteEncProbeResult = { encryptedRel: string | null; hasFiles: boolean; probed: boolean }
+
+async function probeRemoteEncryptedSample(
+  baseUrl: string,
+  auth: { username: string; password: string },
+  remoteRootPath: string,
+  log: (msg: string) => Promise<void>,
+): Promise<RemoteEncProbeResult> {
+  // 只为“远端盐值文件缺失”这种一次性场景服务：做有限探测，避免新设备把错误盐值写上去。
+  let hasFiles = false
+  let probed = false
+  try {
+    const root = String(remoteRootPath || '/').trim() || '/'
+    const scan = await listRemoteRecursively(baseUrl, auth, root)
+    const rels = Array.from(scan.files.keys())
+    hasFiles = rels.length > 0
+    // 优先探测文本文件，通常更小；避免无意义地拉取大图片。
+    const score = (p: string) => {
+      const lower = String(p || '').toLowerCase()
+      if (lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt')) return 0
+      if (lower.endsWith('.svg')) return 1
+      return 2
+    }
+    rels.sort((a, b) => score(a) - score(b))
+    const rootTrim = root.replace(/\/+$/, '')
+    let checked = 0
+    for (const rel of rels) {
+      if (!rel) continue
+      const remotePath = (rootTrim ? (rootTrim + '/') : '/') + encodePath(rel)
+      try {
+        const head = await downloadFilePrefixAllow404(baseUrl, auth, remotePath, ENC_MAGIC_BYTES.length + 1 + 12)
+        probed = true
+        if (head && looksLikeEncrypted(head)) return { encryptedRel: rel, hasFiles, probed }
+      } catch (e) {
+        await log('[enc-meta][probe-head-fail] ' + rel + ' : ' + String((e as any)?.message || e))
+      }
+      if (++checked >= 200) break
+    }
+    return { encryptedRel: null, hasFiles, probed }
+  } catch (e) {
+    await log('[enc-meta][probe-fail] ' + String((e as any)?.message || e))
+    // 探测阶段任何异常都视为“不确定”，强制走保守策略（不写远端盐值文件）
+    return { encryptedRel: null, hasFiles: true, probed: false }
+  }
+}
+
+async function ensureEncryptionSaltReady(
+  cfg: WebdavSyncConfig,
+  baseUrl: string,
+  auth: { username: string; password: string },
+  log: (msg: string) => Promise<void>,
+): Promise<WebdavSyncConfig> {
+  // 没开加密 / 没有有效口令：不做任何事
+  if (cfg.encryptEnabled !== true) return cfg
+  const key = (cfg.encryptKey || '').trim()
+  if (!key || key.length < 8) return cfg
+
+  const remoteRoot = (cfg.rootPath || '/flymd').replace(/\/+$/, '')
+  const remotePath = (remoteRoot ? (remoteRoot + '/') : '/') + REMOTE_ENC_META_FILE
+
+  let localSalt = (cfg.encryptSalt || '').trim()
+
+  // 先读远端（新设备最需要这个）
+  let remoteMetaState: 'missing' | 'present' | 'invalid' = 'missing'
+  let remoteSalt = ''
+  try {
+    const raw = await downloadFileAllow404(baseUrl, auth, remotePath)
+    if (raw) {
+      remoteMetaState = 'present'
+      const parsed = tryParseRemoteEncMeta(raw)
+      remoteSalt = (parsed?.salt || '').trim()
+      if (!remoteSalt) remoteMetaState = 'invalid'
+    }
+  } catch (e) {
+    // 有本地盐值就继续（还能用）；没本地盐值就必须失败（否则会生成新盐把自己彻底锁死）
+    await log('[enc-meta][read-fail] ' + remotePath + ' : ' + String((e as any)?.message || e))
+    if (!localSalt) throw e
+  }
+
+  if (remoteMetaState === 'invalid') {
+    throw new Error('远端加密元数据文件已损坏：' + remotePath + '（请删除此文件或用旧设备重新生成）')
+  }
+
+  if (remoteSalt && !localSalt) {
+    // 新设备：对齐到远端盐值
+    try {
+      await setWebdavSyncConfig({ encryptSalt: remoteSalt })
+      await log('[enc-meta][adopt-remote] 已从远端加载加密盐值')
+    } catch (e) {
+      await log('[enc-meta][adopt-remote-fail] ' + String((e as any)?.message || e))
+    }
+    return { ...cfg, encryptSalt: remoteSalt }
+  }
+
+  if (remoteSalt && localSalt && remoteSalt !== localSalt) {
+    // 这不是“特殊情况”，这是配置分裂。以远端为准，否则只会持续解密失败。
+    await log('[enc-meta][mismatch] 本地/远端盐值不一致，已以远端为准（请勿在多设备上反复重置加密设置）')
+    try { await setWebdavSyncConfig({ encryptSalt: remoteSalt }) } catch {}
+    return { ...cfg, encryptSalt: remoteSalt }
+  }
+
+  if (!remoteSalt && localSalt) {
+    // 旧设备：把盐值写上去，给新设备用
+    // 但要避免“新设备”把错误盐值写上去：若远端已经存在加密文件，则先验证本机盐值确实能解密。
+    if (remoteMetaState === 'missing') {
+      const probeRoot = remoteRoot || '/'
+      const probe = await probeRemoteEncryptedSample(baseUrl, auth, probeRoot, log)
+      // 探测不出来但远端不为空：别瞎写，宁可不生成盐值文件，也别把库锁死。
+      if (probe.hasFiles && !probe.probed) {
+        await log('[enc-meta][refuse-upload] 远端存在文件但探测失败，跳过写入盐值文件（避免写入错误盐值）')
+        return cfg
+      }
+      // 远端不空但也没找到任何加密文件：先别写盐值文件，避免误伤“历史已加密但探测没扫到”的边界情况。
+      if (probe.hasFiles && !probe.encryptedRel) {
+        await log('[enc-meta][skip-upload] 远端已有文件但未发现加密内容，跳过写入盐值文件（后续一旦出现加密文件会自动补写）')
+        return cfg
+      }
+      if (probe.encryptedRel) {
+        const rootTrim = probeRoot.replace(/\/+$/, '')
+        const encryptedPath = (rootTrim ? (rootTrim + '/') : '/') + encodePath(probe.encryptedRel)
+        try {
+          const raw = await downloadFile(baseUrl, auth, encryptedPath)
+          // 若盐值不匹配，这里会直接抛 OperationError / invalid tag
+          await decryptBytesIfNeeded(raw, cfg)
+          await log('[enc-meta][probe-ok] 已验证本机盐值可解密远端样本文件: ' + probe.encryptedRel)
+        } catch (e) {
+          await log('[enc-meta][probe-bad] 本机盐值无法解密远端样本文件: ' + probe.encryptedRel + ' : ' + String((e as any)?.message || e))
+          throw new Error('检测到远端已有加密文件，但当前设备的盐值不匹配；请在“旧设备”升级后同步一次以写入正确的盐值文件。')
+        }
+      }
+    }
+    try {
+      const meta = buildRemoteEncMeta(localSalt)
+      const data = new TextEncoder().encode(JSON.stringify(meta, null, 2))
+      await uploadFile(baseUrl, auth, remotePath, data)
+      await log('[enc-meta][upload] 已写入远端加密盐值: ' + remotePath)
+    } catch (e) {
+      await log('[enc-meta][upload-fail] ' + remotePath + ' : ' + String((e as any)?.message || e))
+      // 仅用于跨设备解锁；写失败不该让同步直接失败（本地仍可继续同步）。
+    }
+    return cfg
+  }
+
+  if (!remoteSalt && !localSalt) {
+    // 这意味着：本机配置丢了，远端也没有“盐值元数据”，无法安全解密已有加密文件。
+    // 直接生成新盐值只会把库拆成两套密钥，属于自找麻烦。
+    throw new Error('未找到加密盐值（本机/远端均缺失）。请在“旧设备”先同步一次，或重新配置并保存加密设置后再试。')
+  }
+
+  return cfg
 }
 
 async function getCryptoKeyForEncryption(encCfg: EncryptionRuntimeConfig): Promise<CryptoKey | null> {
@@ -1359,7 +1608,11 @@ async function decryptBytesIfNeeded(data: Uint8Array, cfg: WebdavSyncConfig): Pr
     return new Uint8Array(plainBuf)
   } catch (e) {
     console.warn('[WebDAV Sync] 解密失败', e)
-    throw new Error('WebDAV 同步解密失败：' + ((e as any)?.message || e))
+    const raw = (e as any)?.message || e
+    throw new Error(
+      'WebDAV 同步解密失败：' + raw +
+      '（通常是密钥/盐值不一致或远端文件损坏；若是新设备，请先用“旧设备”同步一次以写入共享盐值）'
+    )
   }
 }
 
@@ -1405,7 +1658,7 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
     await syncLog('[sync-start] 开始同步 (reason=' + reason + ')')
     console.log('[WebDAV Sync] 开始同步, reason:', reason)
 
-    const cfg = await getWebdavSyncConfig()
+    let cfg = await getWebdavSyncConfig()
     const httpWhitelist = normalizeHttpWhitelist(cfg.allowedHttpHosts)
     if (!cfg.enabled) {
       await syncLog('[skip] 同步未启用')
@@ -1449,6 +1702,16 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
     }
     const auth = { username: cfg.username, password: cfg.password }; await syncLog('[prep] root=' + (await getActiveLibraryRoot()) + ' remoteRoot=' + cfg.rootPath)
     try { await ensureRemoteDir(baseUrl, auth, (cfg.rootPath || '').replace(/\/+$/, '')) } catch {}
+    // 加密必须先对齐盐值，否则“新设备”只会得到 OperationError。
+    try {
+      cfg = await ensureEncryptionSaltReady(cfg, baseUrl, auth, syncLog)
+    } catch (e) {
+      const msg = '加密盐值未就绪，无法解密：' + String((e as any)?.message || e || '')
+      await syncLog('[enc-meta][fatal] ' + msg)
+      updateStatus(msg)
+      clearStatus(5000)
+      return { uploaded: 0, downloaded: 0, skipped: true }
+    }
 
     // 获取上次同步的元数据
     const profileState = await loadSyncMetadataProfile({ localRoot, baseUrl, remoteRoot: cfg.rootPath || '/flymd' })
