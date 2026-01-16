@@ -1463,6 +1463,31 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
     const timeSinceLastSync = Date.now() - (lastMeta.lastSyncTime || 0)
     const recentlyScanned = allowSmartSkip && timeSinceLastSync < skipMinutes * 60 * 1000
 
+    // 交互式对话框去重：用户勾选“应用到所有文件”后，本轮同步后续同类问题不再逐个弹窗
+    type ApplyAllDialogKey = 'conflict' | 'local-deleted' | 'remote-deleted' | 'upload-missing-remote'
+    const applyAllDecisions: Partial<Record<ApplyAllDialogKey, string>> = {}
+    let promptQueue: Promise<void> = Promise.resolve()
+
+    function serializePrompt<T>(fn: () => Promise<T>): Promise<T> {
+      const run = promptQueue.then(fn, fn)
+      promptQueue = run.then(() => undefined, () => undefined)
+      return run
+    }
+
+    async function resolveWithApplyAll<K extends ApplyAllDialogKey, R extends string>(
+      key: K,
+      prompt: () => Promise<{ result: R; applyToAll: boolean }>
+    ): Promise<R> {
+      return serializePrompt(async () => {
+        const cached = applyAllDecisions[key] as R | undefined
+        if (cached !== undefined) return cached
+
+        const out = await prompt()
+        if (out.applyToAll) applyAllDecisions[key] = out.result
+        return out.result
+      })
+    }
+
     // 使用库根快照进行快速短路（仅在 skipRemoteScanMinutes 时间窗内，且仅用于自动同步）
     try {
 
@@ -1609,7 +1634,9 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
         if (local && !remote) {
           await syncLog('[safe-mode] ' + k + ' forceSafePull: 本地存在但远端不存在，将询问用户是否上传')
           try {
-            const result = await showUploadMissingRemoteDialog(k)
+            const result = await resolveWithApplyAll('upload-missing-remote', () =>
+              showUploadMissingRemoteDialog(k, { withApplyToAll: true })
+            )
             if (result === 'confirm') {
               await syncLog('[safe-mode-apply] ' + k + ' forceSafePull: 用户选择上传本地文件到远端')
               plan.push({ type: 'upload', rel: k, reason: 'safe-mode-local-confirm-upload' } as any)
@@ -1649,7 +1676,9 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
             // 无法可靠判断远端是否变化：视为潜在争议，改为直接询问用户选择本地或远端版本
             await syncLog('[safe-mode-conflict] ' + k + ' forceSafePull: 缺少可靠远端元数据（no etag/mtime），将询问用户选择本地或远端版本')
             try {
-              const result = await showConflictDialog(k)
+              const result = await resolveWithApplyAll('conflict', () =>
+                showConflictDialog(k, { withApplyToAll: true })
+              )
               if (result === 'local') {
                 await syncLog('[safe-mode-apply] ' + k + ' forceSafePull: 用户在无远端元数据场景下选择保留本地版本，按本地上传')
                 plan.push({ type: 'upload', rel: k, reason: 'safe-mode-manual-local-no-remote-meta' } as any)
@@ -1675,7 +1704,9 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
             // 双方都变：潜在冲突，直接弹出冲突对话框让用户选择
             await syncLog('[safe-mode-conflict] ' + k + ' forceSafePull: 检测到本地与远端都已修改，将询问用户选择本地或远端版本')
             try {
-              const result = await showConflictDialog(k)
+              const result = await resolveWithApplyAll('conflict', () =>
+                showConflictDialog(k, { withApplyToAll: true })
+              )
               if (result === 'local') {
                 await syncLog('[safe-mode-apply] ' + k + ' forceSafePull: 用户在双向修改场景下选择保留本地版本，按本地上传')
                 plan.push({ type: 'upload', rel: k, reason: 'safe-mode-manual-local-both-modified' } as any)
@@ -1884,7 +1915,9 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
 
           if (cfg.conflictStrategy === 'ask') {
             // 询问用户
-            const result = await showConflictDialog(act.rel)
+            const result = await resolveWithApplyAll('conflict', () =>
+              showConflictDialog(act.rel, { withApplyToAll: true })
+            )
             if (result === 'cancel') {
               // 用户取消，跳过此文件
               await syncLog('[conflict-cancel] ' + act.rel + ' 用户取消操作')
@@ -2015,7 +2048,9 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
               // 需要确认：询问用户
               await syncLog('[local-deleted] ' + act.rel + ' 询问用户如何处理')
               try {
-                const result = await showLocalDeleteDialog(act.rel)
+                const result = await resolveWithApplyAll('local-deleted', () =>
+                  showLocalDeleteDialog(act.rel, { withApplyToAll: true })
+                )
                 userChoice = result === 'confirm'
               } catch (e) {
                 // 自定义对话框失败时兜底使用系统对话框，避免静默跳过
@@ -2099,7 +2134,9 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
           // 远程文件被删除，询问用户如何处理本地文件
           await syncLog('[remote-deleted-ask] ' + act.rel + ' 远程已删除，询问用户如何处理')
           try {
-            const result = await showRemoteDeleteDialog(act.rel)
+            const result = await resolveWithApplyAll('remote-deleted', () =>
+              showRemoteDeleteDialog(act.rel, { withApplyToAll: true })
+            )
             const userChoice = result === 'confirm'
 
             if (userChoice) {

@@ -209,6 +209,7 @@ const dict = {
     'dlg.sync.uploadMissing.msg': '文件：{name}\n\n本地存在该文件，但远端当前不存在（可能是新建，也可能是被其他设备删除）。请选择操作：',
     'dlg.sync.uploadMissing.keepLocal': '仅保留本地',
     'dlg.sync.uploadMissing.upload': '上传到远端',
+    'dlg.sync.applyAll': '应用到所有文件',
 
     'status.pos': '行 {line}, 列 {col}',
     'filename.untitled': '未命名',
@@ -661,6 +662,7 @@ const dict = {
     'dlg.sync.uploadMissing.msg': 'File: {name}\n\nThe file exists locally, but not on the server (new file or deleted on another device). Choose an action:',
     'dlg.sync.uploadMissing.keepLocal': 'Keep local only',
     'dlg.sync.uploadMissing.upload': 'Upload to server',
+    'dlg.sync.applyAll': 'Apply to all files',
 
     'status.pos': 'Ln {line}, Col {col}',
     'filename.untitled': 'Untitled',
