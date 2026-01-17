@@ -1274,7 +1274,9 @@ async function ensureApiConfig(context, overrides = {}){
   return finalCfg
 }
 
-async function performAIRequest(cfg, bodyObj){
+async function performAIRequest(cfg, bodyObj, context){
+  // 不是“提示词”能解决的事：先在本地硬拦截，避免请求打到模型侧。
+  try { aiGuardAssertAllowed(context, cfg, bodyObj && bodyObj.messages ? bodyObj.messages : null) } catch (e) { throw e }
   const url = buildApiUrl(cfg)
   const headers = buildApiHeaders(cfg)
   const response = await _aiFetch(url, { method:'POST', headers, body: JSON.stringify(bodyObj) })
@@ -2270,7 +2272,7 @@ async function sendFromInputAgent(context) {
     const cfg = await ensureApiConfig(context)
     const messages = aiAgentBuildMessages(base, text)
     const body = { model: resolveModelId(cfg), messages, stream: false }
-    const res = await performAIRequest(cfg, body)
+    const res = await performAIRequest(cfg, body, context)
     const next = String(res && res.text != null ? res.text : '').trim()
     if (!next) throw new Error(aiText('AI 返回为空', 'Empty AI response'))
     __AI_AGENT__.current = next
@@ -2308,7 +2310,7 @@ async function callAIForPlugins(context, prompt, options = {}){
     { role: 'user', content: text }
   ]
   const body = { model: resolveModelId(cfg), messages, stream: false }
-  const result = await performAIRequest(cfg, body)
+  const result = await performAIRequest(cfg, body, context)
   return result.text
 }
 
@@ -2327,7 +2329,7 @@ async function translateForPlugins(context, text){
     ],
     stream: false
   }
-  const result = await performAIRequest(finalCfg, body)
+  const result = await performAIRequest(finalCfg, body, context)
   return result.text
 }
 
@@ -2354,7 +2356,7 @@ async function generateTodosForPlugins(context, content){
     ],
     stream: false
   }
-  const result = await performAIRequest(cfg, body)
+  const result = await performAIRequest(cfg, body, context)
   const todos = extractTodos(result.text)
   return { raw: result.text, todos }
 }
@@ -5231,6 +5233,81 @@ function extractPlainTextFromChatMessage(msg){
   return ''
 }
 
+function aiGuardExtractTextFromMessages(messages){
+  try {
+    const arr = Array.isArray(messages) ? messages : []
+    let out = ''
+    for (let i = 0; i < arr.length; i++) {
+      const m = arr[i]
+      if (!m || typeof m !== 'object') continue
+      const role = String(m.role || '').trim()
+      // 只看用户/助手内容：system 也许包含安全提示，不应该触发拦截
+      if (role !== 'user' && role !== 'assistant') continue
+      const t = String(extractPlainTextFromChatMessage(m) || '').trim()
+      if (!t) continue
+      out += t + '\n'
+    }
+    return out
+  } catch { return '' }
+}
+
+function aiGuardCheckText(text){
+  const t = String(text || '').trim()
+  if (!t) return null
+
+  // 内容拦截：只做本地硬规则（不做配置 UI）。
+  // 你的要求：强规则命中 >=2 才拒绝；弱规则命中 >=4 才拒绝。
+  const strongRules = [
+    /(口交|肛交|轮奸|兽交|乱伦|亂倫|幼女|未成年.*性|肉棒)/i,
+    /\b(rape|incest|bestiality|cumshot|blowjob|handjob|masturbat(?:e|ion)?|child\s*sex(?:ual)?)\b/i
+  ]
+  let strongHits = 0
+  for (const re of strongRules) {
+    try { if (re.test(t)) strongHits++ } catch {}
+  }
+  if (strongHits >= 2) return { reason: '强规则命中' }
+
+  const weakRules = [
+    /(阴茎|龟头|睾丸|阴道|乳头|裸体|裸露|性交|做爱|高潮|成人视频|A片)/,
+    /(手淫|自慰|射精|精液)/,
+    /(强奸|迷奸|奸淫)/,
+    /(操我)/,
+    /\b(porn|penis|vagina|nude)\b/i,
+    /\b(anal\s*sex)\b/i
+  ]
+  let weakHits = 0
+  for (const re of weakRules) {
+    try { if (re.test(t)) weakHits++ } catch {}
+  }
+  if (weakHits >= 4) return { reason: '弱规则命中' }
+
+  return null
+}
+
+function aiGuardCheckMessages(cfg, messages){
+  try {
+    // 你的要求：自定义 AI（非免费代理模式）不做拦截
+    if (!isFreeProvider(cfg)) return null
+    const text = aiGuardExtractTextFromMessages(messages)
+    return aiGuardCheckText(text)
+  } catch { return null }
+}
+
+function aiGuardAssertAllowed(context, cfg, messages){
+  const hit = aiGuardCheckMessages(cfg, messages)
+  if (!hit) return true
+  const msg = aiText('检测到露骨色情/性暴力内容，AI 助手已拒绝处理。', 'Detected explicit sexual content. The AI assistant refused.')
+  try { console.warn('[AI助手] 已拒绝请求：', hit && hit.reason ? hit.reason : '命中规则') } catch {}
+  try {
+    if (context && context.ui && typeof context.ui.notice === 'function') {
+      context.ui.notice(msg, 'warn', 4500)
+    }
+  } catch {}
+  const err = new Error(msg)
+  err.code = 'AI_GUARD_BLOCKED'
+  throw err
+}
+
 function getLastUserTextFromMsgs(msgs){
   try {
     const arr = Array.isArray(msgs) ? msgs : []
@@ -5437,7 +5514,7 @@ async function sendFromInputWithAction(context){
       if (chatEl) chatEl.appendChild(thinkingEl)
       chatEl?.scrollTo({ top: chatEl.scrollHeight, behavior: 'smooth' })
 
-      const intentRes = await performAIRequest(cfg, intentBody)
+      const intentRes = await performAIRequest(cfg, intentBody, context)
       const intent = String(intentRes && intentRes.text != null ? intentRes.text : '').trim().toLowerCase()
 
       // 移除判断提示
@@ -5568,6 +5645,16 @@ async function sendFromInputWithAction(context){
         }
       } catch (e) {
         console.warn('知识库联动失败：', e)
+      }
+
+      // 内容防滥用：在本地直接拒绝，不让请求打到模型侧
+      const guardHit = aiGuardCheckMessages(cfg, finalMsgs)
+      if (guardHit) {
+        const refuse = aiText('检测到露骨色情/性暴力内容，AI 助手已拒绝处理。', 'Detected explicit sexual content. The AI assistant refused.')
+        pushMsg('assistant', refuse)
+        renderMsgs(el('ai-chat'))
+        try { await syncCurrentSessionToDB(context) } catch {}
+        return
       }
 
       const url = buildApiUrl(cfg)
