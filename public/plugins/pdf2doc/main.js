@@ -27,16 +27,108 @@ function pdf2docText(zh, en) {
   return pdf2docGetLocale() === 'en' ? en : zh
 }
 
+function safeParseJson(value) {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(String(value))
+  } catch {
+    return null
+  }
+}
+
+function normalizeApiTokens(apiTokensLike, legacyApiToken) {
+  const parsed = safeParseJson(apiTokensLike)
+  const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(apiTokensLike) ? apiTokensLike : [])
+
+  const tokenMap = new Map()
+  for (const item of rawList) {
+    if (typeof item === 'string') {
+      const token = item.trim()
+      if (!token) continue
+      tokenMap.set(token, { token, enabled: true })
+      continue
+    }
+    if (!item || typeof item !== 'object') continue
+    const token = String(item.token || '').trim()
+    if (!token) continue
+    const enabled = item.enabled === false ? false : true
+    tokenMap.set(token, { token, enabled })
+  }
+
+  const legacy = String(legacyApiToken || '').trim()
+  if (legacy && !tokenMap.has(legacy)) {
+    tokenMap.set(legacy, { token: legacy, enabled: true })
+  }
+
+  return Array.from(tokenMap.values())
+}
+
+function getEnabledApiTokens(cfg) {
+  const list = Array.isArray(cfg && cfg.apiTokens) ? cfg.apiTokens : []
+  return list.filter(it => it && typeof it.token === 'string' && it.token.trim() && it.enabled !== false)
+}
+
+function getPrimaryApiToken(cfg) {
+  const enabled = getEnabledApiTokens(cfg)
+  if (enabled.length > 0) return enabled[0].token.trim()
+  return String(cfg && cfg.apiToken ? cfg.apiToken : '').trim()
+}
+
+function hasAnyApiToken(cfg) {
+  return !!getPrimaryApiToken(cfg)
+}
+
+function isLikelyTokenOrQuotaError(err) {
+  const msg = err && err.message ? String(err.message) : String(err || '')
+  const lower = msg.toLowerCase()
+  const meta = err && typeof err === 'object' ? err._pdf2doc : null
+  const status = meta && typeof meta.status === 'number' ? meta.status : 0
+  const code = meta && typeof meta.code === 'string' ? meta.code : ''
+
+  // 不对网络/解析类错误做自动换密钥：风险是重复请求导致重复扣费
+  if (msg.startsWith('网络请求失败') || lower.startsWith('network request failed')) return false
+  if (msg.includes('解析响应 JSON 失败') || lower.includes('failed to parse json response')) return false
+
+  // 只在“确定未触发 Doc2X 解析”的情况下自动换密钥
+  // - 401/403：无效/停用 token
+  // - 402 且提示“剩余页数额度不足”：服务端在解析前拦截（remain<=0）
+  if (status === 401 || status === 403) return true
+  if (status === 402) {
+    // 服务端存在两种 402：
+    // 1) 剩余页数额度不足（解析前拦截，安全可重试）
+    // 2) 当前任务页数为 X，超过剩余额度 Y（解析后才发现，重试会重复扣费）
+    return msg.includes('剩余页数额度不足') || lower.includes('remaining pages') || code === 'quota_exceeded_precheck'
+  }
+
+  // 兜底：没有状态码信息时，仅对“无效/停用”类错误做切换
+  if (msg.includes('无效') || msg.includes('已停用')) return true
+  if (lower.includes('unauthorized') || lower.includes('forbidden')) return true
+  return false
+}
+
+// 用于界面展示，避免把完整密钥直接暴露在 UI 文案里
+function maskApiTokenForDisplay(token) {
+  const t = String(token || '').trim()
+  if (!t) return ''
+  if (t.length <= 8) return t[0] + '…' + t[t.length - 1]
+  return t.slice(0, 4) + '…' + t.slice(-4)
+}
+
 
 async function loadConfig(context) {
   const apiBaseUrl =
     (await context.storage.get('apiBaseUrl')) || DEFAULT_API_BASE
-  const apiToken = (await context.storage.get('apiToken')) || ''
+  const legacyApiToken = (await context.storage.get('apiToken')) || ''
+  const storedApiTokens = await context.storage.get('apiTokens')
+  const apiTokens = normalizeApiTokens(storedApiTokens, legacyApiToken)
+  const apiToken = getPrimaryApiToken({ apiTokens, apiToken: legacyApiToken })
   const defaultOutput = (await context.storage.get('defaultOutput')) || 'markdown'
   const sendToAI = await context.storage.get('sendToAI')
   return {
     apiBaseUrl,
     apiToken,
+    apiTokens,
     defaultOutput: defaultOutput === 'docx' ? 'docx' : 'markdown',
     sendToAI: sendToAI ?? true
   }
@@ -44,8 +136,11 @@ async function loadConfig(context) {
 
 
 async function saveConfig(context, cfg) {
+  const apiTokens = normalizeApiTokens(cfg && cfg.apiTokens, cfg && cfg.apiToken)
+  const apiToken = getPrimaryApiToken({ apiTokens, apiToken: cfg && cfg.apiToken })
   await context.storage.set('apiBaseUrl', cfg.apiBaseUrl)
-  await context.storage.set('apiToken', cfg.apiToken)
+  await context.storage.set('apiTokens', JSON.stringify(apiTokens))
+  await context.storage.set('apiToken', apiToken)
   await context.storage.set('defaultOutput', cfg.defaultOutput)
   await context.storage.set('sendToAI', cfg.sendToAI)
 }
@@ -120,51 +215,77 @@ async function uploadAndParsePdfFile(context, cfg, file, output) {
   const out = output === 'docx' ? 'docx' : (output === 'markdown' ? 'markdown' : (cfg.defaultOutput === 'docx' ? 'docx' : 'markdown'))
   form.append('output', out)
 
-  const headers = {}
-  if (cfg.apiToken) {
-    headers['Authorization'] = 'Bearer ' + cfg.apiToken
+  const candidates = getEnabledApiTokens(cfg).map(it => it.token).filter(Boolean)
+  const legacy = String(cfg.apiToken || '').trim()
+  if (candidates.length === 0 && legacy) candidates.push(legacy)
+  if (candidates.length === 0) {
+    throw new Error(pdf2docText('未配置 pdf2doc 密钥', 'PDF2Doc token is not configured'))
   }
 
-  let res
-  try {
-    res = await context.http.fetch(apiUrl, {
-      method: 'POST',
-      headers,
-      body: form
-    })
-  } catch (e) {
-    throw new Error(
-      pdf2docText(
-        '网络请求失败：' + (e && e.message ? e.message : String(e)),
-        'Network request failed: ' + (e && e.message ? e.message : String(e))
+  // 多密钥合计余额：把全部启用密钥一起发给后端，后端可在一次解析里跨密钥扣费（后端不支持时会忽略该头）
+  const xApiTokens = candidates.length > 1 ? JSON.stringify(candidates) : ''
+
+  const requestOnce = async (token) => {
+    const headers = {
+      Authorization: 'Bearer ' + token
+    }
+    if (xApiTokens) headers['X-Api-Tokens'] = xApiTokens
+
+    let res
+    try {
+      res = await context.http.fetch(apiUrl, {
+        method: 'POST',
+        headers,
+        body: form
+      })
+    } catch (e) {
+      throw new Error(
+        pdf2docText(
+          '网络请求失败：' + (e && e.message ? e.message : String(e)),
+          'Network request failed: ' + (e && e.message ? e.message : String(e))
+        )
       )
-    )
-  }
+    }
 
-  let data = null
-  try {
-    data = await res.json()
-  } catch (e) {
-    const statusText = 'HTTP ' + res.status
-    throw new Error(
-      pdf2docText(
-        '解析响应 JSON 失败（' + statusText + '）：' + (e && e.message ? e.message : String(e)),
-        'Failed to parse JSON response (' + statusText + '): ' + (e && e.message ? e.message : String(e))
+    let data = null
+    try {
+      data = await res.json()
+    } catch (e) {
+      const statusText = 'HTTP ' + res.status
+      throw new Error(
+        pdf2docText(
+          '解析响应 JSON 失败（' + statusText + '）：' + (e && e.message ? e.message : String(e)),
+          'Failed to parse JSON response (' + statusText + '): ' + (e && e.message ? e.message : String(e))
+        )
       )
-    )
+    }
+
+    if (!data || typeof data !== 'object') {
+      throw new Error(pdf2docText('响应格式错误：不是 JSON 对象', 'Invalid response format: not a JSON object'))
+    }
+
+    if (!data.ok) {
+      const msgZh = data.message || data.error || '解析失败'
+      const msgEn = data.message || data.error || 'Parse failed'
+      const e = new Error(pdf2docText(msgZh, msgEn))
+      e._pdf2doc = { status: res.status, code: String(data.error || '') }
+      throw e
+    }
+
+    return data // { ok, format, markdown?, docx_url?, pages, uid }
   }
 
-  if (!data || typeof data !== 'object') {
-    throw new Error(pdf2docText('响应格式错误：不是 JSON 对象', 'Invalid response format: not a JSON object'))
+  let lastErr = null
+  for (const token of candidates) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      return await requestOnce(token)
+    } catch (e) {
+      lastErr = e
+      if (!isLikelyTokenOrQuotaError(e)) throw e
+    }
   }
-
-  if (!data.ok) {
-    const msgZh = data.message || data.error || '解析失败'
-    const msgEn = data.message || data.error || 'Parse failed'
-    throw new Error(pdf2docText(msgZh, msgEn))
-  }
-
-  return data // { ok, format, markdown?, docx_url?, pages, uid }
+  throw lastErr || new Error(pdf2docText('解析失败', 'Parse failed'))
 }
 
 // 上传并解析图片文件，仅支持输出 Markdown
@@ -179,57 +300,82 @@ async function uploadAndParseImageFile(context, cfg, file) {
   form.append('file', file, file.name)
   form.append('output', 'markdown')
 
-  const headers = {}
-  if (cfg.apiToken) {
-    headers['Authorization'] = 'Bearer ' + cfg.apiToken
+  const candidates = getEnabledApiTokens(cfg).map(it => it.token).filter(Boolean)
+  const legacy = String(cfg.apiToken || '').trim()
+  if (candidates.length === 0 && legacy) candidates.push(legacy)
+  if (candidates.length === 0) {
+    throw new Error(pdf2docText('未配置 pdf2doc 密钥', 'PDF2Doc token is not configured'))
   }
 
-  let res
-  try {
-    res = await context.http.fetch(apiUrl, {
-      method: 'POST',
-      headers,
-      body: form
-    })
-  } catch (e) {
-    throw new Error(
-      pdf2docText(
-        '网络请求失败：' + (e && e.message ? e.message : String(e)),
-        'Network request failed: ' + (e && e.message ? e.message : String(e))
+  const xApiTokens = candidates.length > 1 ? JSON.stringify(candidates) : ''
+
+  const requestOnce = async (token) => {
+    const headers = {
+      Authorization: 'Bearer ' + token
+    }
+    if (xApiTokens) headers['X-Api-Tokens'] = xApiTokens
+
+    let res
+    try {
+      res = await context.http.fetch(apiUrl, {
+        method: 'POST',
+        headers,
+        body: form
+      })
+    } catch (e) {
+      throw new Error(
+        pdf2docText(
+          '网络请求失败：' + (e && e.message ? e.message : String(e)),
+          'Network request failed: ' + (e && e.message ? e.message : String(e))
+        )
       )
-    )
-  }
+    }
 
-  let data = null
-  try {
-    data = await res.json()
-  } catch (e) {
-    const statusText = 'HTTP ' + res.status
-    throw new Error(
-      pdf2docText(
-        '解析响应 JSON 失败（' + statusText + '）：' + (e && e.message ? e.message : String(e)),
-        'Failed to parse JSON response (' + statusText + '): ' + (e && e.message ? e.message : String(e))
+    let data = null
+    try {
+      data = await res.json()
+    } catch (e) {
+      const statusText = 'HTTP ' + res.status
+      throw new Error(
+        pdf2docText(
+          '解析响应 JSON 失败（' + statusText + '）：' + (e && e.message ? e.message : String(e)),
+          'Failed to parse JSON response (' + statusText + '): ' + (e && e.message ? e.message : String(e))
+        )
       )
-    )
+    }
+
+    if (!data || typeof data !== 'object') {
+      throw new Error(pdf2docText('响应格式错误：不是 JSON 对象', 'Invalid response format: not a JSON object'))
+    }
+
+    if (!data.ok) {
+      const msgZh = data.message || data.error || '图片解析失败'
+      const msgEn = data.message || data.error || 'Image parse failed'
+      const e = new Error(pdf2docText(msgZh, msgEn))
+      e._pdf2doc = { status: res.status, code: String(data.error || '') }
+      throw e
+    }
+
+    if (data.format !== 'markdown' || !data.markdown) {
+      throw new Error(
+        pdf2docText('解析成功，但返回格式不是 Markdown', 'Parse succeeded but returned format is not Markdown')
+      )
+    }
+
+    return data // { ok, format: 'markdown', markdown, pages, uid }
   }
 
-  if (!data || typeof data !== 'object') {
-    throw new Error(pdf2docText('响应格式错误：不是 JSON 对象', 'Invalid response format: not a JSON object'))
+  let lastErr = null
+  for (const token of candidates) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      return await requestOnce(token)
+    } catch (e) {
+      lastErr = e
+      if (!isLikelyTokenOrQuotaError(e)) throw e
+    }
   }
-
-  if (!data.ok) {
-    const msgZh = data.message || data.error || '图片解析失败'
-    const msgEn = data.message || data.error || 'Image parse failed'
-    throw new Error(pdf2docText(msgZh, msgEn))
-  }
-
-  if (data.format !== 'markdown' || !data.markdown) {
-    throw new Error(
-      pdf2docText('解析成功，但返回格式不是 Markdown', 'Parse succeeded but returned format is not Markdown')
-    )
-  }
-
-  return data // { ok, format: 'markdown', markdown, pages, uid }
+  throw lastErr || new Error(pdf2docText('图片解析失败', 'Image parse failed'))
 }
 
 
@@ -946,14 +1092,20 @@ async function showTranslateConfirmDialog(context, cfg, fileName, pages) {
     '.pdf2doc-settings-purchase-section{background:var(--bg,#fff);border:1px solid var(--border,#e5e7eb);border-radius:6px;padding:14px;margin:10px 0;}',
     '.pdf2doc-settings-purchase-title{font-size:13px;font-weight:600;margin-bottom:6px;color:var(--fg,#333);}',
     '.pdf2doc-settings-purchase-desc{font-size:11px;color:var(--muted,#6b7280);margin-bottom:12px;line-height:1.5;}',
-    '.pdf2doc-settings-qrcode-container{display:flex;justify-content:center;align-items:center;margin:12px 0;}',
-    '.pdf2doc-settings-qrcode-img{max-width:200px;height:auto;border:1px solid var(--border,#e5e7eb);border-radius:6px;}',
-    '.pdf2doc-settings-order-btn{width:100%;padding:9px 14px;border-radius:5px;border:1px solid #2563eb;background:#2563eb;color:#fff;cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s;text-align:center;margin-top:10px;}',
-    '.pdf2doc-settings-order-btn:hover{background:#1d4ed8;border-color:#1d4ed8;}'
-  ].join('\n')
-  const style = document.createElement('style')
-  style.id = PDF2DOC_STYLE_ID
-  style.textContent = css
+     '.pdf2doc-settings-qrcode-container{display:flex;justify-content:center;align-items:center;margin:12px 0;}',
+     '.pdf2doc-settings-qrcode-img{max-width:200px;height:auto;border:1px solid var(--border,#e5e7eb);border-radius:6px;}',
+     '.pdf2doc-settings-order-btn{width:100%;padding:9px 14px;border-radius:5px;border:1px solid #2563eb;background:#2563eb;color:#fff;cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s;text-align:center;margin-top:10px;}',
+     '.pdf2doc-settings-order-btn:hover{background:#1d4ed8;border-color:#1d4ed8;}',
+     '.pdf2doc-token-add{display:flex;gap:6px;align-items:center;}',
+     '.pdf2doc-token-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;}',
+     '.pdf2doc-token-item{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}',
+     '.pdf2doc-token-item .token{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;}',
+     '.pdf2doc-token-item .quota{font-size:11px;color:var(--muted);margin-left:auto;}',
+     '.pdf2doc-token-item .btn-mini{padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--fg);cursor:pointer;font-size:12px;}'
+   ].join('\n')
+   const style = document.createElement('style')
+   style.id = PDF2DOC_STYLE_ID
+   style.textContent = css
     document.head.appendChild(style)
   }
   
@@ -993,47 +1145,272 @@ async function showTranslateConfirmDialog(context, cfg, fileName, pages) {
     body.className = 'pdf2doc-settings-body'
     dialog.appendChild(body)
 
-    
-  const rowToken = document.createElement('div')
-  rowToken.className = 'pdf2doc-settings-row'
-  const labToken = document.createElement('div')
-  labToken.className = 'pdf2doc-settings-label'
-  labToken.textContent = pdf2docText('密钥', 'Token')
-  const boxToken = document.createElement('div')
-    const inputToken = document.createElement('input')
-    inputToken.type = 'text'
-    inputToken.className = 'pdf2doc-settings-input'
-  
-  inputToken.placeholder = ''
-  inputToken.value = cfg.apiToken || ''
-      boxToken.appendChild(inputToken)
-      const tipToken = document.createElement('div')
-      tipToken.className = 'pdf2doc-settings-desc'
-      tipToken.textContent = pdf2docText(
-        '务必牢记密钥，丢失后可通过我的订单找回',
-        'Keep this token safe; if you lose it, you can retrieve it from the order page.'
+
+    const tokenItems = normalizeApiTokens(cfg.apiTokens, cfg.apiToken)
+    const quotaState = new Map() // token -> { ok, total, used, remain, msg }
+
+    const rowToken = document.createElement('div')
+    rowToken.className = 'pdf2doc-settings-row'
+    const labToken = document.createElement('div')
+    labToken.className = 'pdf2doc-settings-label'
+    labToken.textContent = pdf2docText('密钥', 'Token')
+    const boxToken = document.createElement('div')
+
+    const addWrap = document.createElement('div')
+    addWrap.className = 'pdf2doc-token-add'
+    const inputAdd = document.createElement('input')
+    inputAdd.type = 'text'
+    inputAdd.className = 'pdf2doc-settings-input'
+    inputAdd.placeholder = pdf2docText('粘贴密钥后回车或点“添加”', 'Paste token then press Enter or click Add')
+    inputAdd.style.flex = '1'
+    const btnAdd = document.createElement('button')
+    btnAdd.type = 'button'
+    btnAdd.className = 'pdf2doc-settings-btn'
+    btnAdd.textContent = pdf2docText('添加', 'Add')
+    addWrap.appendChild(inputAdd)
+    addWrap.appendChild(btnAdd)
+    boxToken.appendChild(addWrap)
+
+    const tipToken = document.createElement('div')
+    tipToken.className = 'pdf2doc-settings-desc'
+    tipToken.textContent = pdf2docText(
+      '可添加多个密钥：余额不会在服务器端合并，但插件会自动轮换使用；添加/停用/删除会自动保存；丢失密钥可通过我的订单找回',
+      'You can add multiple tokens. They are not merged on the server, but the plugin will rotate them automatically. Add/enable/disable/remove will be saved automatically. If you lose a token, retrieve it from your orders.'
+    )
+    boxToken.appendChild(tipToken)
+
+    const btnQuotaAll = document.createElement('button')
+    btnQuotaAll.type = 'button'
+    btnQuotaAll.className = 'pdf2doc-settings-btn'
+    btnQuotaAll.textContent = pdf2docText('查询全部剩余页数', 'Check all remaining pages')
+    btnQuotaAll.style.marginTop = '6px'
+    boxToken.appendChild(btnQuotaAll)
+
+    const quotaInfo = document.createElement('div')
+    quotaInfo.className = 'pdf2doc-settings-desc'
+    quotaInfo.textContent = ''
+    boxToken.appendChild(quotaInfo)
+
+    const tokenList = document.createElement('div')
+    tokenList.className = 'pdf2doc-token-list'
+    boxToken.appendChild(tokenList)
+
+    // 仅自动保存密钥列表，不触碰其他配置；并且串行写入，避免并发覆盖
+    let persistSeq = Promise.resolve()
+    function queuePersistTokens() {
+      persistSeq = persistSeq
+        .then(async () => {
+          const apiTokens = tokenItems
+            .map(it => ({
+              token: String(it && it.token ? it.token : '').trim(),
+              enabled: it && it.enabled === false ? false : true
+            }))
+            .filter(it => it.token)
+          const apiToken = getPrimaryApiToken({ apiTokens, apiToken: '' })
+          await context.storage.set('apiTokens', JSON.stringify(apiTokens))
+          await context.storage.set('apiToken', apiToken)
+        })
+        .catch(() => {})
+    }
+
+    function updateQuotaSummaryText() {
+      const allCount = tokenItems.length
+      const enabled = tokenItems.filter(it => it && it.enabled !== false)
+      const enabledCount = enabled.length
+
+      let knownEnabledRemain = 0
+      let unknownEnabled = 0
+      for (const it of enabled) {
+        const state = quotaState.get(it.token)
+        if (state && state.ok === true && typeof state.remain === 'number') {
+          knownEnabledRemain += state.remain
+        } else {
+          unknownEnabled += 1
+        }
+      }
+
+      const suffix =
+        unknownEnabled > 0
+          ? pdf2docText('（' + unknownEnabled + ' 个启用密钥未查询）', ' (' + unknownEnabled + ' enabled tokens not queried)')
+          : ''
+
+      quotaInfo.textContent = pdf2docText(
+        '已配置 ' + allCount + ' 个密钥，启用 ' + enabledCount + ' 个；启用密钥合计剩余：' + knownEnabledRemain + ' 页' + suffix,
+        'Configured ' + allCount + ' tokens; ' + enabledCount + ' enabled; total remaining (enabled): ' + knownEnabledRemain + ' pages' + suffix
       )
-      boxToken.appendChild(tipToken)
+    }
 
-      const quotaInfo = document.createElement('div')
-      quotaInfo.className = 'pdf2doc-settings-desc'
-      quotaInfo.textContent = ''
+    function renderTokenList() {
+      tokenList.innerHTML = ''
+      if (tokenItems.length === 0) {
+        const empty = document.createElement('div')
+        empty.className = 'pdf2doc-settings-desc'
+        empty.textContent = pdf2docText('尚未添加密钥', 'No tokens added yet')
+        tokenList.appendChild(empty)
+        updateQuotaSummaryText()
+        return
+      }
 
-      const btnQuota = document.createElement('button')
-      btnQuota.type = 'button'
-      btnQuota.className = 'pdf2doc-settings-btn'
-      btnQuota.textContent = pdf2docText('查询剩余页数', 'Check remaining pages')
-      btnQuota.style.marginTop = '6px'
-      boxToken.appendChild(btnQuota)
-      boxToken.appendChild(quotaInfo)
-    
-    inputToken.addEventListener('input', () => {
-      quotaInfo.textContent = ''
+      tokenItems.forEach((it, index) => {
+        const row = document.createElement('div')
+        row.className = 'pdf2doc-token-item'
+
+        const chk = document.createElement('input')
+        chk.type = 'checkbox'
+        chk.checked = it.enabled !== false
+        chk.addEventListener('change', () => {
+          it.enabled = chk.checked
+          updateQuotaSummaryText()
+          queuePersistTokens()
+        })
+
+        const tokenText = document.createElement('span')
+        tokenText.className = 'token'
+        tokenText.textContent = maskApiTokenForDisplay(it.token)
+
+        const quotaText = document.createElement('span')
+        quotaText.className = 'quota'
+        const state = quotaState.get(it.token)
+        if (!state) {
+          quotaText.textContent = pdf2docText('未查询', 'Not checked')
+        } else if (state.ok !== true) {
+          quotaText.textContent = pdf2docText('查询失败', 'Failed')
+          if (state.msg) quotaText.title = state.msg
+        } else {
+          quotaText.textContent = pdf2docText(
+            '剩余 ' + state.remain + ' 页（总 ' + state.total + '，已用 ' + state.used + '）',
+            'Remain ' + state.remain + ' (total ' + state.total + ', used ' + state.used + ')'
+          )
+        }
+
+        const btnCheck = document.createElement('button')
+        btnCheck.type = 'button'
+        btnCheck.className = 'btn-mini'
+        btnCheck.textContent = pdf2docText('查询', 'Check')
+        btnCheck.addEventListener('click', () => {
+          fetchQuotaForToken(it.token)
+        })
+
+        const btnRemove = document.createElement('button')
+        btnRemove.type = 'button'
+        btnRemove.className = 'btn-mini'
+        btnRemove.textContent = pdf2docText('删除', 'Remove')
+        btnRemove.addEventListener('click', () => {
+          tokenItems.splice(index, 1)
+          quotaState.delete(it.token)
+          renderTokenList()
+          queuePersistTokens()
+        })
+
+        row.appendChild(chk)
+        row.appendChild(tokenText)
+        row.appendChild(btnCheck)
+        row.appendChild(btnRemove)
+        row.appendChild(quotaText)
+        tokenList.appendChild(row)
+      })
+
+      updateQuotaSummaryText()
+    }
+
+    const fetchQuotaForToken = async (token) => {
+      const t = String(token || '').trim()
+      if (!t) return
+
+      quotaState.set(t, { ok: false, msg: pdf2docText('正在查询...', 'Checking...') })
+      renderTokenList()
+
+      let apiUrl = (cfg.apiBaseUrl || DEFAULT_API_BASE).trim()
+      if (apiUrl.endsWith('/pdf')) {
+        apiUrl += '/'
+      }
+
+      try {
+        const res = await context.http.fetch(apiUrl, {
+          method: 'GET',
+          headers: {
+            Authorization: 'Bearer ' + t
+          }
+        })
+
+        const text = await res.text()
+        let data = null
+        try {
+          data = text ? JSON.parse(text) : null
+        } catch {
+          quotaState.set(t, { ok: false, msg: pdf2docText('服务器响应格式错误', 'Invalid server response') })
+          renderTokenList()
+          return
+        }
+
+        if (res.status < 200 || res.status >= 300) {
+          const msg =
+            (data && (data.message || data.error)) ||
+            text ||
+            pdf2docText('请求失败（HTTP ' + res.status + '）', 'Request failed (HTTP ' + res.status + ')')
+          quotaState.set(t, { ok: false, msg })
+          renderTokenList()
+          return
+        }
+
+        if (!data || data.ok !== true) {
+          const msg = (data && (data.message || data.error)) || pdf2docText('服务器返回错误', 'Server returned an error')
+          quotaState.set(t, { ok: false, msg })
+          renderTokenList()
+          return
+        }
+
+        const total = data.total_pages ?? 0
+        const used = data.used_pages ?? 0
+        const remain = data.remain_pages ?? Math.max(0, total - used)
+        quotaState.set(t, { ok: true, total, used, remain })
+        renderTokenList()
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e || pdf2docText('未知错误', 'unknown error'))
+        quotaState.set(t, { ok: false, msg })
+        renderTokenList()
+      }
+    }
+
+    const fetchQuotaAll = async () => {
+      const enabled = tokenItems.filter(it => it && it.enabled !== false && String(it.token || '').trim())
+      if (enabled.length === 0) {
+        updateQuotaSummaryText()
+        return
+      }
+      for (const it of enabled) {
+        // 串行查询，避免短时间内打爆后端或触发限流
+        // eslint-disable-next-line no-await-in-loop
+        await fetchQuotaForToken(it.token)
+      }
+    }
+
+    function addTokenFromInput() {
+      const t = String(inputAdd.value || '').trim()
+      if (!t) return
+      const existed = tokenItems.find(it => it && it.token === t)
+      if (existed) {
+        existed.enabled = true
+      } else {
+        tokenItems.push({ token: t, enabled: true })
+      }
+      inputAdd.value = ''
+      renderTokenList()
+      queuePersistTokens()
+    }
+
+    btnAdd.addEventListener('click', addTokenFromInput)
+    inputAdd.addEventListener('keydown', e => {
+      if (e && e.key === 'Enter') {
+        e.preventDefault()
+        addTokenFromInput()
+      }
     })
+    btnQuotaAll.addEventListener('click', fetchQuotaAll)
 
     rowToken.appendChild(labToken)
-  rowToken.appendChild(boxToken)
-  body.appendChild(rowToken)
+    rowToken.appendChild(boxToken)
+    body.appendChild(rowToken)
 
    
     const purchaseSection = document.createElement('div')
@@ -1052,7 +1429,16 @@ async function showTranslateConfirmDialog(context, cfg, fileName, pages) {
     )
     purchaseSection.appendChild(purchaseDesc)
 
-    
+    const unitTip = document.createElement('div')
+    unitTip.className = 'pdf2doc-settings-desc'
+    unitTip.style.marginTop = '6px'
+    unitTip.textContent = pdf2docText(
+      '注：计费单位为“实际解析后生成的页数”。根据 PDF 内容/类型不同，MD/Docx 实际页数可能比原 PDF 多 0%～100%（图片较多、版面复杂时更明显，极端情况下甚至翻倍）',
+      'Note: Billing is based on the number of pages actually generated by parsing. Depending on PDF content/type, the actual pages in MD/DOCX can be 0%–100% higher than the original (more noticeable for image-heavy/complex layouts; in extreme cases it can double).'
+    )
+    purchaseSection.appendChild(unitTip)
+
+     
     const qrcodeContainer = document.createElement('div')
     qrcodeContainer.className = 'pdf2doc-settings-qrcode-container'
 
@@ -1138,7 +1524,13 @@ async function showTranslateConfirmDialog(context, cfg, fileName, pages) {
 
     
     btnSave.addEventListener('click', () => {
-      const apiToken = inputToken.value.trim()
+      const apiTokens = tokenItems
+        .map(it => ({
+          token: String(it && it.token ? it.token : '').trim(),
+          enabled: it && it.enabled === false ? false : true
+        }))
+        .filter(it => it.token)
+      const apiToken = getPrimaryApiToken({ apiTokens, apiToken: '' })
       const defaultOutput =
         outSelect.value === 'docx' ? 'docx' : 'markdown'
 
@@ -1146,87 +1538,17 @@ async function showTranslateConfirmDialog(context, cfg, fileName, pages) {
       resolve({
         apiBaseUrl: DEFAULT_API_BASE,
         apiToken,
+        apiTokens,
         defaultOutput,
         sendToAI: cfg.sendToAI ?? true
       })
     })
 
-    
-    const fetchQuota = async () => {
-      
-      quotaInfo.textContent = ''
-
-      const username = inputToken.value.trim()
-      if (!username) {
-        quotaInfo.textContent = pdf2docText('请先填写密钥', 'Please enter the token first')
-        return
-      }
-
-      quotaInfo.textContent = pdf2docText('正在查询剩余页数...', 'Checking remaining pages...')
-
-      let apiUrl = (cfg.apiBaseUrl || DEFAULT_API_BASE).trim()
-      if (apiUrl.endsWith('/pdf')) {
-        apiUrl += '/'
-      }
-
-      try {
-        const res = await context.http.fetch(apiUrl, {
-          method: 'GET',
-          headers: {
-            Authorization: 'Bearer ' + username
-          }
-        })
-
-        const text = await res.text()
-
-        
-        let data = null
-        try {
-          data = text ? JSON.parse(text) : null
-        } catch (parseErr) {
-          quotaInfo.textContent = pdf2docText('查询失败：服务器响应格式错误', 'Query failed: invalid server response')
-          return
-        }
-
-        
-        if (res.status < 200 || res.status >= 300) {
-          const msg =
-            (data && (data.message || data.error)) ||
-            text ||
-            pdf2docText('请求失败（HTTP ' + res.status + '）', 'Request failed (HTTP ' + res.status + ')')
-          quotaInfo.textContent = pdf2docText('查询失败：', 'Query failed: ') + msg
-          return
-        }
-
-        
-        if (!data || data.ok !== true) {
-          const msg = (data && (data.message || data.error)) || pdf2docText('服务器返回错误', 'Server returned an error')
-          quotaInfo.textContent = pdf2docText('查询失败：', 'Query failed: ') + msg
-          return
-        }
-
-        
-        const total = data.total_pages ?? 0
-        const used = data.used_pages ?? 0
-        const remain = data.remain_pages ?? Math.max(0, total - used)
-
-        quotaInfo.textContent = pdf2docText(
-          '当前剩余页数：' + remain + '（总 ' + total + ' 页，已用 ' + used + ' 页）',
-          'Remaining pages: ' + remain + ' (total ' + total + ', used ' + used + ')'
-        )
-
-      } catch (e) {
-        const msg = e && e.message ? e.message : String(e || pdf2docText('未知错误', 'unknown error'))
-        quotaInfo.textContent = pdf2docText('查询失败：', 'Query failed: ') + msg
-      }
-    }
-    btnQuota.addEventListener('click', fetchQuota)
-
     document.body.appendChild(overlay)
 
-    
-    if (cfg.apiToken) {
-      fetchQuota()
+    renderTokenList()
+    if (tokenItems.length > 0 && tokenItems.length <= 5) {
+      fetchQuotaAll()
     }
   })
 }
@@ -1236,7 +1558,7 @@ export async function activate(context) {
   ;(async () => {
     try {
       const cfg = await loadConfig(context)
-      if (!cfg.apiToken) {
+      if (!hasAnyApiToken(cfg)) {
         return // 未配置密钥，静默跳过
       }
 
@@ -1282,12 +1604,20 @@ export async function activate(context) {
       ),
       children: [
         {
+          label: pdf2docText('余额充值/查询', 'Balance / Top-up'),
+          onClick: async () => {
+            try {
+              await openSettings(context)
+            } catch {}
+          }
+        },
+        {
           label: pdf2docText('选择文件', 'Choose file'),
         onClick: async () => {
           let loadingId = null
           try {
             const cfg = await loadConfig(context)
-            if (!cfg.apiToken) {
+            if (!hasAnyApiToken(cfg)) {
               context.ui.notice(
                 pdf2docText('请先在插件设置中配置密钥', 'Please configure the PDF2Doc token in plugin settings first'),
                 'err'
@@ -1431,7 +1761,7 @@ export async function activate(context) {
             let loadingId = null
             try {
               const cfg = await loadConfig(context)
-              if (!cfg.apiToken) {
+              if (!hasAnyApiToken(cfg)) {
                 context.ui.notice(
                   pdf2docText('请先在插件设置中配置密钥', 'Please configure the PDF2Doc token in plugin settings first'),
                   'err'
@@ -1506,7 +1836,7 @@ export async function activate(context) {
           let loadingId = null
           try {
             const cfg = await loadConfig(context)
-            if (!cfg.apiToken) {
+            if (!hasAnyApiToken(cfg)) {
               context.ui.notice(
                 pdf2docText('请先在插件设置中配置密钥', 'Please configure the PDF2Doc token in plugin settings first'),
                 'err'
@@ -1630,7 +1960,7 @@ export async function activate(context) {
           let loadingId = null
           try {
             const cfg = await loadConfig(context)
-            if (!cfg.apiToken) {
+            if (!hasAnyApiToken(cfg)) {
               context.ui.notice(
                 pdf2docText('请先在插件设置中配置密钥', 'Please configure the PDF2Doc token in plugin settings first'),
                 'err'
@@ -1774,7 +2104,7 @@ export async function activate(context) {
             }
 
             const cfg = await loadConfig(context)
-            if (!cfg.apiToken) {
+            if (!hasAnyApiToken(cfg)) {
               context.ui.notice(
                 pdf2docText(
                   '请先在 PDF2Doc 插件设置中配置密钥',
@@ -2165,7 +2495,7 @@ export async function activate(context) {
             throw new Error(pdf2docText('仅支持解析 .pdf 文件', 'Only .pdf files are supported'))
           }
           const cfg = await loadConfig(context)
-          if (!cfg.apiToken) {
+          if (!hasAnyApiToken(cfg)) {
             throw new Error(pdf2docText('未配置 pdf2doc 密钥', 'PDF2Doc token is not configured'))
           }
           if (typeof context.readFileBinary !== 'function') {
@@ -2196,7 +2526,7 @@ export async function activate(context) {
             )
           }
           const cfg = await loadConfig(context)
-          if (!cfg.apiToken) {
+          if (!hasAnyApiToken(cfg)) {
             throw new Error(pdf2docText('未配置 pdf2doc 密钥', 'PDF2Doc token is not configured'))
           }
           if (typeof context.readFileBinary !== 'function') {
