@@ -683,6 +683,9 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
     label.className = 'lib-name'
     // 文件隐藏后缀名，文件夹保持原名
     label.textContent = e.isDir ? e.name : stripExt(e.name)
+    // 鼠标悬浮显示完整文件名（含后缀），避免省略号导致难以辨认
+    label.title = e.name
+    row.title = e.name
 
     if (e.isDir) {
       const tg = makeTg()
@@ -1118,6 +1121,9 @@ async function renderRoot(root: string) {
   topRow.className = 'lib-node lib-dir'
   ;(topRow as any).dataset.path = root
   const tg = makeTg(); const ico = makeFolderIcon(root, true); const label = document.createElement('span'); label.className='lib-name'; label.textContent = nameOf(root) || root
+  // 根目录也可能被省略号截断：悬浮显示完整路径
+  label.title = root
+  topRow.title = root
   topRow.appendChild(tg); topRow.appendChild(ico); topRow.appendChild(label)
   const kids = document.createElement('div')
   kids.className = 'lib-children'
