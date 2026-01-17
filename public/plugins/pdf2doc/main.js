@@ -2001,21 +2001,50 @@ async function showTranslateConfirmDialog(context, cfg, fileName, pages) {
     rowJobUser.className = 'pdf2doc-settings-row'
     const labJobUser = document.createElement('div')
     labJobUser.className = 'pdf2doc-settings-label'
-    labJobUser.textContent = pdf2docText('用户名（断点）', 'Job user (resume)')
+    labJobUser.textContent = pdf2docText('用户名', 'Job user')
     const boxJobUser = document.createElement('div')
+    const jobUserWrap = document.createElement('div')
+    jobUserWrap.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;'
     const inputJobUser = document.createElement('input')
     inputJobUser.type = 'text'
     inputJobUser.className = 'pdf2doc-settings-input'
-    inputJobUser.placeholder = pdf2docText('用于断点续跑的用户名（可自定义）', 'A custom user id for resuming')
+    inputJobUser.placeholder = pdf2docText('用于缓存/续传的用户名（可自定义）', 'A custom user id for cache/resume')
     inputJobUser.value = cfg && typeof cfg.mdJobUser === 'string' ? cfg.mdJobUser : ''
+    // 让输入框更短一些，旁边放“保存”按钮
+    inputJobUser.style.maxWidth = '240px'
+    inputJobUser.style.flex = '0 1 240px'
+    const btnSaveJobUser = document.createElement('button')
+    btnSaveJobUser.type = 'button'
+    btnSaveJobUser.className = 'pdf2doc-settings-btn'
+    btnSaveJobUser.textContent = pdf2docText('保存', 'Save')
+    jobUserWrap.appendChild(inputJobUser)
+    jobUserWrap.appendChild(btnSaveJobUser)
     const tipJobUser = document.createElement('div')
     tipJobUser.className = 'pdf2doc-settings-desc'
     tipJobUser.textContent = pdf2docText(
-      '仅用于判断 MD 解析任务中断后继续的关键标识：一旦有任务中断，请不要修改此用户名；修改后将无法继续之前的任务。',
-      'Used only for resuming interrupted Markdown parse jobs. If a job is interrupted, do not change this value; changing it will prevent resuming the previous job.'
+      '用于解析为Markdown后的缓存和任务中断后继续的关键标识：修改后将丢失已解析缓存。一旦有任务中断，请不要修改此用户名。',
+      'Key id for Markdown cache and resuming interrupted jobs. Changing it will lose cached results; do not change it if a job is interrupted.'
     )
-    boxJobUser.appendChild(inputJobUser)
+    const jobUserSaved = document.createElement('div')
+    jobUserSaved.className = 'pdf2doc-settings-desc'
+    jobUserSaved.style.color = '#16a34a'
+    jobUserSaved.style.display = 'none'
+    jobUserSaved.textContent = pdf2docText('保存成功', 'Saved')
+    btnSaveJobUser.addEventListener('click', async () => {
+      try {
+        const v = String(inputJobUser.value || '').trim()
+        await context.storage.set('mdJobUser', v)
+        jobUserSaved.style.display = 'block'
+        setTimeout(() => {
+          try { jobUserSaved.style.display = 'none' } catch {}
+        }, 1500)
+      } catch {
+        // 保存失败不阻断主流程
+      }
+    })
+    boxJobUser.appendChild(jobUserWrap)
     boxJobUser.appendChild(tipJobUser)
+    boxJobUser.appendChild(jobUserSaved)
     rowJobUser.appendChild(labJobUser)
     rowJobUser.appendChild(boxJobUser)
     body.appendChild(rowJobUser)
@@ -2076,8 +2105,8 @@ async function showTranslateConfirmDialog(context, cfg, fileName, pages) {
     warnTip.style.color = '#b45309'
     warnTip.style.marginTop = '4px'
     warnTip.textContent = pdf2docText(
-      '⚠️请及时保存文档！重复解析也会扣除剩余页数。解析为Markdown后可另存为Docx',
-      '⚠️ Save your documents in time! Re-parsing also consumes pages. After parsing to Markdown you can export to DOCX.'
+      'Docx没有缓存功能，重复解析会重复扣费，建议解析为Markdown后另存为Docx',
+      'DOCX has no cache; re-parsing will be billed again. It is recommended to parse to Markdown first and then export to DOCX.'
     )
     body.appendChild(warnTip)
 
