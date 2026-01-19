@@ -1,7 +1,7 @@
 {
   "id": "note-templates",
   "name": "笔记与任务日历",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "flyMD",
   "description": "提供日记、会议记录、读书笔记等常用模板，并集成任务总览与简单日历视图，基于 YAML 前置信息与 TODO 语法构建规范化笔记与时间视图。",
   "i18n": {

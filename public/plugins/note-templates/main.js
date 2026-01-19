@@ -2336,7 +2336,19 @@ async function ntOpenSettingsDialog(context, cfg) {
 
 // 插件主入口
 export async function activate(context) {
-  // 在“插件”菜单中添加入口
+  // 在 Ribbon 栏注册快捷按钮
+  if (typeof context.addRibbonButton === 'function') {
+    context.addRibbonButton({
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+      iconType: 'svg',
+      title: ntText('打开任务与日历面板', 'Open tasks & calendar'),
+      onClick: () => {
+        void ntOpenTasksPanel(context)
+      }
+    })
+  }
+
+  // 在"插件"菜单中添加入口
   if (typeof context.addMenuItem === 'function') {
     context.addMenuItem({
       label: ntText('日记与任务', 'Journals & Tasks'),
