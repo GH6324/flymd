@@ -10,6 +10,8 @@ export type Library = {
   root: string
   createdAt?: number
   lastUsedAt?: number
+  // 是否在“库侧栏的库列表”中显示（默认 true；不影响顶部库切换菜单）
+  sidebarVisible?: boolean
 }
 
 let _store: Store | null = null
@@ -67,7 +69,8 @@ export async function getLibraries(): Promise<Library[]> {
       const name = String((it as any).name || '').trim() || (root.split(/[/]+/).pop() || id)
       const createdAt = Number((it as any).createdAt) > 0 ? Number((it as any).createdAt) : undefined
       const lastUsedAt = Number((it as any).lastUsedAt) > 0 ? Number((it as any).lastUsedAt) : undefined
-      arr.push({ id, name, root, createdAt, lastUsedAt })
+      const sidebarVisible = (it as any).sidebarVisible === false ? false : true
+      arr.push({ id, name, root, createdAt, lastUsedAt, sidebarVisible })
     }
     return arr
   } catch {
@@ -154,6 +157,76 @@ export async function renameLibrary(id: string, name: string): Promise<void> {
   if (idx < 0) return
   libs[idx] = { ...libs[idx], name }
   await setLibraries(libs)
+}
+
+export async function setLibrarySidebarVisible(id: string, visible: boolean): Promise<void> {
+  const libs = await getLibraries()
+  const idx = libs.findIndex(x => x.id === id)
+  if (idx < 0) return
+  libs[idx] = { ...libs[idx], sidebarVisible: !!visible }
+  await setLibraries(libs)
+}
+
+export async function setLibrariesOrder(idsInOrder: string[]): Promise<void> {
+  const libs = await getLibraries()
+  if (libs.length <= 1) return
+  const idSet = new Set((idsInOrder || []).map(x => String(x || '').trim()).filter(Boolean))
+  const byId = new Map(libs.map(l => [l.id, l] as const))
+
+  const out: Library[] = []
+  for (const id of idsInOrder || []) {
+    const key = String(id || '').trim()
+    if (!key || !byId.has(key)) continue
+    if (out.find(x => x.id === key)) continue
+    out.push(byId.get(key)!)
+  }
+  // 补齐：把漏掉的库按原顺序追加
+  for (const l of libs) {
+    if (!idSet.has(l.id)) out.push(l)
+  }
+  await setLibraries(out)
+}
+
+export async function applyLibrariesSettings(input: { orderIds?: string[]; sidebarVisibleById?: Record<string, boolean> }): Promise<void> {
+  const libs = await getLibraries()
+  if (libs.length === 0) return
+
+  let out = libs
+
+  // 1) 重排（通过数组顺序实现）
+  try {
+    const orderIds = Array.isArray(input?.orderIds) ? input.orderIds : null
+    if (orderIds && orderIds.length > 0) {
+      const idSet = new Set(orderIds.map(x => String(x || '').trim()).filter(Boolean))
+      const byId = new Map(out.map(l => [l.id, l] as const))
+      const next: Library[] = []
+      for (const id of orderIds) {
+        const key = String(id || '').trim()
+        if (!key) continue
+        const l = byId.get(key)
+        if (!l) continue
+        if (next.find(x => x.id === key)) continue
+        next.push(l)
+      }
+      for (const l of out) {
+        if (!idSet.has(l.id)) next.push(l)
+      }
+      out = next
+    }
+  } catch {}
+
+  // 2) 批量更新侧栏显示开关
+  try {
+    const m = input?.sidebarVisibleById || null
+    if (m && typeof m === 'object') {
+      out = out.map(l => {
+        if (!(l.id in m)) return l
+        return { ...l, sidebarVisible: !!(m as any)[l.id] }
+      })
+    }
+  } catch {}
+
+  await setLibraries(out)
 }
 
 export async function removeLibrary(id: string): Promise<void> {

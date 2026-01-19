@@ -975,18 +975,24 @@ function looksLikeUserConfiguredSync(raw: any): boolean {
   return !!(base || user || pass || enabled || onStartup || onShutdown)
 }
 
-async function getDefaultWebdavRootPathForActiveLibrary(): Promise<string> {
-  // 先用“库名”（用户可重命名），拿不到再回退到库根目录的目录名
+function getDefaultWebdavRootPathForLibraryInfo(name?: string | null, root?: string | null): string {
   try {
-    const name = await getActiveLibraryName()
-    const seg = sanitizeRemoteRootNameFromLibraryName(name || '')
-    if (seg) return '/' + seg
+    const seg1 = sanitizeRemoteRootNameFromLibraryName(String(name || ''))
+    if (seg1) return '/' + seg1
   } catch {}
   try {
-    const root = await getActiveLibraryRoot()
     const last = String(root || '').replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
-    const seg = sanitizeRemoteRootNameFromLibraryName(last)
-    if (seg) return '/' + seg
+    const seg2 = sanitizeRemoteRootNameFromLibraryName(last)
+    if (seg2) return '/' + seg2
+  } catch {}
+  return LEGACY_DEFAULT_ROOT_PATH
+}
+
+async function getDefaultWebdavRootPathForActiveLibrary(): Promise<string> {
+  try {
+    const name = await getActiveLibraryName()
+    const root = await getActiveLibraryRoot()
+    return getDefaultWebdavRootPathForLibraryInfo(name, root)
   } catch {}
   return LEGACY_DEFAULT_ROOT_PATH
 }
@@ -1080,6 +1086,35 @@ export async function getWebdavSyncConfig(): Promise<WebdavSyncConfig> {
   const defaultRoot = await (async () => {
     try { return await getDefaultWebdavRootPathForActiveLibrary() } catch { return LEGACY_DEFAULT_ROOT_PATH }
   })()
+  return buildWebdavConfigFromRaw(rawCfg, defaultRoot)
+}
+
+// 读取指定库的 WebDAV 配置（不依赖“当前激活库”）
+export async function getWebdavSyncConfigForLibrary(input: { id: string; name?: string; root?: string }): Promise<WebdavSyncConfig> {
+  const store = await getStore()
+  const raw = (await store.get('sync')) as any
+  let storeValue: any = raw
+
+  const libId = String(input?.id || '').trim()
+  const defaultRoot = getDefaultWebdavRootPathForLibraryInfo(input?.name, input?.root)
+
+  if (!storeValue || typeof storeValue !== 'object' || Array.isArray(storeValue)) {
+    storeValue = { version: 1, profiles: {} as Record<string, any> }
+  }
+
+  // 旧形态：整份 sync 就是一份配置，视为“全局配置”
+  if (!storeValue.profiles || typeof storeValue.profiles !== 'object' || Array.isArray(storeValue.profiles)) {
+    if (isLegacySyncConfigShape(storeValue)) {
+      return buildWebdavConfigFromRaw(storeValue, defaultRoot)
+    }
+    if (isLegacySyncConfigShape(raw)) {
+      return buildWebdavConfigFromRaw(raw, defaultRoot)
+    }
+    return buildWebdavConfigFromRaw({}, defaultRoot)
+  }
+
+  const profiles = storeValue.profiles as Record<string, any>
+  const rawCfg = libId ? (profiles[libId] || {}) : {}
   return buildWebdavConfigFromRaw(rawCfg, defaultRoot)
 }
 
@@ -1178,6 +1213,60 @@ export async function setWebdavSyncConfig(next: Partial<WebdavSyncConfig>): Prom
     // 理论上不会走到这里（必须有激活库），兜底保持旧行为
     storeValue = merged
   }
+
+  await store.set('sync', storeValue)
+  await store.save()
+}
+
+// 为指定库写入 WebDAV 配置（每个库有独立 profile）
+export async function setWebdavSyncConfigForLibrary(libIdInput: string, next: Partial<WebdavSyncConfig>): Promise<void> {
+  const store = await getStore()
+  const raw = (await store.get('sync')) as any
+  let storeValue: any = raw
+
+  const libId = String(libIdInput || '').trim()
+  if (!libId) return
+
+  if (!storeValue || typeof storeValue !== 'object' || Array.isArray(storeValue)) {
+    storeValue = { version: 1, profiles: {} as Record<string, any> }
+  }
+
+  if (!storeValue.profiles || typeof storeValue.profiles !== 'object' || Array.isArray(storeValue.profiles)) {
+    const profiles: Record<string, any> = {}
+    if (isLegacySyncConfigShape(storeValue)) {
+      profiles[libId] = { ...storeValue }
+    }
+    storeValue = { version: 1, profiles }
+  }
+
+  const profiles = storeValue.profiles as Record<string, any>
+  const curRaw = (profiles[libId] && typeof profiles[libId] === 'object' && !Array.isArray(profiles[libId]))
+    ? profiles[libId]
+    : {}
+  const merged: any = { ...curRaw, ...next }
+
+  if ('logRetentionDays' in merged) {
+    merged.logRetentionDays = clampInt(merged.logRetentionDays, 1, 90, DEFAULT_SYNC_LOG_RETENTION_DAYS)
+  }
+
+  // 若开启加密且已有密钥但尚无盐值，则生成一个固定盐值（每个配置唯一）
+  try {
+    const enabled = merged.encryptEnabled === true
+    const key = typeof merged.encryptKey === 'string' ? merged.encryptKey.trim() : ''
+    const hasSalt = typeof merged.encryptSalt === 'string' && !!merged.encryptSalt
+    if (enabled && key && !hasSalt) {
+      const salt = randomBytes(16)
+      merged.encryptSalt = bytesToBase64(salt)
+    }
+  } catch {}
+
+  if (Array.isArray(merged.allowedHttpHosts)) {
+    merged.allowedHttpHosts = merged.allowedHttpHosts.map((v: any) => typeof v === 'string' ? v.trim() : '').filter((v: string) => !!v)
+  }
+
+  profiles[libId] = merged
+  storeValue.version = 1
+  storeValue.profiles = profiles
 
   await store.set('sync', storeValue)
   await store.save()

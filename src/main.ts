@@ -160,6 +160,8 @@ import { initAboutOverlay, showAbout } from './ui/aboutOverlay'
 import { ensureUpdateOverlay, showUpdateOverlayLinux, showUpdateDownloadedOverlay, showInstallFailedOverlay, loadUpdateExtra, renderUpdateDetailsHTML } from './ui/updateOverlay'
 import { openInBrowser, upMsg } from './core/updateUtils'
 import { initLibraryContextMenu } from './ui/libraryContextMenu'
+import { initLibraryVaultList } from './ui/libraryVaultList'
+import { openLibrarySettingsDialog } from './ui/librarySettingsDialog'
 import { registerMenuCloser, closeAllMenus } from './ui/menuManager'
 import {
   removeContextMenu,
@@ -637,6 +639,7 @@ try {
 
 // 应用状态
 let fileTreeReady = false
+let _libraryVaultListUi: { refresh(): Promise<void> } | null = null
 let mode: Mode = 'edit'
 // 所见即所得开关（Overlay 模式）
 let wysiwyg = false
@@ -2705,6 +2708,7 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
           <span class="lib-vault-arrow">${ribbonIcons.chevronDown}</span>
         </button>
       </div>
+      <div class="lib-vault-list hidden" id="lib-vault-list"></div>
       <div class="lib-actions">
         <button class="lib-action-btn lib-icon-btn active" id="lib-tab-files" title="${t('tab.files')}">${ribbonIcons.layers}</button>
         <button class="lib-action-btn lib-icon-btn" id="lib-tab-outline" title="${t('tab.outline')}">${ribbonIcons.list}</button>
@@ -2739,6 +2743,18 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
     const elPath = library.querySelector('#lib-path') as HTMLDivElement | null
     // 去除"未选择库目录"默认提示，保持为空，避免长期提示误导
     if (elPath) elPath.textContent = ''
+    // 库侧栏库列表（多库快速切换）
+    try {
+      const elList = library.querySelector('#lib-vault-list') as HTMLDivElement | null
+      if (elList) {
+        _libraryVaultListUi = initLibraryVaultList(elList, {
+          getLibraries,
+          getActiveLibraryId,
+          setActiveLibraryId: async (id: string) => { await setActiveLibId(id) },
+          onAfterSwitch: async () => { await refreshLibraryUiAndTree(true) },
+        })
+      }
+    } catch {}
     // 初次渲染尝试同步库路径显示（若已存在旧配置）
     try { void refreshLibraryUiAndTree(false) } catch {}
     // 绑定标签页切换：目录 / 大纲
@@ -7202,6 +7218,8 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
     // 更新库侧栏顶部的库名显示
     const elPath = document.getElementById('lib-path') as HTMLSpanElement | null
     if (elPath) elPath.textContent = libName || t('lib.menu')
+    // 同步刷新库侧栏“库列表”
+    try { if (_libraryVaultListUi) await _libraryVaultListUi.refresh() } catch {}
   } catch {}
 
   if (!refreshTree) return
@@ -7256,6 +7274,13 @@ async function showLibraryMenu() {
       })
     }
     // 末尾操作项
+    items.push({ label: (t('lib.settings.title') || '库设置') + '…', action: async () => {
+      try {
+        await openLibrarySettingsDialog({
+          onRefreshUi: async () => { await refreshLibraryUiAndTree(false) },
+        })
+      } catch {}
+    } })
     items.push({ label: '新增库…', action: async () => { const p = await pickLibraryRoot(); if (p) await refreshLibraryUiAndTree(true) } })
     items.push({ label: '重命名当前库…', action: async () => {
       const id = await getActiveLibraryId(); if (!id) return
