@@ -10861,10 +10861,6 @@ async function openBootstrapDialog(ctx) {
   btnGenMeta.className = 'ain-btn gray'
   btnGenMeta.textContent = t('AI 生成资料', 'AI generate meta')
 
-  const btnGen = document.createElement('button')
-  btnGen.className = 'ain-btn'
-  btnGen.textContent = t('生成第一章', 'Generate chapter 1')
-
   const btnAppend = document.createElement('button')
   btnAppend.className = 'ain-btn gray'
 
@@ -10872,9 +10868,17 @@ async function openBootstrapDialog(ctx) {
   btnAppend.disabled = true
 
   rowBtn.appendChild(btnGenMeta)
-  rowBtn.appendChild(btnGen)
   rowBtn.appendChild(btnAppend)
   sec.appendChild(rowBtn)
+
+  const bootstrapHint = document.createElement('div')
+  bootstrapHint.className = 'ain-muted'
+  bootstrapHint.style.marginTop = '6px'
+  bootstrapHint.textContent = t(
+    '流程：先点“AI 生成资料”，再点“创建项目并写入文件”。项目创建后，用“开始下一章”创建章节文件开始写作。',
+    'Flow: AI generate meta → Create project & write files → Start next chapter to begin writing.'
+  )
+  sec.appendChild(bootstrapHint)
 
   const structBox = document.createElement('div')
   structBox.style.marginTop = '10px'
@@ -11259,6 +11263,7 @@ async function openBootstrapDialog(ctx) {
         renderQuestions()
       }
       out.textContent = safeText(resp && resp.text).trim() || t('已生成资料', 'Meta generated')
+      btnAppend.disabled = false
       btnContinue.disabled = false
       ctx.ui.notice(t('已生成资料（可编辑）', 'Meta generated (editable)'), 'ok', 1800)
     } catch (e) {
@@ -11411,7 +11416,6 @@ async function openBootstrapDialog(ctx) {
   }
 
   async function doCreateProject() {
-    if (!lastChapter) return
     cfg = await loadCfg(ctx)
     const inf = await inferProjectDir(ctx, cfg)
     if (!ctx.getLibraryRoot) throw new Error(t('当前环境不支持获取库根目录', 'Cannot get library root'))
@@ -11434,7 +11438,11 @@ async function openBootstrapDialog(ctx) {
 
     const ok = await openConfirmDialog(ctx, {
       title: t('创建项目', 'Create project'),
-      message: t('将在以下目录创建项目：', 'Will create project at: ') + projectRel + '\n' + t('并写入资料文件与第一章。继续？', 'and write meta files + chapter 1. Continue?')
+      message:
+        t('将在以下目录创建项目：', 'Will create project at: ') +
+        projectRel +
+        '\n' +
+        t('并写入资料设定文件（世界/角色/关系/大纲等）。创建后请用“开始下一章”创建章节文件开始写作。继续？', 'and write meta files (world/characters/relations/outline). Then use Start next chapter to begin writing. Continue?')
     })
     if (!ok) return
 
@@ -11467,37 +11475,22 @@ async function openBootstrapDialog(ctx) {
     await writeTextAny(ctx, joinFsPath(projectAbs, '05_章节大纲.md'), safeText(outline.ta.value).trim() || t('# 章节大纲\n\n- 第 1 章：\n- 第 2 章：\n', '# Outline\n\n- Chapter 1:\n- Chapter 2:\n'))
     await writeTextAny(ctx, joinFsPath(projectAbs, '06_人物状态.md'), t('# 人物状态\n\n- （自动维护：每次更新会追加一个“快照”，用于续写上下文）\n', '# Character states\n\n- (Auto-maintained snapshots for writing context)\n'))
     await writeTextAny(ctx, joinFsPath(projectAbs, '.ainovel/index.json'), JSON.stringify({ version: 1, created_at: now }, null, 2))
-
-    const chapRoot = joinFsPath(projectAbs, '03_章节')
-    const chapDir = cbSplitVolume && cbSplitVolume.checked
-      ? joinFsPath(chapRoot, `卷01_第${zhNumber(1)}卷`)
-      : chapRoot
-    const chapPath = joinFsPath(chapDir, '001_第一章.md')
-    await writeTextAny(ctx, chapPath, '# 第一章\n\n' + lastChapter + '\n')
- 
+  
     cfg = await saveCfg(ctx, { currentProjectRel: projectRel })
 
     // 项目已落盘：后台构建 RAG 索引（失败不影响主流程）
     try { rag_build_or_update_index(ctx, cfg).catch(() => {}) } catch {}
-  
+   
     try {
       if (typeof ctx.openFileByPath === 'function') {
-        await ctx.openFileByPath(chapPath)
+        await ctx.openFileByPath(joinFsPath(projectAbs, '00_项目.md'))
       }
     } catch {}
 
     out.textContent = t('已创建项目并写入文件：', 'Project created: ') + projectRel
-    ctx.ui.notice(t('已创建项目并打开第一章', 'Project created, chapter opened'), 'ok', 2000)
+    ctx.ui.notice(t('已创建项目：请用“开始下一章”开始写作', 'Project created: use Start next chapter to begin writing'), 'ok', 2600)
   }
 
-  btnGen.onclick = () => {
-    doGenerate().catch((e) => {
-      const msg = e && e.message ? String(e.message) : String(e)
-      try { out.textContent = t('失败：', 'Failed: ') + msg } catch {}
-      try { ctx.ui.notice(t('失败：', 'Failed: ') + msg, 'err', 2600) } catch {}
-      try { console.error('[ai-novel] bootstrap generate failed:', e) } catch {}
-    })
-  }
   btnAppend.onclick = () => {
     doCreateProject().catch((e) => {
       ctx.ui.notice(t('创建失败：', 'Create failed: ') + (e && e.message ? e.message : String(e)), 'err', 2600)
@@ -14358,7 +14351,7 @@ export function activate(context) {
           }
         },
         {
-          label: t('一键开坑', 'Start from zero (auto first chapter)'),
+          label: t('一键开坑', 'Start from zero (create project)'),
           onClick: async () => {
             try {
               await openBootstrapDialog(context)
