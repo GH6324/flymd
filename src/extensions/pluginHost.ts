@@ -155,6 +155,91 @@ export type PluginHost = {
 
 let _appLocalDataDirCached: string | null | undefined
 
+// pdfjs-dist 很大，且在 Vite 构建里通常被单独分包；这里做一次性懒加载缓存，
+// 同时允许首次加载失败后下次重试，避免“首次调用偶发失败，二次才好”的烂体验。
+let _pdfjsForTools: any | null = null
+let _pdfjsForToolsPromise: Promise<any> | null = null
+
+async function getPdfjsForTools(): Promise<any> {
+  if (_pdfjsForTools) return _pdfjsForTools
+  if (_pdfjsForToolsPromise) return _pdfjsForToolsPromise
+  _pdfjsForToolsPromise = (async () => {
+    const mod: any = await import('pdfjs-dist')
+    const pdfjs: any =
+      mod && (mod as any).getDocument
+        ? mod
+        : (mod && (mod as any).default ? (mod as any).default : mod)
+    if (!pdfjs || typeof (pdfjs as any).getDocument !== 'function') {
+      throw new Error('PDF.js 不可用')
+    }
+    _pdfjsForTools = pdfjs
+    return pdfjs
+  })().catch((e) => {
+    // 允许下次再尝试加载
+    _pdfjsForToolsPromise = null
+    throw e
+  })
+  return _pdfjsForToolsPromise
+}
+
+// pdfjs-dist v5+ 在某些打包/运行时环境下需要显式配置 workerSrc/workerPort。
+// 否则首次调用 getDocument 可能直接报：No "GlobalWorkerOptions.workerSrc" specified.
+let _pdfjsWorkerForToolsPromise: Promise<boolean> | null = null
+let _pdfjsWorkerForTools: Worker | null = null
+
+function hasPdfjsWorkerConfigured(pdfjs: any): boolean {
+  try {
+    const g = pdfjs?.GlobalWorkerOptions
+    if (!g) return false
+    if ((g as any).workerPort) return true
+    const src = (g as any).workerSrc
+    return typeof src === 'string' && !!src
+  } catch {
+    return false
+  }
+}
+
+async function ensurePdfjsWorkerForTools(pdfjs: any): Promise<boolean> {
+  if (hasPdfjsWorkerConfigured(pdfjs)) return true
+  if (_pdfjsWorkerForToolsPromise) return _pdfjsWorkerForToolsPromise
+
+  _pdfjsWorkerForToolsPromise = (async () => {
+    const g = pdfjs?.GlobalWorkerOptions
+    if (!g) return false
+
+    // 先尝试使用 workerPort（不依赖 workerSrc 字符串）
+    try {
+      if (_pdfjsWorkerForTools) {
+        try { (g as any).workerPort = _pdfjsWorkerForTools } catch {}
+        return hasPdfjsWorkerConfigured(pdfjs)
+      }
+
+      const workerMod: any = await import('pdfjs-dist/build/pdf.worker.min.mjs?worker')
+      const WorkerCtor: any = workerMod?.default || workerMod
+      const worker: Worker = new WorkerCtor()
+      _pdfjsWorkerForTools = worker
+      try { (g as any).workerPort = worker } catch {}
+      if (hasPdfjsWorkerConfigured(pdfjs)) return true
+    } catch {}
+
+    // fallback：尝试配置 workerSrc（URL）
+    try {
+      const urlMod: any = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+      const url: any = urlMod?.default || urlMod
+      if (typeof url === 'string' && url) {
+        try { (g as any).workerSrc = url } catch {}
+        if (hasPdfjsWorkerConfigured(pdfjs)) return true
+      }
+    } catch {}
+
+    return hasPdfjsWorkerConfigured(pdfjs)
+  })().finally(() => {
+    _pdfjsWorkerForToolsPromise = null
+  })
+
+  return _pdfjsWorkerForToolsPromise
+}
+
 async function getAppLocalDataDirCached(): Promise<string | null> {
   if (typeof _appLocalDataDirCached !== 'undefined') return _appLocalDataDirCached
   try {
@@ -1483,26 +1568,27 @@ export function createPluginHost(
             throw new Error('bytes 必须是 Uint8Array / ArrayBuffer / number[]')
           }
 
-          // 动态加载 pdfjs-dist（若打包裁剪导致不可用，则报错给插件决定是否降级）
-          const mod: any = await import('pdfjs-dist')
-          const pdfjs: any =
-            mod && (mod as any).getDocument
-              ? mod
-              : (mod && (mod as any).default ? (mod as any).default : mod)
-          if (!pdfjs || typeof (pdfjs as any).getDocument !== 'function') {
-            throw new Error('PDF.js 不可用')
+          const openAndCount = async (): Promise<number> => {
+            const pdfjs = await getPdfjsForTools()
+            // 先确保 worker 配置齐全：否则 pdfjs-dist 可能直接报 workerSrc 未配置
+            const ok = await ensurePdfjsWorkerForTools(pdfjs)
+            const getDocOpts: any = { data }
+            if (!ok) getDocOpts.disableWorker = true
+            const task = (pdfjs as any).getDocument(getDocOpts)
+            const doc = (task as any).promise ? await (task as any).promise : await task
+            const n = (doc && typeof doc.numPages === 'number') ? doc.numPages : 0
+            try { await doc?.destroy?.() } catch {}
+            try { await task?.destroy?.() } catch {}
+            return (n >>> 0) || 0
           }
 
-          // 这里强制禁用 worker：只读页数，避免 worker 依赖导致的兼容性问题
-          const task = (pdfjs as any).getDocument({
-            data,
-            disableWorker: true,
-          })
-          const doc = (task as any).promise ? await (task as any).promise : await task
-          const n = (doc && typeof doc.numPages === 'number') ? doc.numPages : 0
-          try { await doc?.destroy?.() } catch {}
-          try { await task?.destroy?.() } catch {}
-          return (n >>> 0) || 0
+          // 某些环境/时序下首次懒加载或初始化可能偶发失败：做一次极轻量重试。
+          try {
+            return await openAndCount()
+          } catch {
+            await new Promise<void>((r) => setTimeout(() => r(), 60))
+            return await openAndCount()
+          }
         } catch (e) {
           console.error(`[Plugin ${p.id}] getPdfPageCount 失败:`, e)
           throw e
