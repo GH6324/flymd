@@ -10,7 +10,7 @@ export type Library = {
   root: string
   createdAt?: number
   lastUsedAt?: number
-  // 是否在“库侧栏的库列表”中显示（默认 true；不影响顶部库切换菜单）
+  // 是否在“库切换器”（侧栏内/垂直标题栏）中显示（默认 true；不影响顶部库切换菜单）
   sidebarVisible?: boolean
 }
 
@@ -256,7 +256,8 @@ export async function getLibSwitcherPosition(): Promise<LibSwitcherPosition> {
     const v = await store.get('libSwitcherPosition')
     if (v === 'sidebar' || v === 'ribbon') return v
   } catch {}
-  return 'ribbon' // 默认使用新方案
+  // 向后兼容：默认保持旧行为（侧栏内）
+  return 'sidebar'
 }
 
 export async function setLibSwitcherPosition(pos: LibSwitcherPosition): Promise<void> {
@@ -266,4 +267,3 @@ export async function setLibSwitcherPosition(pos: LibSwitcherPosition): Promise<
     await store.save()
   } catch {}
 }
-

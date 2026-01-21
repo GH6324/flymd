@@ -6,6 +6,7 @@ export type RibbonLibraryListOptions = {
   getActiveLibraryId: () => Promise<string | null>
   setActiveLibraryId: (id: string) => Promise<void>
   onAfterSwitch?: () => Promise<void>
+  dividerEl?: HTMLElement | null
 }
 
 export type RibbonLibraryListApi = {
@@ -16,7 +17,6 @@ export function initRibbonLibraryList(
   container: HTMLElement,
   options: RibbonLibraryListOptions
 ): RibbonLibraryListApi {
-
   async function render() {
     try {
       const allLibs = await options.getLibraries()
@@ -28,20 +28,15 @@ export function initRibbonLibraryList(
       // 如果没有库或只有一个库，隐藏容器
       if (libs.length <= 1) {
         container.classList.add('hidden')
-        // 同时隐藏分隔线
-        const divider = container.nextElementSibling
-        if (divider?.classList.contains('ribbon-divider')) {
-          divider.classList.add('hidden')
-        }
+        const divider = options.dividerEl || container.nextElementSibling
+        ;(divider as HTMLElement | null)?.classList?.add('hidden')
         return
       }
 
       container.classList.remove('hidden')
       // 显示分隔线
-      const divider = container.nextElementSibling
-      if (divider?.classList.contains('ribbon-divider')) {
-        divider.classList.remove('hidden')
-      }
+      const divider = options.dividerEl || container.nextElementSibling
+      ;(divider as HTMLElement | null)?.classList?.remove('hidden')
 
       libs.forEach(lib => {
         const btn = document.createElement('button')
@@ -54,7 +49,6 @@ export function initRibbonLibraryList(
             try {
               await options.setActiveLibraryId(lib.id)
               await options.onAfterSwitch?.()
-              await render()
             } catch (e) {
               console.error('[RibbonLibraryList] 切换库失败:', e)
             }

@@ -1,4 +1,4 @@
-// 库设置对话框：只做“库侧栏显示/库顺序/WebDAV（启用+远端路径）”
+// 库设置对话框：只做“库切换器显示/库顺序/WebDAV（启用+远端路径）”
 // 关键点：不改库 id；不改已有 WebDAV 配置的默认兼容策略
 
 import { t } from '../i18n'
@@ -53,13 +53,13 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
             <span id="lib-settings-cur-name"></span>
           </div>
 
-          <label>${t('lib.settings.sidebar') || '库侧栏显示'}</label>
+          <label>${t('lib.settings.sidebar') || '库切换器显示'}</label>
           <div class="upl-inline-row">
             <label class="switch" for="lib-settings-sidebar-visible">
               <input id="lib-settings-sidebar-visible" type="checkbox"/>
               <span class="slider"></span>
             </label>
-            <span class="upl-hint">${t('lib.settings.sidebar.hint') || '仅影响侧栏库列表，不影响顶部切换菜单'}</span>
+            <span class="upl-hint">${t('lib.settings.sidebar.hint') || '影响侧栏内/垂直标题栏的库切换器；不影响顶部切换菜单'}</span>
           </div>
 
           <label>${t('lib.settings.switcher') || '库切换位置'}</label>
@@ -272,7 +272,7 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
           } catch {}
         })
         const cbText = document.createElement('span')
-        cbText.textContent = t('lib.settings.sidebar.short') || '侧栏'
+        cbText.textContent = t('lib.settings.sidebar.short') || '显示'
         cbWrap.appendChild(cb)
         cbWrap.appendChild(cbText)
 
@@ -335,22 +335,10 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
       await applyLibrariesSettings({ orderIds: draftOrderIds, sidebarVisibleById: vis })
 
       // 保存库切换位置设置并立即更新 UI
-      const newSwitcherPos = (elSwitcherPos?.value || 'ribbon') as LibSwitcherPosition
+      const newSwitcherPos = (elSwitcherPos?.value || draftSwitcherPos) as LibSwitcherPosition
       if (newSwitcherPos !== draftSwitcherPos) {
         await setLibSwitcherPosition(newSwitcherPos)
-        // 立即更新 DOM 显示状态
-        const ribbonLibs = document.getElementById('ribbon-libs')
-        const ribbonDivider = document.querySelector('.ribbon-divider')
-        const libVaultList = document.getElementById('lib-vault-list')
-        if (newSwitcherPos === 'ribbon') {
-          ribbonLibs?.classList.remove('hidden')
-          ribbonDivider?.classList.remove('hidden')
-          libVaultList?.classList.add('hidden')
-        } else {
-          ribbonLibs?.classList.add('hidden')
-          ribbonDivider?.classList.add('hidden')
-          libVaultList?.classList.remove('hidden')
-        }
+        // UI 刷新交给外部回调（避免这里到处写 DOM 特殊情况）
       }
 
       // WebDAV：按"用户真的改过"的库落盘

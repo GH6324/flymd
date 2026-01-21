@@ -1508,7 +1508,7 @@ const app = document.getElementById('app')!
 app.innerHTML = `
   <aside class="ribbon" id="ribbon">
     <div class="ribbon-libs" id="ribbon-libs"></div>
-    <div class="ribbon-divider"></div>
+    <div class="ribbon-divider" id="ribbon-libs-divider"></div>
     <div class="ribbon-top">
       <button class="ribbon-btn" id="btn-filetree" title="${t('lib.toggle')}">${ribbonIcons.folder}</button>
       <button class="ribbon-btn" id="btn-open" title="${t('menu.file')}">${ribbonIcons.fileText}</button>
@@ -7203,6 +7203,25 @@ function showLangMenu() {
   showTopMenu(anchor, items)
 }
 
+function setLibSwitcherDomState(pos: 'sidebar' | 'ribbon') {
+  const ribbonLibs = document.getElementById('ribbon-libs')
+  const ribbonDivider = document.getElementById('ribbon-libs-divider')
+  const libVaultList = document.getElementById('lib-vault-list')
+
+  if (pos === 'ribbon') {
+    ribbonLibs?.classList.remove('hidden')
+    // 分隔线是否显示由 ribbon 组件根据库数量决定，避免这里写特殊情况
+    ribbonDivider?.classList.add('hidden')
+    libVaultList?.classList.add('hidden')
+  } else {
+    ribbonLibs?.classList.add('hidden')
+    ribbonDivider?.classList.add('hidden')
+    libVaultList?.classList.remove('hidden')
+  }
+
+  return { ribbonLibs, ribbonDivider, libVaultList }
+}
+
 // 刷新文件树并更新库名称显示
 async function refreshLibraryUiAndTree(refreshTree = true) {
   // 更新库名称显示
@@ -7219,9 +7238,7 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
     if (elPath) elPath.textContent = libName || t('lib.menu')
     // 根据 switcher 位置设置决定刷新哪个组件
     const switcherPos = await getLibSwitcherPosition()
-    const ribbonLibs = document.getElementById('ribbon-libs')
-    const ribbonDivider = document.querySelector('.ribbon-divider')
-    const libVaultList = document.getElementById('lib-vault-list')
+    const { ribbonLibs, ribbonDivider } = setLibSwitcherDomState(switcherPos)
     if (switcherPos === 'ribbon') {
       // ribbon 模式：初始化/刷新 ribbon 库列表，隐藏侧栏库列表
       if (!_ribbonLibsUi && ribbonLibs) {
@@ -7230,16 +7247,14 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
           getActiveLibraryId,
           setActiveLibraryId: async (id: string) => { await setActiveLibId(id) },
           onAfterSwitch: async () => { await refreshLibraryUiAndTree(true) },
+          dividerEl: ribbonDivider,
         })
       } else if (_ribbonLibsUi) {
         await _ribbonLibsUi.render()
       }
-      libVaultList?.classList.add('hidden')
     } else {
       // sidebar 模式：刷新侧栏库列表，隐藏 ribbon 库列表
       if (_libraryVaultListUi) await _libraryVaultListUi.refresh()
-      ribbonLibs?.classList.add('hidden')
-      ribbonDivider?.classList.add('hidden')
     }
   } catch {}
 
@@ -8916,9 +8931,7 @@ function bindEvents() {
   ;(async () => {
     try {
       const switcherPos = await getLibSwitcherPosition()
-      const ribbonLibs = document.getElementById('ribbon-libs')
-      const ribbonDivider = document.querySelector('.ribbon-divider')
-      const libVaultList = document.getElementById('lib-vault-list')
+      const { ribbonLibs, ribbonDivider } = setLibSwitcherDomState(switcherPos)
 
       if (switcherPos === 'ribbon') {
         // 方案2：垂直标题栏
@@ -8928,15 +8941,9 @@ function bindEvents() {
             getActiveLibraryId,
             setActiveLibraryId: async (id: string) => { await setActiveLibId(id) },
             onAfterSwitch: async () => { await refreshLibraryUiAndTree(true) },
+            dividerEl: ribbonDivider,
           })
         }
-        // 隐藏侧栏内的库列表
-        libVaultList?.classList.add('hidden')
-      } else {
-        // 方案1：侧栏内（隐藏 ribbon 库切换区，显示侧栏库列表）
-        ribbonLibs?.classList.add('hidden')
-        ribbonDivider?.classList.add('hidden')
-        libVaultList?.classList.remove('hidden')
       }
     } catch (e) {
       console.error('[RibbonLibraryList] 初始化失败:', e)
