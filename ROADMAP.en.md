@@ -2,6 +2,17 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v1.2.5
+- Added: PDF export progress overlay (stages/progress/elapsed/logs) with one-click cancel
+- Fixed: Occasional blank/black pages when exporting very long documents (paged rendering avoids a giant canvas)
+- Added: WYSIWYG table context menu actions to delete row/column
+- Improved: Multi-library switcher can be shown in Ribbon or Sidebar; simplified visibility logic; refined Library Settings styling/copy
+- Improved: Library tree refresh avoids blank-frame flicker (keeps the previous tree until the new one is ready)
+- Improved: PDF.js lazy-load caching + worker fallback, making plugin page-count reads more reliable
+- Fixed: In reading mode, `Ctrl+A` could select the library name
+- Updated: Built-in “PDF & Image High-Precision Parsing (pdf2doc)” v0.2.7 (relative paths by default; better filename guessing; PDF.js worker compatibility)
+- Updated: Built-in “AI Novel Engine” v0.6.9 (global hard constraints doc, auto-injected)
+
 ## Update v1.2.4
 - Added: Option to insert local images using relative paths (e.g. `images/xxx.png`) for better cross-device sync (toggle in Image Host settings)
 - Added: Improved local image save path strategy: prefer `images/` next to the current document; for unsaved docs use the default paste directory (fallback to the user Pictures directory)
