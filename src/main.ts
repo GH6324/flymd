@@ -6241,16 +6241,32 @@ function initWindowsCompositorPoke() {
       // 再 poke 一次，覆盖“拖动结束后一帧才漏出来”的情况
       pokeCssOnce()
       const win = getCurrentWindow()
-      // decorations 本应始终为 false；这里重复设置当作“强制刷新窗口样式”
-      try { await win.setDecorations(false) } catch {}
+      // 只在“隐藏原生标题栏”的模式下做 WM_SIZE poke。
+      // 这里绝不能擅自 setDecorations(false)：那会直接破坏用户的窗口装饰设置（也会让双击标题栏最大化失效）。
+      let shouldPokeSize = false
+      try { shouldPokeSize = !!document?.body?.classList?.contains('no-native-decorations') } catch {}
+      if (!shouldPokeSize) return
+
+      // 最大化/全屏状态下，setSize 会导致窗口被系统还原并出现乱跳（包括移到右下角）。
+      // 这种“修复合成残影”的手段不该干扰窗口状态。
+      try {
+        const isMax = await win.isMaximized()
+        if (isMax) return
+      } catch {}
+      try {
+        const isFs = await win.isFullscreen()
+        if (isFs) return
+      } catch {}
+
       // 某些机器上需要触发一次 WM_SIZE 才会把透明 surface 刷干净：同尺寸 setSize 当作无损 poke
       try {
         const s = await win.innerSize()
         await win.setSize({ type: 'Physical', width: s.width, height: s.height })
       } catch {}
-    } catch {}
-    // 避免 setDecorations/setSize 触发的 window 事件反复回调导致抖动
-    setTimeout(() => { settling = false }, 200)
+    } catch {} finally {
+      // 避免 setSize 触发的 window 事件反复回调导致抖动
+      setTimeout(() => { settling = false }, 200)
+    }
   }
 
   const stopUnfocusedPoke = () => {
@@ -6280,7 +6296,7 @@ function initWindowsCompositorPoke() {
       pokeCssOnce()
     }
 
-    // 2) 拖动结束后做一次更强的 settle（包含 setDecorations(false)）
+    // 2) 拖动结束后做一次更强的 settle（包含 WM_SIZE poke）
     try { if (settleTimer) clearTimeout(settleTimer) } catch {}
     settleTimer = setTimeout(() => {
       settleTimer = null
