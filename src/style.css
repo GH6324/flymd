@@ -7645,6 +7645,27 @@ body.focus-mode.custom-titlebar-active .focus-trigger-zone {
   display: none;
 }
 
+/* 标签过多时：压缩所有标签宽度，保证新打开的标签始终可见（Obsidian 风格） */
+.tabbar-tabs.tabbar-tabs--compressed {
+  overflow-x: hidden;
+}
+
+.tabbar-tabs.tabbar-tabs--compressed .tabbar-tab {
+  /* 关键：允许标签参与伸缩，均分可用宽度 */
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+  flex-shrink: 1;
+  /* 压缩时减小左右内边距，尽量多容纳几个标签 */
+  padding: 0 var(--space-md);
+  /* 极端情况下内容可能放不下，直接裁切，避免“内容挤出盒子”把布局搞坏 */
+  overflow: hidden;
+}
+
+.tabbar-tabs.tabbar-tabs--compressed .tabbar-tab-name {
+  min-width: 0;
+}
+
 .tabbar-tab {
   display: flex;
   align-items: center;

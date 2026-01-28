@@ -28,6 +28,9 @@ export class TabBar {
   private tabsContainer: HTMLElement | null = null
   private unsubscribe: (() => void) | null = null
   private suppressNextClick = false
+  // 标签宽度压缩：用 ResizeObserver + rAF 合并更新，避免频繁读写布局
+  private resizeObserver: ResizeObserver | null = null
+  private layoutRaf = 0
 
   // 拖拽状态
   private draggedTabId: string | null = null
@@ -72,6 +75,7 @@ export class TabBar {
   init(): void {
     this.render()
     this.bindEvents()
+    this.bindLayoutObservers()
     // 兜底清理：把旧版本遗留的 drag-ghost 窗口干掉（避免用户看到一屏“拖拽标签”残影）
     try { setTimeout(() => { void cleanupDragGhostWindows() }, 0) } catch {}
   }
@@ -126,6 +130,57 @@ export class TabBar {
       }
     })
     this.tabsContainer.appendChild(newTabBtn)
+
+    // 渲染完再做一次布局判定：超过可见范围就压缩所有标签宽度，确保新标签可见（Obsidian 风格）
+    this.scheduleLayoutUpdate()
+  }
+
+  /**
+   * 绑定标签栏布局监听（容器尺寸变化时动态切换“压缩模式”）
+   */
+  private bindLayoutObservers(): void {
+    if (!this.tabsContainer) return
+    // 重复 init / 热更新时避免泄漏
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
+
+    if (typeof ResizeObserver === 'undefined') return
+    this.resizeObserver = new ResizeObserver(() => this.scheduleLayoutUpdate())
+    this.resizeObserver.observe(this.tabsContainer)
+    // 初始化时也跑一次
+    this.scheduleLayoutUpdate()
+  }
+
+  private scheduleLayoutUpdate(): void {
+    if (this.layoutRaf) return
+    this.layoutRaf = window.requestAnimationFrame(() => {
+      this.layoutRaf = 0
+      this.updateCompressionState()
+    })
+  }
+
+  /**
+   * 当标签超出可显示范围时，启用“压缩模式”把所有标签挤进可见区域。
+   * 设计点：只在溢出时改布局，避免影响少量标签时的现有观感/交互。
+   */
+  private updateCompressionState(): void {
+    const el = this.tabsContainer
+    if (!el) return
+
+    const cls = 'tabbar-tabs--compressed'
+
+    // 如果当前是压缩模式，先临时关闭再测一次，确保“关闭标签后能自动恢复”
+    const had = el.classList.contains(cls)
+    if (had) el.classList.remove(cls)
+
+    // scrollWidth/clientWidth 是最稳的“有没有溢出”判断
+    const overflow = el.scrollWidth > el.clientWidth + 1
+    if (overflow) {
+      el.classList.add(cls)
+      // 进入压缩模式后不应该再“停留在某个滚动位置”，直接回到起点确保全部可见
+      el.scrollLeft = 0
+    }
+    else el.classList.remove(cls)
   }
 
   /**
@@ -909,6 +964,12 @@ export class TabBar {
       this.unsubscribe()
       this.unsubscribe = null
     }
+    if (this.layoutRaf) {
+      window.cancelAnimationFrame(this.layoutRaf)
+      this.layoutRaf = 0
+    }
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
     this.hideContextMenu()
     // 组件销毁时确保幽灵窗口也销毁（避免 dev 热更新残留）
     void this.destroyDragGhostWindow()
