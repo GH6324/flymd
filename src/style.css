@@ -31,6 +31,9 @@
   --table-header-fg: #1e293b;
   --table-row-hover: #f8fafc;
 
+  /* 编辑体验：文末留白（约 3~4 行），避免最后一行贴底 */
+  --scroll-past-end: 3.5em;
+
   /* ========== 设计系统变量 ========== */
   /* 主色调 */
   --accent: #2563eb;
@@ -894,7 +897,10 @@ body.compact-titlebar .window-btn.window-close:hover {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   font-size: 16px; line-height: 1.7; color: var(--fg);
   background: var(--bg);
-  padding: 20px 24px 40px 24px;
+  --editor-pad-top: 20px;
+  --editor-pad-x: 24px;
+  --editor-pad-bottom: calc(40px + var(--scroll-past-end, 0px));
+  padding: var(--editor-pad-top) var(--editor-pad-x) var(--editor-pad-bottom) var(--editor-pad-x);
   box-sizing: border-box;
   letter-spacing: 0.01em;
   /* 添加侧栏展开的过渡动画 */
@@ -907,14 +913,14 @@ body.compact-titlebar .window-btn.window-close:hover {
   margin-left: auto;
   margin-right: auto;
   box-sizing: content-box;
-  /* 使用content-box时，高度需要减去上下padding（20px + 40px = 60px） */
-  height: calc(100% - 60px - var(--workspace-bottom-gap, 0px));
+  /* 使用 content-box 时：高度需要减去上下 padding（底部含“文末留白”） */
+  height: calc(100% - var(--editor-pad-top, 0px) - var(--editor-pad-bottom, 0px) - var(--workspace-bottom-gap, 0px));
   width: min(
     var(--preview-max-width, 960px),
     max(0px, calc(100% - var(--workspace-left-gap, 0px) - var(--workspace-right-gap, 0px)))
   );
-  padding-left: calc(24px + var(--workspace-left-gap, 0px));
-  padding-right: calc(24px + var(--workspace-right-gap, 0px));
+  padding-left: calc(var(--editor-pad-x, 24px) + var(--workspace-left-gap, 0px));
+  padding-right: calc(var(--editor-pad-x, 24px) + var(--workspace-right-gap, 0px));
 }
 
 .preview {
@@ -928,7 +934,7 @@ body.compact-titlebar .window-btn.window-close:hover {
   overflow-y: auto;
   overflow-x: auto; /* 允许宽内容横向滚动 */
   padding-top: 16px;
-  padding-bottom: 40px;
+  padding-bottom: calc(40px + var(--scroll-past-end, 0px));
   /* 内容 padding 保持固定值；左右占位由 left/right 负责，避免“占位被算两次” */
   padding-left: 20px;
   padding-right: 20px;
@@ -960,9 +966,9 @@ body.compact-titlebar .window-btn.window-close:hover {
   display: block;
   margin: 0;
   box-sizing: border-box;
-  height: calc(100% - 60px - var(--workspace-bottom-gap, 0px));
+  height: calc(100% - var(--workspace-bottom-gap, 0px));
   width: var(--split-ratio, 55%);
-  padding-left: calc(24px + var(--workspace-left-gap, 0px));
+  padding-left: calc(var(--editor-pad-x, 24px) + var(--workspace-left-gap, 0px));
   padding-right: 16px;
 }
 .container.split-preview:not(.wysiwyg):not(.wysiwyg-v2) .preview {
@@ -1159,7 +1165,7 @@ body > .block-menu { display: none !important; }
 /* ProseMirror 基础样式，确保 V2 视图可编辑、可滚动、行距正常 */
 .container.wysiwyg-v2 .ProseMirror {
   min-height: 100%;
-  padding: 14px 16px 40px 16px;
+  padding: 14px 16px calc(40px + var(--scroll-past-end, 0px)) 16px;
   outline: none;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1315,7 +1321,7 @@ body > .block-menu { display: none !important; }
   opacity: 1;
   pointer-events: none; /* 不拦截点击，V1 仅显示 */
   /* 与编辑器对齐（避免文字看起来在光标“下面”） */
-  padding: 14px 16px 40px 16px; /* 与 .editor 一致 */
+  padding: 14px 16px calc(40px + var(--scroll-past-end, 0px)) 16px; /* 与 .editor 一致 */
   /* 使用与编辑器完全一致的等宽字体，保证 ch 宽度一致 */
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   font-size: 16px; /* 与 .editor 一致 */
@@ -5961,6 +5967,9 @@ body::-webkit-scrollbar:horizontal,
 
 /* === 打印样式 - 确保打印整个文档而不仅是可视范围 === */
 @media print {
+  /* 打印不需要文末留白，避免额外空白甚至分页 */
+  :root { --scroll-past-end: 0px; }
+
   /* 隐藏所有UI元素 */
   .ribbon,
   .tabbar-row,

@@ -1588,6 +1588,10 @@ const editor = document.getElementById('editor') as HTMLTextAreaElement
 const preview = document.getElementById('preview') as HTMLDivElement
 const filenameLabel = document.getElementById('filename') as HTMLDivElement
 
+// 编辑器底部 padding 的“基线值”（从 CSS 计算得到，包含文末留白）
+let _editorPadBottomBasePx = 40
+try { _editorPadBottomBasePx = parseFloat(window.getComputedStyle(editor).paddingBottom || '40') || 40 } catch {}
+
 function ensurePreviewHosts(): { mdHost: HTMLDivElement; pdfHost: HTMLDivElement } {
   try {
     const mdExisting = preview.querySelector('#preview-md-host') as HTMLDivElement | null
@@ -2352,7 +2356,9 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
           setTimeout(() => { try { renderOutlinePanel(); bindOutlineScrollSync() } catch {} }, 0)
         }
       } catch {}
-      try { (editor as any).style.paddingBottom = '40px' } catch {}
+      // 退出所见：清掉动态 padding，让 CSS 负责底部留白
+      try { (editor as any).style.paddingBottom = '' } catch {}
+      try { _editorPadBottomBasePx = parseFloat(window.getComputedStyle(editor).paddingBottom || '40') || _editorPadBottomBasePx } catch {}
       restoreScrollPosition(2, 50)  // 带重试机制恢复滚动位置
     }
     // 更新按钮提示（统一为简单说明，移除无用快捷键提示）
@@ -2521,8 +2527,13 @@ function updateWysiwygCaretDot() {
 
 function updateWysiwygVirtualPadding() {
   try {
-    const base = 40 // 与 CSS 中 editor 底部 padding 对齐
-    if (!wysiwyg) { try { (editor as any).style.paddingBottom = base + "px" } catch {} ; return }
+    // 基线与 CSS 对齐（包含文末留白）；仅旧所见模式需要“动态补齐”滚动空间
+    if (!wysiwyg) {
+      try { (editor as any).style.paddingBottom = '' } catch {}
+      try { _editorPadBottomBasePx = parseFloat(window.getComputedStyle(editor).paddingBottom || '40') || _editorPadBottomBasePx } catch {}
+      return
+    }
+    const base = _editorPadBottomBasePx || 40
     const er = Math.max(0, editor.scrollHeight - editor.clientHeight)
     const pr = Math.max(0, preview.scrollHeight - preview.clientHeight)
     const need = Math.max(0, pr - er)
@@ -9216,6 +9227,57 @@ function bindEvents() {
   editor.addEventListener('click', () => { scheduleSaveDocPos(); try { notifySelectionChangeForPlugins() } catch {} })
   // 便签模式：失焦时强制落盘，避免“改完就关窗口”撞上防抖窗口期
   editor.addEventListener('blur', () => { try { void _stickyAutoSaver.flush() } catch {} })
+
+  // 接近底部输入时自动“吸底”，让文末留白自然生效（源码模式 + 旧所见共用 textarea）
+  try {
+    let wasNearBottomBeforeInput = false
+    let raf = 0
+    const getLineHeightPx = (): number => {
+      try {
+        const style = window.getComputedStyle(editor)
+        let lh = parseFloat(style.lineHeight || '')
+        if (!lh || Number.isNaN(lh)) {
+          const fs = parseFloat(style.fontSize || '16') || 16
+          lh = fs * 1.6
+        }
+        return lh
+      } catch { return 24 }
+    }
+    const isNearBottom = (): boolean => {
+      try {
+        const max = Math.max(0, editor.scrollHeight - editor.clientHeight)
+        if (max <= 0) return true
+        const th = Math.max(24, Math.round(getLineHeightPx() * 2))
+        return (max - editor.scrollTop) <= th
+      } catch { return false }
+    }
+    const isCaretAtDocEnd = (): boolean => {
+      try {
+        if (editor.selectionStart !== editor.selectionEnd) return false
+        const len = String(editor.value || '').length >>> 0
+        return (editor.selectionEnd >>> 0) === len
+      } catch { return false }
+    }
+    const stickToBottom = () => {
+      try {
+        const near = wasNearBottomBeforeInput || isNearBottom()
+        wasNearBottomBeforeInput = false
+        if (!near) return
+        if (!isCaretAtDocEnd()) return
+        try { if (raf) cancelAnimationFrame(raf) } catch {}
+        raf = requestAnimationFrame(() => {
+          raf = 0
+          try {
+            const max = Math.max(0, editor.scrollHeight - editor.clientHeight)
+            editor.scrollTop = max
+          } catch {}
+        })
+      } catch {}
+    }
+    editor.addEventListener('beforeinput', () => { try { wasNearBottomBeforeInput = isNearBottom() } catch {} }, { passive: true } as any)
+    editor.addEventListener('input', () => { try { stickToBottom() } catch {} }, { passive: true } as any)
+    editor.addEventListener('compositionend', () => { try { stickToBottom() } catch {} }, { passive: true } as any)
+  } catch {}
 
   // 预览滚动也记录阅读位置
   preview.addEventListener('scroll', () => { scheduleSaveDocPos() })

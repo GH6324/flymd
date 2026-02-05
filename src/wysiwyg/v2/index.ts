@@ -987,8 +987,67 @@ function setupBracketPairingForWysiwyg(pm: HTMLElement | null) {
     } catch {}
   }
 
-  try { pm.addEventListener('beforeinput', (e) => { try { handleBeforeInput(e as any) } catch {} }, true) } catch {}
-  try { pm.addEventListener('input', (e) => { try { handleInput(e as any) } catch {} }, true) } catch {}
+  // 接近底部输入时自动“吸底”，让文末留白自然生效（仅在光标位于文末时触发）
+  let _stickWasNearBottomBeforeInput = false
+  let _stickRaf = 0
+  const _getLineHeightPx = (): number => {
+    try {
+      const style = window.getComputedStyle(pm)
+      let lh = parseFloat(style.lineHeight || '')
+      if (!lh || Number.isNaN(lh)) {
+        const fs = parseFloat(style.fontSize || '16') || 16
+        lh = fs * 1.6
+      }
+      return lh
+    } catch { return 24 }
+  }
+  const _getScrollHost = (): HTMLElement => {
+    try {
+      const root = _root as HTMLElement | null
+      const sv = root?.querySelector?.('.scrollView') as HTMLElement | null
+      return (sv || root || pm) as HTMLElement
+    } catch { return pm }
+  }
+  const _isNearBottom = (): boolean => {
+    try {
+      const host = _getScrollHost()
+      const max = Math.max(0, host.scrollHeight - host.clientHeight)
+      if (max <= 0) return true
+      const th = Math.max(24, Math.round(_getLineHeightPx() * 2))
+      return (max - host.scrollTop) <= th
+    } catch { return false }
+  }
+  const _isCaretAtDocEnd = (): boolean => {
+    try {
+      const view = _getView()
+      if (!view) return false
+      const st: any = view.state
+      const sel: any = st?.selection
+      if (!sel || !sel.empty) return false
+      const end = (st?.doc?.content?.size >>> 0) || 0
+      const pos = sel.to >>> 0
+      return end > 0 && Math.abs(end - pos) <= 1
+    } catch { return false }
+  }
+  const _stickToBottom = () => {
+    try {
+      const near = _stickWasNearBottomBeforeInput || _isNearBottom()
+      _stickWasNearBottomBeforeInput = false
+      if (!near) return
+      if (!_isCaretAtDocEnd()) return
+      try { if (_stickRaf) cancelAnimationFrame(_stickRaf) } catch {}
+      _stickRaf = requestAnimationFrame(() => {
+        _stickRaf = 0
+        try {
+          const host = _getScrollHost()
+          host.scrollTop = Math.max(0, host.scrollHeight - host.clientHeight)
+        } catch {}
+      })
+    } catch {}
+  }
+
+  try { pm.addEventListener('beforeinput', (e) => { try { _stickWasNearBottomBeforeInput = _isNearBottom() } catch {} ; try { handleBeforeInput(e as any) } catch {} }, true) } catch {}
+  try { pm.addEventListener('input', (e) => { try { handleInput(e as any) } catch {} ; try { _stickToBottom() } catch {} }, true) } catch {}
   try { pm.addEventListener('keydown', (e) => { try { handleKeydown(e as any) } catch {} }, true) } catch {}
 
   // 兜底：空白/内容较少时，点击编辑区域外围空白也能把光标放回文档末尾并保持焦点
