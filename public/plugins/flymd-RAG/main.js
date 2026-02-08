@@ -2,7 +2,7 @@
 // 约束（已确认最终路线）：
 // - 默认关闭：用户显式开启才会索引/发 embedding 请求
 // - embedding 连接默认复用 ai-assistant 的 baseUrl/apiKey（模型单独配置；也可切换为自定义）
-// - 第一版仅支持 md/markdown/txt
+// - 支持 md/markdown/txt + Office(docx/xlsx/xls -> Markdown)
 // - 排除规则：目录前缀（遍历阶段跳过）
 // - 索引落盘：优先写到库内 `.flymd/rag-index/<libraryId>/`；若库根不可写（移动端常见），自动回退到 AppLocalData 插件数据目录
 
@@ -18,6 +18,11 @@ const LIBRARY_META_DIR = '.flymd'
 const RAG_INDEX_DIR = '.flymd/rag-index'
 // 应用私有目录回退：落在 getPluginDataDir() 目录下的子目录
 const APP_INDEX_SUBDIR = 'rag-index'
+const OFFICE_DERIVED_DIR = '.flymd/office-md'
+const OFFICE_EXTENSIONS = ['docx', 'xlsx', 'xls']
+const OFFICE_MAMMOTH_CDN = 'https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js'
+const OFFICE_XLSX_CDN = 'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js'
+const INDEX_MAX_FILE_CHARS = 5_000_000
 
 // 避免固定字符串被滥用：与 AI 助手保持一致，用于生成 X-Flymd-Token
 const FLYMD_TOKEN_SECRET = 'flymd-rolling-secret-v1'
@@ -97,6 +102,9 @@ let FLYSMART_INCR_QUEUE = [] // { op: 'upsert'|'delete', rel: string }[]
 let FLYSMART_INCR_SET = new Set() // Set<string>，key = `${op}:${rel}`
 let FLYSMART_INCR_TIMER = 0
 let FLYSMART_INCR_RUNNING = false
+let FLYSMART_MAMMOTH_PROMISE = null
+let FLYSMART_XLSX_PROMISE = null
+let FLYSMART_CATCHUP_TIMER = 0
 
 // 轻量级多语言：与宿主/AI 助手共用 flymd.locale
 const RAG_LOCALE_LS_KEY = 'flymd.locale'
@@ -191,9 +199,6 @@ function pushLogLine(line) {
       } catch {}
     }
   } catch {}
-
-  // 增量索引：根据 enabled/includeDirs 自动启用监听
-  try { void refreshIncrementalWatch(context) } catch {}
 }
 
 async function flushLogNow(ctx) {
@@ -516,6 +521,252 @@ function normalizeRelativePath(p) {
     .replace(/^\/+/, '')
 }
 
+function getRelFileName(rel) {
+  const r = normalizeRelativePath(rel)
+  if (!r) return ''
+  return r.split('/').pop() || ''
+}
+
+function getRelExt(rel) {
+  const nm = getRelFileName(rel)
+  return (nm.split('.').pop() || '').toLowerCase()
+}
+
+function isOfficeRel(rel) {
+  const ext = getRelExt(rel)
+  return OFFICE_EXTENSIONS.includes(ext)
+}
+
+function isOfficeDerivedRel(rel, caseInsensitive) {
+  const r = normalizeRelativePath(rel)
+  const prefix = normalizeRelativePath(OFFICE_DERIVED_DIR)
+  if (!r || !prefix) return false
+  const a = caseInsensitive ? r.toLowerCase() : r
+  const b = caseInsensitive ? prefix.toLowerCase() : prefix
+  return a === b || a.startsWith(b + '/')
+}
+
+function buildOfficeDerivedRel(sourceRel) {
+  const r = normalizeRelativePath(sourceRel)
+  if (!r) return ''
+  return normalizeRelativePath(`${OFFICE_DERIVED_DIR}/${r}.md`)
+}
+
+function getParentPath(pathLike) {
+  const p = String(pathLike || '')
+  if (!p) return ''
+  const i1 = p.lastIndexOf('/')
+  const i2 = p.lastIndexOf('\\')
+  const idx = Math.max(i1, i2)
+  if (idx <= 0) return ''
+  return p.slice(0, idx)
+}
+
+function toArrayBuffer(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || [])
+  if (!u8.length) return new ArrayBuffer(0)
+  return u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength
+    ? u8.buffer
+    : u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)
+}
+
+function ensureScriptFromCdn(url) {
+  return new Promise((resolve, reject) => {
+    try {
+      if (typeof document === 'undefined' || !document || !document.createElement) {
+        reject(new Error(ragText('当前环境不支持动态加载脚本', 'Current environment does not support dynamic script loading')))
+        return
+      }
+      const script = document.createElement('script')
+      script.src = String(url || '')
+      script.async = true
+      script.onload = () => resolve(true)
+      script.onerror = () => reject(new Error(ragText('加载转换库失败，请检查网络', 'Failed to load conversion library, please check network')))
+      const head = document.head || document.body || null
+      if (!head || typeof head.appendChild !== 'function') {
+        reject(new Error(ragText('当前环境无法注入脚本', 'Cannot inject script in current environment')))
+        return
+      }
+      head.appendChild(script)
+    } catch (e) {
+      reject(e)
+    }
+  })
+}
+
+function ensureMammothLoadedForRag() {
+  const g = typeof globalThis !== 'undefined' ? globalThis : window
+  if (g && g.mammoth && typeof g.mammoth.convertToHtml === 'function') {
+    return Promise.resolve(g.mammoth)
+  }
+  if (FLYSMART_MAMMOTH_PROMISE) return FLYSMART_MAMMOTH_PROMISE
+  FLYSMART_MAMMOTH_PROMISE = ensureScriptFromCdn(OFFICE_MAMMOTH_CDN)
+    .then(() => {
+      const gg = typeof globalThis !== 'undefined' ? globalThis : window
+      if (gg && gg.mammoth && typeof gg.mammoth.convertToHtml === 'function') return gg.mammoth
+      throw new Error(ragText('mammoth 加载后不可用', 'mammoth is unavailable after loading'))
+    })
+    .catch((e) => {
+      FLYSMART_MAMMOTH_PROMISE = null
+      throw e
+    })
+  return FLYSMART_MAMMOTH_PROMISE
+}
+
+function ensureXlsxLoadedForRag() {
+  const g = typeof globalThis !== 'undefined' ? globalThis : window
+  if (g && g.XLSX && typeof g.XLSX.read === 'function' && g.XLSX.utils) {
+    return Promise.resolve(g.XLSX)
+  }
+  if (FLYSMART_XLSX_PROMISE) return FLYSMART_XLSX_PROMISE
+  FLYSMART_XLSX_PROMISE = ensureScriptFromCdn(OFFICE_XLSX_CDN)
+    .then(() => {
+      const gg = typeof globalThis !== 'undefined' ? globalThis : window
+      if (gg && gg.XLSX && typeof gg.XLSX.read === 'function' && gg.XLSX.utils) return gg.XLSX
+      throw new Error(ragText('XLSX 加载后不可用', 'XLSX is unavailable after loading'))
+    })
+    .catch((e) => {
+      FLYSMART_XLSX_PROMISE = null
+      throw e
+    })
+  return FLYSMART_XLSX_PROMISE
+}
+
+function officeWorkbookToMarkdown(workbook) {
+  const g = typeof globalThis !== 'undefined' ? globalThis : window
+  if (!g || !g.XLSX || !g.XLSX.utils) {
+    throw new Error(ragText('XLSX 环境未就绪', 'XLSX runtime is not ready'))
+  }
+  const names = Array.isArray(workbook && workbook.SheetNames) ? workbook.SheetNames : []
+  const parts = []
+  for (let idx = 0; idx < names.length; idx++) {
+    const name = names[idx]
+    const sheet = workbook.Sheets && workbook.Sheets[name]
+    if (!sheet) continue
+    const rows = g.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' })
+    if (!rows.length) continue
+
+    let maxCols = 0
+    for (const row of rows) {
+      if (Array.isArray(row) && row.length > maxCols) maxCols = row.length
+    }
+    if (!maxCols) continue
+
+    parts.push(`# ${ragText('工作表', 'Sheet')} ${idx + 1}: ${name}`)
+    parts.push('')
+
+    const header = Array.isArray(rows[0]) ? rows[0] : []
+    const headCells = []
+    for (let c = 0; c < maxCols; c++) {
+      const v = String(header[c] == null ? '' : header[c]).trim()
+      headCells.push(v || ragText(`列${c + 1}`, `Col ${c + 1}`))
+    }
+    parts.push('|' + headCells.join('|') + '|')
+    parts.push('|' + new Array(maxCols).fill('---').join('|') + '|')
+    for (let i = 1; i < rows.length; i++) {
+      const row = Array.isArray(rows[i]) ? rows[i] : []
+      const line = []
+      for (let c = 0; c < maxCols; c++) {
+        line.push(String(row[c] == null ? '' : row[c]))
+      }
+      parts.push('|' + line.join('|') + '|')
+    }
+    parts.push('')
+  }
+  if (!parts.length) {
+    return '> ' + ragText('未在 Excel 中解析到有效内容。', 'No valid content parsed from Excel.')
+  }
+  return parts.join('\n')
+}
+
+function officeSimpleHtmlToMarkdown(html, sourceName) {
+  let text = String(html || '')
+  text = text.replace(/<br\s*\/?>(\r?\n)?/gi, '\n')
+  for (let level = 6; level >= 1; level--) {
+    const re = new RegExp(`<h${level}[^>]*>([\\s\\S]*?)<\\/h${level}>`, 'gi')
+    text = text.replace(re, (_m, inner) => `\n${'#'.repeat(level)} ${String(inner || '').trim()}\n`)
+  }
+  text = text.replace(/<ul[^>]*>[\s\S]*?<\/ul>/gi, (m) =>
+    m
+      .replace(/<ul[^>]*>/gi, '')
+      .replace(/<\/ul>/gi, '')
+      .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m2, item) => `- ${String(item || '').trim()}\n`),
+  )
+  text = text.replace(/<ol[^>]*>[\s\S]*?<\/ol>/gi, (m) => {
+    let idx = 1
+    return m
+      .replace(/<ol[^>]*>/gi, '')
+      .replace(/<\/ol>/gi, '')
+      .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m2, item) => `${idx++}. ${String(item || '').trim()}\n`)
+  })
+  text = text.replace(/<(b|strong)[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**')
+  text = text.replace(/<(i|em)[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*')
+  text = text.replace(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href, inner) => {
+    const label = String(inner || '').trim() || href
+    return `[${label}](${href})`
+  })
+  text = text.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n')
+  text = text.replace(/<img[^>]*>/gi, '')
+  text = text.replace(/<[^>]+>/g, '')
+  text = text.replace(/\n{3,}/g, '\n\n').trim()
+  const header = `> ${ragText('本文档由 Office 文件转换：', 'Converted from Office file: ')}${sourceName || ''}`.trim()
+  return header + '\n\n' + text + '\n'
+}
+
+async function convertOfficeToMarkdown(ctx, absPath, sourceRel) {
+  if (!ctx || typeof ctx.readFileBinary !== 'function') {
+    throw new Error(ragText('宿主版本过老：缺少 readFileBinary', 'Host version is too old: missing readFileBinary'))
+  }
+  const ext = getRelExt(sourceRel)
+  const bytes = await withTimeout(ctx.readFileBinary(absPath), 30000, ragText('读取 Office 文件', 'Read office file'))
+  const buf = toArrayBuffer(bytes)
+  if (ext === 'docx') {
+    const mammoth = await ensureMammothLoadedForRag()
+    const result = await mammoth.convertToHtml({ arrayBuffer: buf })
+    return officeSimpleHtmlToMarkdown(result && result.value ? result.value : '', sourceRel)
+  }
+  if (ext === 'xlsx' || ext === 'xls') {
+    const XLSX = await ensureXlsxLoadedForRag()
+    const wb = XLSX.read(buf, { type: 'array' })
+    return officeWorkbookToMarkdown(wb)
+  }
+  throw new Error(ragText('不支持的 Office 格式', 'Unsupported office format'))
+}
+
+async function writeOfficeDerivedMarkdown(ctx, libraryRoot, sourceRel, markdown) {
+  if (!ctx || typeof ctx.writeTextFile !== 'function') {
+    throw new Error(ragText('宿主版本过老：缺少 writeTextFile', 'Host version is too old: missing writeTextFile'))
+  }
+  if (!ctx || typeof ctx.ensureDir !== 'function') {
+    throw new Error(ragText('宿主版本过老：缺少 ensureDir', 'Host version is too old: missing ensureDir'))
+  }
+  const derivedRel = buildOfficeDerivedRel(sourceRel)
+  if (!derivedRel) throw new Error(ragText('派生路径无效', 'Invalid derived path'))
+  const abs = joinAbs(libraryRoot, derivedRel)
+  const parent = getParentPath(abs)
+  if (parent) await ctx.ensureDir(parent)
+  await ctx.writeTextFile(abs, String(markdown || ''))
+  return derivedRel
+}
+
+async function removeOfficeDerivedMarkdown(ctx, libraryRoot, sourceRel) {
+  try {
+    const rel = buildOfficeDerivedRel(sourceRel)
+    if (!rel) return false
+    const abs = joinAbs(libraryRoot, rel)
+    const ok = typeof ctx.exists === 'function' ? await ctx.exists(abs) : true
+    if (!ok) return false
+    if (typeof ctx.removePath === 'function') {
+      await ctx.removePath(abs, { recursive: false })
+      return true
+    }
+    await ctx.writeTextFile(abs, '')
+    return true
+  } catch {
+    return false
+  }
+}
+
 function normalizeDocInputToRel(input, root) {
   const raw = String(input || '').trim()
   if (!raw) return ''
@@ -536,13 +787,13 @@ function normalizeDocInputToRel(input, root) {
 function shouldIndexRel(rel, cfg, caseInsensitive) {
   const r = normalizeRelativePath(rel)
   if (!r) return false
+  if (isOfficeDerivedRel(r, caseInsensitive)) return false
   const extList = normalizeExtensions(
     cfg && cfg.includeExtensions ? cfg.includeExtensions : [],
   )
   const allow = new Set(extList.map((x) => String(x || '').toLowerCase()))
-  const nm = r.split('/').pop() || ''
-  const ext = (nm.split('.').pop() || '').toLowerCase()
-  if (allow.size > 0 && !allow.has(ext)) return false
+  const ext = getRelExt(r)
+  if (!isOfficeRel(r) && allow.size > 0 && !allow.has(ext)) return false
   const includeDirs = normalizeDirPrefixes(cfg && cfg.includeDirs ? cfg.includeDirs : [])
   const excludeDirs = normalizeDirPrefixes(cfg && cfg.excludeDirs ? cfg.excludeDirs : [])
   if (matchDirPrefix(r, excludeDirs, caseInsensitive)) return false
@@ -583,13 +834,11 @@ async function refreshIncrementalWatch(ctx, cfgOverride) {
         for (const rawRel of rels) {
           const rel = normalizeRelativePath(rawRel)
           if (!rel) continue
+          if (isOfficeDerivedRel(rel, caseInsensitive)) continue
           if (type === 'delete' || type === 'remove' || type === 'unlink') {
             enqueueIncrementalTask('delete', rel)
             continue
           }
-          // 有些平台 create 不可靠：对“未索引过的文件”允许 modify 触发一次补偿
-          const allowed = type === 'create' || type === 'modify' || type === 'any'
-          if (!allowed) continue
           if (!shouldIndexRel(rel, cfg, caseInsensitive)) continue
           enqueueIncrementalTask('upsert', rel)
         }
@@ -1467,12 +1716,41 @@ async function buildIndex(ctx) {
       includeDirs: cfg.includeDirs,
       excludeDirs: cfg.excludeDirs,
     })
+    let officeFiles = []
+    try {
+      officeFiles = await ctx.listLibraryFiles({
+        extensions: OFFICE_EXTENSIONS,
+        maxDepth: cfg.maxDepth,
+        includeDirs: cfg.includeDirs,
+        excludeDirs: cfg.excludeDirs,
+      })
+    } catch {
+      officeFiles = []
+    }
+    try {
+      const byRel = new Map()
+      for (const f of files || []) {
+        const rel = normalizeRelativePath(f && f.relative ? f.relative : '')
+        if (!rel) continue
+        byRel.set(caseInsensitive ? rel.toLowerCase() : rel, f)
+      }
+      for (const f of officeFiles || []) {
+        const rel = normalizeRelativePath(f && f.relative ? f.relative : '')
+        if (!rel) continue
+        const key = caseInsensitive ? rel.toLowerCase() : rel
+        if (!byRel.has(key)) byRel.set(key, f)
+      }
+      files = Array.from(byRel.values())
+    } catch {}
     // 兼容旧宿主：若宿主未实现 includeDirs，这里做一次兜底过滤
     if (cfg.includeDirs && cfg.includeDirs.length) {
       files = (files || []).filter((f) =>
         matchDirPrefix(String(f && f.relative ? f.relative : ''), cfg.includeDirs, caseInsensitive),
       )
     }
+    files = (files || []).filter((f) =>
+      shouldIndexRel(String(f && f.relative ? f.relative : ''), cfg, caseInsensitive),
+    )
     const totalFiles = (files || []).length
     await dbg(
       ctx,
@@ -1495,30 +1773,39 @@ async function buildIndex(ctx) {
     const fileFingerprints = {}
     let processedFiles = 0
 
+    const fileMtimes = {}
     for (const f of files || []) {
-      const rel = String(f.relative || '')
-      setStatus({ phase: 'read', currentFile: rel, lastProgressAt: nowMs() })
+      const sourceRel = String(f.relative || '')
+      let indexRel = normalizeRelativePath(sourceRel)
+      setStatus({ phase: 'read', currentFile: sourceRel, lastProgressAt: nowMs() })
       updateLongNotify(
         ctx,
-        `flymd-RAG：读取中 ${Math.min(processedFiles + 1, totalFiles)}/${totalFiles}（${rel}）`,
+        `flymd-RAG：读取中 ${Math.min(processedFiles + 1, totalFiles)}/${totalFiles}（${sourceRel}）`,
       )
       await yieldToUi()
       let text = ''
       try {
-        await dbg(ctx, '读取文件开始', { rel }, true)
+        await dbg(ctx, '读取文件开始', { rel: sourceRel }, true)
         const tRead0 = nowMs()
-        text = await readTextBestEffort(ctx, f.path, 6000)
+        if (isOfficeRel(sourceRel)) {
+          const md = await convertOfficeToMarkdown(ctx, f.path, sourceRel)
+          indexRel = await writeOfficeDerivedMarkdown(ctx, libraryRoot, sourceRel, md)
+          text = md
+        } else {
+          text = await readTextBestEffort(ctx, f.path, 6000)
+        }
+        fileMtimes[indexRel] = typeof f.mtime === 'number' ? f.mtime : 0
         await dbg(
           ctx,
           '读取文件结束',
-          { rel, chars: String(text || '').length, ms: Math.max(0, nowMs() - tRead0) },
+          { rel: sourceRel, indexRel, chars: String(text || '').length, ms: Math.max(0, nowMs() - tRead0) },
           false,
         )
       } catch (e) {
         await dbg(
           ctx,
           '读取文件失败',
-          { rel, error: e && e.message ? String(e.message) : String(e) },
+          { rel: sourceRel, error: e && e.message ? String(e.message) : String(e) },
           true,
         )
         processedFiles++
@@ -1537,9 +1824,9 @@ async function buildIndex(ctx) {
         continue
       }
       // 防止极端大文件把 UI/内存拖死：第一版宁可跳过也别假死
-      const maxFileChars = 5_000_000
+      const maxFileChars = INDEX_MAX_FILE_CHARS
       if (String(text || '').length > maxFileChars) {
-        await dbg(ctx, '跳过超大文件', { rel, chars: String(text || '').length }, true)
+        await dbg(ctx, '跳过超大文件', { rel: sourceRel, indexRel, chars: String(text || '').length }, true)
         processedFiles++
         setStatus({
           processedFiles,
@@ -1548,7 +1835,7 @@ async function buildIndex(ctx) {
           phase: 'chunk',
           lastProgressAt: nowMs(),
         })
-        uiNotice(ctx, `跳过超大文件：${rel}`, 'err', 2400)
+        uiNotice(ctx, `跳过超大文件：${sourceRel}`, 'err', 2400)
         updateLongNotify(
           ctx,
           `flymd-RAG：分块中 ${processedFiles}/${totalFiles}（chunks=${allChunks.length}，已跳过超大文件）`,
@@ -1560,24 +1847,24 @@ async function buildIndex(ctx) {
       try {
         fp = await computeTextFingerprint(text)
       } catch {}
-      fileFingerprints[rel] = fp
+      fileFingerprints[indexRel] = fp
       const lines = String(text || '').split(/\r?\n/)
       const parts = chunkByLines(lines, cfg.chunk)
-      await dbg(ctx, '分块完成', { rel, chunks: parts.length }, false)
+      await dbg(ctx, '分块完成', { rel: sourceRel, indexRel, chunks: parts.length }, false)
       const ids = []
       for (const c of parts) {
-        const id = buildChunkId(rel, c.startLine, c.endLine, c.text)
+        const id = buildChunkId(indexRel, c.startLine, c.endLine, c.text)
         ids.push(id)
         allChunks.push({
           id,
-          relativePath: rel,
+          relativePath: indexRel,
           heading: c.heading || '',
           startLine: c.startLine,
           endLine: c.endLine,
           text: c.text,
         })
       }
-      fileToChunkIds[rel] = ids
+      fileToChunkIds[indexRel] = ids
       processedFiles++
       setStatus({
         processedFiles,
@@ -1734,17 +2021,16 @@ async function buildIndex(ctx) {
       }
     }
 
-    for (const f of files || []) {
-      const rel = String(f.relative || '')
-      if (!Object.prototype.hasOwnProperty.call(fileToChunkIds, rel)) continue
-      const fp = Object.prototype.hasOwnProperty.call(fileFingerprints, rel)
-        ? fileFingerprints[rel] || {}
+    for (const [indexRel, ids] of Object.entries(fileToChunkIds || {})) {
+      if (!ids) continue
+      const fp = Object.prototype.hasOwnProperty.call(fileFingerprints, indexRel)
+        ? fileFingerprints[indexRel] || {}
         : {}
-      meta.files[rel] = {
-        mtimeMs: typeof f.mtime === 'number' ? f.mtime : 0,
+      meta.files[indexRel] = {
+        mtimeMs: Object.prototype.hasOwnProperty.call(fileMtimes, indexRel) ? (fileMtimes[indexRel] | 0) : 0,
         size: typeof fp.size === 'number' && Number.isFinite(fp.size) ? fp.size : 0,
         hash: typeof fp.hash === 'string' ? fp.hash : '',
-        chunkIds: fileToChunkIds[rel] || [],
+        chunkIds: ids || [],
       }
     }
 
@@ -1822,8 +2108,11 @@ async function incrementalRemoveOne(ctx, relativePath) {
     const cfg = await loadConfig(ctx)
     if (!cfg || !cfg.enabled) return
     const libraryRoot = await getLibraryRootRequired(ctx)
+    const caseInsensitive = isWindowsPath(libraryRoot)
     const rel = normalizeRelativePath(relativePath)
     if (!rel) return
+    if (isOfficeDerivedRel(rel, caseInsensitive)) return
+    const indexRel = isOfficeRel(rel) ? buildOfficeDerivedRel(rel) : rel
 
     const cfgKey =
       cfg.libraryKey || (await sha1Hex(normalizePathForKey(libraryRoot)))
@@ -1848,8 +2137,16 @@ async function incrementalRemoveOne(ctx, relativePath) {
       )
     }
 
-    const removed = removeFileFromMeta(meta, rel)
+    const removed = removeFileFromMeta(meta, indexRel)
+    if (indexRel !== rel) {
+      const removedLegacy = removeFileFromMeta(meta, rel)
+      removed.removed = !!(removed.removed || removedLegacy.removed)
+      removed.oldChunks = (removed.oldChunks || 0) + (removedLegacy.oldChunks || 0)
+    }
     if (!removed.removed) return
+    if (isOfficeRel(rel)) {
+      await removeOfficeDerivedMarkdown(ctx, libraryRoot, rel)
+    }
     await ctx.writeTextFile(metaPath, JSON.stringify(meta, null, 2))
     if (FLYSMART_CACHE && FLYSMART_CACHE.libraryKey === cfgKey) {
       FLYSMART_CACHE = { ...FLYSMART_CACHE, meta }
@@ -1859,6 +2156,83 @@ async function incrementalRemoveOne(ctx, relativePath) {
     FLYSMART_BUSY = false
     setStatus({ state: 'idle', phase: '', currentFile: '', lastProgressAt: nowMs() })
   }
+}
+
+function scheduleOfficeCatchUp(ctx, cfgOverride) {
+  try {
+    if (FLYSMART_CATCHUP_TIMER) return
+    FLYSMART_CATCHUP_TIMER = setTimeout(() => {
+      FLYSMART_CATCHUP_TIMER = 0
+      void officeCatchUpOnce(ctx, cfgOverride)
+    }, 1200)
+  } catch {}
+}
+
+async function officeCatchUpOnce(ctx, cfgOverride) {
+  try {
+    if (!ctx) return
+    const cfg = cfgOverride || (await loadConfig(ctx))
+    if (!cfg || !cfg.enabled) return
+    if (typeof ctx.listLibraryFiles !== 'function') return
+
+    const libraryRoot = await getLibraryRootRequired(ctx)
+    const caseInsensitive = isWindowsPath(libraryRoot)
+
+    let officeFiles = []
+    try {
+      officeFiles = await ctx.listLibraryFiles({
+        extensions: OFFICE_EXTENSIONS,
+        maxDepth: cfg.maxDepth,
+        includeDirs: cfg.includeDirs,
+        excludeDirs: cfg.excludeDirs,
+      })
+    } catch {
+      officeFiles = []
+    }
+    if (cfg.includeDirs && cfg.includeDirs.length) {
+      officeFiles = (officeFiles || []).filter((f) =>
+        matchDirPrefix(String(f && f.relative ? f.relative : ''), cfg.includeDirs, caseInsensitive),
+      )
+    }
+    officeFiles = (officeFiles || []).filter((f) =>
+      shouldIndexRel(String(f && f.relative ? f.relative : ''), cfg, caseInsensitive),
+    )
+
+    let meta = null
+    try {
+      const dataDir = await getIndexDataDir(ctx, cfg, libraryRoot, { ensure: false })
+      const metaPath = joinFs(dataDir, META_FILE)
+      const ok = typeof ctx.exists === 'function' ? await ctx.exists(metaPath) : true
+      if (ok) meta = await readJsonMaybe(ctx, metaPath)
+    } catch {
+      meta = null
+    }
+    const filesMap = meta && meta.files && typeof meta.files === 'object' ? meta.files : {}
+
+    let queued = 0
+    const limit = 20
+    for (const f of officeFiles || []) {
+      if (queued >= limit) break
+      const sourceRel = normalizeRelativePath(String(f && f.relative ? f.relative : ''))
+      if (!sourceRel) continue
+      const indexRel = buildOfficeDerivedRel(sourceRel)
+      if (!indexRel) continue
+
+      const rec = filesMap && Object.prototype.hasOwnProperty.call(filesMap, indexRel) ? filesMap[indexRel] : null
+      const mtime = typeof f.mtime === 'number' ? f.mtime : 0
+      const indexedAt = rec && typeof rec.mtimeMs === 'number' ? rec.mtimeMs : 0
+      const missing = !rec
+      const newer = !!(mtime && indexedAt && mtime > indexedAt + 1000)
+      if (!missing && !newer) continue
+
+      enqueueIncrementalTask('upsert', sourceRel)
+      queued++
+    }
+
+    if (queued > 0) {
+      await dbg(ctx, 'Office catch-up：已入队', { queued, total: (officeFiles || []).length }, true)
+    }
+  } catch {}
 }
 
 async function incrementalIndexOne(ctx, relativePath, opts) {
@@ -1871,8 +2245,11 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     if (!cfg || !cfg.enabled) return
     const libraryRoot = await getLibraryRootRequired(ctx)
     const caseInsensitive = isWindowsPath(libraryRoot)
-    const rel = normalizeRelativePath(relativePath)
-    if (!shouldIndexRel(rel, cfg, caseInsensitive)) return
+    const sourceRel = normalizeRelativePath(relativePath)
+    if (!sourceRel) return
+    if (isOfficeDerivedRel(sourceRel, caseInsensitive)) return
+    if (!shouldIndexRel(sourceRel, cfg, caseInsensitive)) return
+    let indexRel = isOfficeRel(sourceRel) ? buildOfficeDerivedRel(sourceRel) : sourceRel
 
     if (typeof ctx.getPluginDataDir !== 'function') {
       throw new Error(ragText('宿主版本过老：缺少 getPluginDataDir', 'Host version is too old: missing getPluginDataDir'))
@@ -1903,7 +2280,7 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
       phase: 'incremental',
       lastError: '',
       lastProgressAt: nowMs(),
-      currentFile: rel,
+      currentFile: sourceRel,
     })
 
     // 读取现有 meta，决定能否增量
@@ -1965,25 +2342,46 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     if (!meta.files || typeof meta.files !== 'object') meta.files = {}
     if (!meta.chunks || typeof meta.chunks !== 'object') meta.chunks = {}
 
-    const absPath = joinAbs(libraryRoot, rel)
+    const absPath = joinAbs(libraryRoot, sourceRel)
     if (typeof ctx.exists === 'function') {
       const ok = await ctx.exists(absPath)
       if (!ok) {
-        const removed = removeFileFromMeta(meta, rel)
+        const removed = removeFileFromMeta(meta, indexRel)
+        if (indexRel !== sourceRel) {
+          const removedLegacy = removeFileFromMeta(meta, sourceRel)
+          removed.removed = !!(removed.removed || removedLegacy.removed)
+          removed.oldChunks = (removed.oldChunks || 0) + (removedLegacy.oldChunks || 0)
+        }
+        if (isOfficeRel(sourceRel)) {
+          await removeOfficeDerivedMarkdown(ctx, libraryRoot, sourceRel)
+        }
         if (removed.removed) {
           await ctx.writeTextFile(metaPath, JSON.stringify(meta, null, 2))
           FLYSMART_CACHE = { libraryKey: cfgKey, meta, vectors }
-          await dbg(ctx, '增量索引：文件不存在，已移除索引记录', { rel, oldChunks: removed.oldChunks }, true)
+          await dbg(ctx, '增量索引：文件不存在，已移除索引记录', { rel: sourceRel, oldChunks: removed.oldChunks }, true)
         }
         return
       }
     }
 
     let text = ''
+    let sourceType = 'text'
     try {
-      text = await readTextBestEffort(ctx, absPath, 15000)
+      if (isOfficeRel(sourceRel)) {
+        const md = await convertOfficeToMarkdown(ctx, absPath, sourceRel)
+        indexRel = await writeOfficeDerivedMarkdown(ctx, libraryRoot, sourceRel, md)
+        text = md
+        sourceType = 'office'
+      } else {
+        text = await readTextBestEffort(ctx, absPath, 15000)
+      }
     } catch (e) {
-      const removed = removeFileFromMeta(meta, rel)
+      const removed = removeFileFromMeta(meta, indexRel)
+      if (indexRel !== sourceRel) {
+        const removedLegacy = removeFileFromMeta(meta, sourceRel)
+        removed.removed = !!(removed.removed || removedLegacy.removed)
+        removed.oldChunks = (removed.oldChunks || 0) + (removedLegacy.oldChunks || 0)
+      }
       if (removed.removed) {
         await ctx.writeTextFile(metaPath, JSON.stringify(meta, null, 2))
         FLYSMART_CACHE = { libraryKey: cfgKey, meta, vectors }
@@ -1991,20 +2389,20 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
       await dbg(
         ctx,
         '增量索引：读取失败（已清理旧索引）',
-        { rel, oldChunks: removed.oldChunks, error: e && e.message ? String(e.message) : String(e) },
+        { rel: sourceRel, indexRel, oldChunks: removed.oldChunks, error: e && e.message ? String(e.message) : String(e) },
         true,
       )
       return
     }
 
-    const maxFileChars = 5_000_000
+    const maxFileChars = INDEX_MAX_FILE_CHARS
     if (String(text || '').length > maxFileChars) {
-      const removed = removeFileFromMeta(meta, rel)
-      meta.files[rel] = { mtimeMs: Date.now(), size: String(text || '').length, hash: '', chunkIds: [] }
+      const removed = removeFileFromMeta(meta, indexRel)
+      meta.files[indexRel] = { mtimeMs: Date.now(), size: String(text || '').length, hash: '', chunkIds: [] }
       meta.updatedAt = Date.now()
       await ctx.writeTextFile(metaPath, JSON.stringify(meta, null, 2))
       FLYSMART_CACHE = { libraryKey: cfgKey, meta, vectors }
-      await dbg(ctx, '增量索引：跳过超大文件（已清理旧索引）', { rel, chars: String(text || '').length, oldChunks: removed.oldChunks }, true)
+      await dbg(ctx, '增量索引：跳过超大文件（已清理旧索引）', { rel: sourceRel, indexRel, chars: String(text || '').length, oldChunks: removed.oldChunks }, true)
       return
     }
 
@@ -2014,25 +2412,25 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     } catch {}
     if (
       !forceRebuild &&
-      Object.prototype.hasOwnProperty.call(meta.files, rel) &&
-      meta.files[rel] &&
-      typeof meta.files[rel] === 'object' &&
-      typeof meta.files[rel].hash === 'string' &&
-      meta.files[rel].hash &&
-      meta.files[rel].hash === fp.hash &&
-      typeof meta.files[rel].size === 'number' &&
-      meta.files[rel].size === fp.size
+      Object.prototype.hasOwnProperty.call(meta.files, indexRel) &&
+      meta.files[indexRel] &&
+      typeof meta.files[indexRel] === 'object' &&
+      typeof meta.files[indexRel].hash === 'string' &&
+      meta.files[indexRel].hash &&
+      meta.files[indexRel].hash === fp.hash &&
+      typeof meta.files[indexRel].size === 'number' &&
+      meta.files[indexRel].size === fp.size
     ) {
-      await dbg(ctx, '增量索引：内容未变化，跳过', { rel }, true)
+      await dbg(ctx, '增量索引：内容未变化，跳过', { rel: sourceRel, indexRel, sourceType }, true)
       return
     }
 
-    if (Object.prototype.hasOwnProperty.call(meta.files, rel)) {
-      const removed = removeFileFromMeta(meta, rel)
+    if (Object.prototype.hasOwnProperty.call(meta.files, indexRel)) {
+      const removed = removeFileFromMeta(meta, indexRel)
       await dbg(
         ctx,
         '重建文档索引：已清理旧记录',
-        { rel, oldChunks: removed.oldChunks },
+        { rel: sourceRel, indexRel, oldChunks: removed.oldChunks },
         true,
       )
     }
@@ -2040,8 +2438,8 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     const lines = String(text || '').split(/\r?\n/)
     const parts = chunkByLines(lines, cfg.chunk)
     if (!parts.length) {
-      await dbg(ctx, '增量索引：无可索引内容，跳过', { rel }, true)
-      meta.files[rel] = { mtimeMs: Date.now(), size: fp.size, hash: fp.hash, chunkIds: [] }
+      await dbg(ctx, '增量索引：无可索引内容，跳过', { rel: sourceRel, indexRel }, true)
+      meta.files[indexRel] = { mtimeMs: Date.now(), size: fp.size, hash: fp.hash, chunkIds: [] }
       meta.updatedAt = Date.now()
       await ctx.writeTextFile(metaPath, JSON.stringify(meta, null, 2))
       FLYSMART_CACHE = { libraryKey: cfgKey, meta, vectors }
@@ -2058,7 +2456,7 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     await dbg(
       ctx,
       '增量索引：开始',
-      { rel, chunks: parts.length, model: cfg.embedding.model },
+      { rel: sourceRel, indexRel, sourceType, chunks: parts.length, model: cfg.embedding.model },
       true,
     )
 
@@ -2087,12 +2485,12 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
         processedChunks: Math.min(i + slice.length, texts.length),
         totalChunks: texts.length,
         lastProgressAt: nowMs(),
-        currentFile: rel,
+        currentFile: sourceRel,
       })
       await dbg(
         ctx,
         '增量索引：Embedding 批次完成',
-        { rel, batch: batchesDone, batchesTotal, ms: Math.max(0, nowMs() - tEmb0) },
+        { rel: sourceRel, indexRel, batch: batchesDone, batchesTotal, ms: Math.max(0, nowMs() - tEmb0) },
         false,
       )
       await yieldToUi()
@@ -2131,7 +2529,7 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     const chunkIds = []
     for (let i = 0; i < parts.length; i++) {
       const c = parts[i]
-      let id = buildChunkId(rel, c.startLine, c.endLine, c.text)
+      let id = buildChunkId(indexRel, c.startLine, c.endLine, c.text)
       if (Object.prototype.hasOwnProperty.call(meta.chunks, id)) {
         let k = 1
         while (Object.prototype.hasOwnProperty.call(meta.chunks, id + ':dup' + k)) k++
@@ -2139,14 +2537,14 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
       }
       chunkIds.push(id)
       meta.chunks[id] = {
-        relativePath: rel,
+        relativePath: indexRel,
         heading: c.heading || '',
         startLine: c.startLine,
         endLine: c.endLine,
         vectorOffset: oldLen + i * useDims,
       }
     }
-    meta.files[rel] = { mtimeMs: Date.now(), size: fp.size, hash: fp.hash, chunkIds }
+    meta.files[indexRel] = { mtimeMs: Date.now(), size: fp.size, hash: fp.hash, chunkIds }
 
     await ctx.writeFileBinary(vecPath, new Uint8Array(newFlat.buffer))
     await ctx.writeTextFile(metaPath, JSON.stringify(meta, null, 2))
@@ -2155,10 +2553,10 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     await dbg(
       ctx,
       '增量索引：完成',
-      { rel, chunks: parts.length, dims: useDims, totalVectors: newFlat.length },
+      { rel: sourceRel, indexRel, sourceType, chunks: parts.length, dims: useDims, totalVectors: newFlat.length },
       true,
     )
-    uiNotice(ctx, `增量索引完成：${rel}`, 'ok', 1400)
+    uiNotice(ctx, `增量索引完成：${sourceRel}`, 'ok', 1400)
   } finally {
     FLYSMART_BUSY = false
     setStatus({ state: 'idle', phase: '', currentFile: '', lastProgressAt: nowMs() })
@@ -3557,6 +3955,14 @@ async function openSettingsDialog(settingsCtx) {
 
 export function activate(context) {
   FLYSMART_CTX = context
+
+  ;(async () => {
+    try {
+      const cfg = await loadConfig(context)
+      void refreshIncrementalWatch(context, cfg)
+      scheduleOfficeCatchUp(context, cfg)
+    } catch {}
+  })().catch(() => {})
 
   // WebDAV 集成（已禁用）：不再注册索引目录为额外同步路径
   // 若未来要恢复同步：
