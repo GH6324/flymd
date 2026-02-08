@@ -23,6 +23,7 @@ const OFFICE_EXTENSIONS = ['docx', 'xlsx', 'xls']
 const OFFICE_MAMMOTH_CDN = 'https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js'
 const OFFICE_XLSX_CDN = 'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js'
 const INDEX_MAX_FILE_CHARS = 5_000_000
+const INDEX_MAX_CHUNKS_PER_FILE = 4000
 
 // 避免固定字符串被滥用：与 AI 助手保持一致，用于生成 X-Flymd-Token
 const FLYMD_TOKEN_SECRET = 'flymd-rolling-secret-v1'
@@ -105,6 +106,9 @@ let FLYSMART_INCR_RUNNING = false
 let FLYSMART_MAMMOTH_PROMISE = null
 let FLYSMART_XLSX_PROMISE = null
 let FLYSMART_CATCHUP_TIMER = 0
+let FLYSMART_GENERIC_CATCHUP_TIMER = 0
+let FLYSMART_POLL_TIMER = 0
+let FLYSMART_BOOTSTRAP_TIMER = 0
 
 // 轻量级多语言：与宿主/AI 助手共用 flymd.locale
 const RAG_LOCALE_LS_KEY = 'flymd.locale'
@@ -659,7 +663,7 @@ function officeWorkbookToMarkdown(workbook) {
     const headCells = []
     for (let c = 0; c < maxCols; c++) {
       const v = String(header[c] == null ? '' : header[c]).trim()
-      headCells.push(v || ragText(`列${c + 1}`, `Col ${c + 1}`))
+      headCells.push(escapeMdTableCell(v || ragText(`列${c + 1}`, `Col ${c + 1}`)))
     }
     parts.push('|' + headCells.join('|') + '|')
     parts.push('|' + new Array(maxCols).fill('---').join('|') + '|')
@@ -667,7 +671,7 @@ function officeWorkbookToMarkdown(workbook) {
       const row = Array.isArray(rows[i]) ? rows[i] : []
       const line = []
       for (let c = 0; c < maxCols; c++) {
-        line.push(String(row[c] == null ? '' : row[c]))
+        line.push(escapeMdTableCell(String(row[c] == null ? '' : row[c])))
       }
       parts.push('|' + line.join('|') + '|')
     }
@@ -679,19 +683,75 @@ function officeWorkbookToMarkdown(workbook) {
   return parts.join('\n')
 }
 
+function escapeMdTableCell(s) {
+  // Markdown 表格里：竖线会断列；换行会断行。用最保守的“转义/压缩”。
+  const raw = String(s == null ? '' : s)
+  return raw
+    .replace(/\r?\n/g, ' ')
+    .replace(/\|/g, '\\|')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function decodeHtmlEntitiesBasic(s) {
+  // 不追求完整 HTML 实体解码，够用就行（避免引入额外依赖）
+  return String(s || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+}
+
+function officeImgMarkdownFromSrc(src, alt) {
+  const a = String(alt || '').replace(/]/g, '\\]')
+  const u = String(src || '').trim()
+  // data: 图片太大，塞进 Markdown 只会把索引炸掉，直接丢掉内容但保留“有图”的语义
+  if (!u || /^data:/i.test(u)) return a ? `![${a}](${ragText('图片已省略', 'image omitted')})` : `![${ragText('图片', 'image')}](${ragText('图片已省略', 'image omitted')})`
+  const needsAngle = /\s|\(|\)/.test(u)
+  const wrapped = needsAngle ? '<' + u + '>' : u
+  return `![${a}](${wrapped})`
+}
+
+// 极简 HTML -> Markdown 转换（参考 office-importer，但去掉“落地图片”的宿主依赖）
+// 目标：不丢内容（尤其是表格/列表），而不是完美还原排版。
 function officeSimpleHtmlToMarkdown(html, sourceName) {
   let text = String(html || '')
+
+  // 先把图片替换成占位符，避免后面 strip tag 时丢掉 alt
+  const images = []
+  text = text.replace(/<img[^>]*>/gi, (m) => {
+    const srcMatch = m.match(/src=["']([^"']+)["']/i)
+    const altMatch = m.match(/alt=["']([^"']*)["']/i)
+    const src = srcMatch ? srcMatch[1] : ''
+    const alt = altMatch ? altMatch[1] : ''
+    const placeholder = `__FLYSMART_OFFICE_IMG_${images.length}__`
+    images.push({ placeholder, src, alt })
+    return placeholder
+  })
+
+  // 换行
   text = text.replace(/<br\s*\/?>(\r?\n)?/gi, '\n')
+
+  // 标题：h1-h6
   for (let level = 6; level >= 1; level--) {
     const re = new RegExp(`<h${level}[^>]*>([\\s\\S]*?)<\\/h${level}>`, 'gi')
-    text = text.replace(re, (_m, inner) => `\n${'#'.repeat(level)} ${String(inner || '').trim()}\n`)
+    text = text.replace(re, (_m, inner) => {
+      const prefix = '#'.repeat(level)
+      return `\n${prefix} ${String(inner || '').trim()}\n`
+    })
   }
+
+  // 无序列表
   text = text.replace(/<ul[^>]*>[\s\S]*?<\/ul>/gi, (m) =>
     m
       .replace(/<ul[^>]*>/gi, '')
       .replace(/<\/ul>/gi, '')
       .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m2, item) => `- ${String(item || '').trim()}\n`),
   )
+
+  // 有序列表
   text = text.replace(/<ol[^>]*>[\s\S]*?<\/ol>/gi, (m) => {
     let idx = 1
     return m
@@ -699,16 +759,86 @@ function officeSimpleHtmlToMarkdown(html, sourceName) {
       .replace(/<\/ol>/gi, '')
       .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m2, item) => `${idx++}. ${String(item || '').trim()}\n`)
   })
+
+  // 加粗/斜体
   text = text.replace(/<(b|strong)[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**')
   text = text.replace(/<(i|em)[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*')
+
+  // 超链接
   text = text.replace(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href, inner) => {
     const label = String(inner || '').trim() || href
     return `[${label}](${href})`
   })
+
+  // 段落
   text = text.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n')
-  text = text.replace(/<img[^>]*>/gi, '')
+
+  // 表格：尽量还原为 Markdown 真表格（很多 Word 内容都塞在表格里，不处理=等于丢文）
+  text = text.replace(/<table[\s\S]*?<\/table>/gi, (m) => {
+    const rows = []
+    const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi
+    let trMatch
+    while ((trMatch = trRe.exec(m))) {
+      const trInner = trMatch[1] || ''
+      const cells = []
+      const cellRe = /<(td|th)[^>]*>([\s\S]*?)<\/\1>/gi
+      let cellMatch
+      while ((cellMatch = cellRe.exec(trInner))) {
+        let cell = cellMatch[2] || ''
+        // 去掉单元格内部标签，只保留文本和前面已生成的 Markdown 标记
+        cell = cell.replace(/<[^>]+>/g, ' ')
+        cell = decodeHtmlEntitiesBasic(cell)
+        cell = escapeMdTableCell(cell)
+        cells.push(cell)
+      }
+      if (cells.length) rows.push(cells)
+    }
+    if (!rows.length) return ''
+
+    let maxCols = 0
+    for (const r of rows) {
+      if (Array.isArray(r) && r.length > maxCols) maxCols = r.length
+    }
+    if (!maxCols) return ''
+
+    const lines = []
+    const header = rows[0]
+    const headerCells = []
+    for (let c = 0; c < maxCols; c++) {
+      const v = header[c]
+      headerCells.push((v && v.trim()) || ragText(`列${c + 1}`, `Col ${c + 1}`))
+    }
+    lines.push('|' + headerCells.join('|') + '|')
+    lines.push('|' + new Array(maxCols).fill('---').join('|') + '|')
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i]
+      const cellsOut = []
+      for (let c = 0; c < maxCols; c++) {
+        const v = row[c] != null ? row[c] : ''
+        cellsOut.push(String(v))
+      }
+      lines.push('|' + cellsOut.join('|') + '|')
+    }
+    return '\n' + lines.join('\n') + '\n'
+  })
+
+  // 去掉所有剩余标签
   text = text.replace(/<[^>]+>/g, '')
+  text = decodeHtmlEntitiesBasic(text)
+
+  // 图片占位符 -> Markdown（不落地，只保留语义/链接）
+  if (images.length) {
+    for (const info of images) {
+      const mdImg = officeImgMarkdownFromSrc(info.src, info.alt)
+      if (text.indexOf(info.placeholder) >= 0) {
+        text = text.split(info.placeholder).join(mdImg)
+      }
+    }
+  }
+
+  // 合理压缩空行
   text = text.replace(/\n{3,}/g, '\n\n').trim()
+
   const header = `> ${ragText('本文档由 Office 文件转换：', 'Converted from Office file: ')}${sourceName || ''}`.trim()
   return header + '\n\n' + text + '\n'
 }
@@ -728,24 +858,33 @@ async function convertOfficeToMarkdown(ctx, absPath, sourceRel) {
   if (ext === 'xlsx' || ext === 'xls') {
     const XLSX = await ensureXlsxLoadedForRag()
     const wb = XLSX.read(buf, { type: 'array' })
-    return officeWorkbookToMarkdown(wb)
+    const body = officeWorkbookToMarkdown(wb)
+    const header = `> ${ragText('本文档由 Office 文件转换：', 'Converted from Office file: ')}${sourceRel || ''}`.trim()
+    return header + '\n\n' + String(body || '').trim() + '\n'
   }
   throw new Error(ragText('不支持的 Office 格式', 'Unsupported office format'))
 }
 
 async function writeOfficeDerivedMarkdown(ctx, libraryRoot, sourceRel, markdown) {
-  if (!ctx || typeof ctx.writeTextFile !== 'function') {
-    throw new Error(ragText('宿主版本过老：缺少 writeTextFile', 'Host version is too old: missing writeTextFile'))
-  }
-  if (!ctx || typeof ctx.ensureDir !== 'function') {
-    throw new Error(ragText('宿主版本过老：缺少 ensureDir', 'Host version is too old: missing ensureDir'))
-  }
   const derivedRel = buildOfficeDerivedRel(sourceRel)
-  if (!derivedRel) throw new Error(ragText('派生路径无效', 'Invalid derived path'))
-  const abs = joinAbs(libraryRoot, derivedRel)
-  const parent = getParentPath(abs)
-  if (parent) await ctx.ensureDir(parent)
-  await ctx.writeTextFile(abs, String(markdown || ''))
+  if (!derivedRel) return ''
+  // 写派生 md 失败不应影响索引：派生文件是“缓存”，索引是主流程
+  if (!ctx || typeof ctx.writeTextFile !== 'function' || typeof ctx.ensureDir !== 'function') return derivedRel
+  try {
+    const abs = joinAbs(libraryRoot, derivedRel)
+    const parent = getParentPath(abs)
+    if (parent) await ctx.ensureDir(parent)
+    await ctx.writeTextFile(abs, String(markdown || ''))
+  } catch (e) {
+    try {
+      await dbg(
+        ctx,
+        '写入派生 Markdown 失败（已忽略）',
+        { sourceRel, derivedRel, error: e && e.message ? String(e.message) : String(e) },
+        true,
+      )
+    } catch {}
+  }
   return derivedRel
 }
 
@@ -765,6 +904,55 @@ async function removeOfficeDerivedMarkdown(ctx, libraryRoot, sourceRel) {
   } catch {
     return false
   }
+}
+
+function officeSourceRelFromDerivedRel(derivedRel, caseInsensitive) {
+  const rel = normalizeRelativePath(derivedRel)
+  if (!rel) return ''
+  if (!isOfficeDerivedRel(rel, caseInsensitive)) return ''
+  const prefix = normalizeRelativePath(OFFICE_DERIVED_DIR) + '/'
+  const starts = caseInsensitive ? rel.toLowerCase().startsWith(prefix.toLowerCase()) : rel.startsWith(prefix)
+  if (!starts) return ''
+  let rest = rel.slice(prefix.length)
+  if (rest.toLowerCase().endsWith('.md')) rest = rest.slice(0, -3)
+  return normalizeRelativePath(rest)
+}
+
+function clipTextForIndex(text, maxChars) {
+  const s = String(text || '')
+  const max =
+    typeof maxChars === 'number' && Number.isFinite(maxChars) ? Math.max(20000, Math.floor(maxChars)) : 200000
+  if (s.length <= max) return { text: s, clipped: false, originalChars: s.length }
+  let head = s.slice(0, max)
+  // 尽量在换行处截断，避免把 Markdown 表格/段落切成半截
+  const nl = head.lastIndexOf('\n')
+  if (nl > max - 2000) head = head.slice(0, nl)
+  head = head.trimEnd()
+  const note = '\n\n> ' + ragText('（索引内容已截断：原文过大）', '(Index truncated: document too large)') + '\n'
+  return { text: head + note, clipped: true, originalChars: s.length }
+}
+
+async function readMarkdownForIndexRel(ctx, libraryRoot, indexRel, timeoutMs) {
+  const root = String(libraryRoot || '').trim()
+  const rel = normalizeRelativePath(indexRel)
+  const abs = joinAbs(root, rel)
+  if (!abs) return { text: '', absPath: '' }
+  try {
+    const text = await readTextBestEffort(ctx, abs, timeoutMs || 12000)
+    if (String(text || '').trim()) return { text: String(text || ''), absPath: abs }
+  } catch {}
+  const caseInsensitive = isWindowsPath(root)
+  if (isOfficeDerivedRel(rel, caseInsensitive)) {
+    const sourceRel = officeSourceRelFromDerivedRel(rel, caseInsensitive)
+    if (sourceRel) {
+      const absSource = joinAbs(root, sourceRel)
+      try {
+        const md = await convertOfficeToMarkdown(ctx, absSource, sourceRel)
+        if (String(md || '').trim()) return { text: String(md || ''), absPath: absSource || abs }
+      } catch {}
+    }
+  }
+  return { text: '', absPath: abs }
 }
 
 function normalizeDocInputToRel(input, root) {
@@ -816,6 +1004,7 @@ function stopIncrementalWatch() {
 
 async function refreshIncrementalWatch(ctx, cfgOverride) {
   stopIncrementalWatch()
+  stopCatchUpPolling()
   try {
     if (!ctx) return
     const cfg = cfgOverride || (await loadConfig(ctx))
@@ -825,6 +1014,9 @@ async function refreshIncrementalWatch(ctx, cfgOverride) {
     if (!root) return
     const caseInsensitive = isWindowsPath(root)
     const includeDirs = normalizeDirPrefixes(cfg.includeDirs || [])
+    startCatchUpPolling(ctx, cfg)
+    scheduleIndexBootstrap(ctx, cfg)
+    scheduleGenericCatchUp(ctx, cfg)
 
     const onEvent = async (ev) => {
       try {
@@ -842,6 +1034,8 @@ async function refreshIncrementalWatch(ctx, cfgOverride) {
           if (!shouldIndexRel(rel, cfg, caseInsensitive)) continue
           enqueueIncrementalTask('upsert', rel)
         }
+        // 某些环境会丢事件：任何事件进来都顺带触发一次低成本补漏
+        try { scheduleGenericCatchUp(ctx, cfg) } catch {}
       } catch {}
     }
 
@@ -1788,11 +1982,21 @@ async function buildIndex(ctx) {
         await dbg(ctx, '读取文件开始', { rel: sourceRel }, true)
         const tRead0 = nowMs()
         if (isOfficeRel(sourceRel)) {
-          const md = await convertOfficeToMarkdown(ctx, f.path, sourceRel)
+          let md = await convertOfficeToMarkdown(ctx, f.path, sourceRel)
+          const clipped = clipTextForIndex(md, INDEX_MAX_FILE_CHARS)
+          if (clipped.clipped) {
+            await dbg(
+              ctx,
+              'Office 文档过大：已截断用于索引',
+              { rel: sourceRel, indexRel, originalChars: clipped.originalChars, keptChars: String(clipped.text || '').length },
+              true,
+            )
+            md = clipped.text
+          }
           indexRel = await writeOfficeDerivedMarkdown(ctx, libraryRoot, sourceRel, md)
           text = md
         } else {
-          text = await readTextBestEffort(ctx, f.path, 6000)
+          text = await readTextBestEffort(ctx, f.path, 15000)
         }
         fileMtimes[indexRel] = typeof f.mtime === 'number' ? f.mtime : 0
         await dbg(
@@ -1823,25 +2027,17 @@ async function buildIndex(ctx) {
         await yieldToUi()
         continue
       }
-      // 防止极端大文件把 UI/内存拖死：第一版宁可跳过也别假死
-      const maxFileChars = INDEX_MAX_FILE_CHARS
-      if (String(text || '').length > maxFileChars) {
-        await dbg(ctx, '跳过超大文件', { rel: sourceRel, indexRel, chars: String(text || '').length }, true)
-        processedFiles++
-        setStatus({
-          processedFiles,
-          totalChunks: allChunks.length,
-          processedChunks: allChunks.length,
-          phase: 'chunk',
-          lastProgressAt: nowMs(),
-        })
-        uiNotice(ctx, `跳过超大文件：${sourceRel}`, 'err', 2400)
-        updateLongNotify(
+
+      // 超大文档不要直接跳过：宁可截断一部分也比“完全没有”强
+      const clipped = clipTextForIndex(text, INDEX_MAX_FILE_CHARS)
+      if (clipped.clipped) {
+        await dbg(
           ctx,
-          `flymd-RAG：分块中 ${processedFiles}/${totalFiles}（chunks=${allChunks.length}，已跳过超大文件）`,
+          '文档过大：已截断用于索引',
+          { rel: sourceRel, indexRel, originalChars: clipped.originalChars, keptChars: String(clipped.text || '').length },
+          true,
         )
-        await yieldToUi()
-        continue
+        text = clipped.text
       }
       let fp = { size: 0, hash: '' }
       try {
@@ -1849,7 +2045,16 @@ async function buildIndex(ctx) {
       } catch {}
       fileFingerprints[indexRel] = fp
       const lines = String(text || '').split(/\r?\n/)
-      const parts = chunkByLines(lines, cfg.chunk)
+      let parts = chunkByLines(lines, cfg.chunk)
+      if (parts.length > INDEX_MAX_CHUNKS_PER_FILE) {
+        await dbg(
+          ctx,
+          '分块过多：已截断 chunk 数用于索引',
+          { rel: sourceRel, indexRel, chunks: parts.length, kept: INDEX_MAX_CHUNKS_PER_FILE },
+          true,
+        )
+        parts = parts.slice(0, INDEX_MAX_CHUNKS_PER_FILE)
+      }
       await dbg(ctx, '分块完成', { rel: sourceRel, indexRel, chunks: parts.length }, false)
       const ids = []
       for (const c of parts) {
@@ -2168,6 +2373,173 @@ function scheduleOfficeCatchUp(ctx, cfgOverride) {
   } catch {}
 }
 
+function stopCatchUpPolling() {
+  try {
+    if (!FLYSMART_POLL_TIMER) return
+    try { clearInterval(FLYSMART_POLL_TIMER) } catch {}
+    FLYSMART_POLL_TIMER = 0
+  } catch {}
+}
+
+function startCatchUpPolling(ctx, cfgOverride) {
+  stopCatchUpPolling()
+  try {
+    const cfg = cfgOverride || null
+    if (!cfg || !cfg.enabled) return
+    // Windows 上 fs.watch 很容易漏事件；这里用低频“补漏扫描”兜底，用户不需要手动点重建。
+    FLYSMART_POLL_TIMER = setInterval(() => {
+      try { scheduleGenericCatchUp(ctx, cfg) } catch {}
+    }, 30000)
+  } catch {}
+}
+
+function scheduleGenericCatchUp(ctx, cfgOverride) {
+  try {
+    if (FLYSMART_GENERIC_CATCHUP_TIMER) return
+    FLYSMART_GENERIC_CATCHUP_TIMER = setTimeout(() => {
+      FLYSMART_GENERIC_CATCHUP_TIMER = 0
+      void genericCatchUpOnce(ctx, cfgOverride)
+    }, 1400)
+  } catch {}
+}
+
+function scheduleIndexBootstrap(ctx, cfgOverride) {
+  try {
+    if (FLYSMART_BOOTSTRAP_TIMER) return
+    FLYSMART_BOOTSTRAP_TIMER = setTimeout(() => {
+      FLYSMART_BOOTSTRAP_TIMER = 0
+      void indexBootstrapOnce(ctx, cfgOverride)
+    }, 1600)
+  } catch {}
+}
+
+async function indexBootstrapOnce(ctx, cfgOverride) {
+  try {
+    if (!ctx) return
+    const cfg = cfgOverride || (await loadConfig(ctx))
+    if (!cfg || !cfg.enabled) return
+    const root = await getLibraryRootRequired(ctx)
+    const dataDir = await getIndexDataDir(ctx, cfg, root, { ensure: false })
+    const metaPath = joinFs(dataDir, META_FILE)
+    if (typeof ctx.exists === 'function') {
+      const ok = await ctx.exists(metaPath)
+      if (ok) return
+    } else {
+      const meta = await readJsonMaybe(ctx, metaPath)
+      if (meta && meta.schemaVersion) return
+    }
+    await dbg(ctx, '未检测到索引文件：将自动重建索引', { metaPath }, true)
+    await buildIndex(ctx)
+  } catch (e) {
+    try {
+      await dbg(
+        ctx,
+        '自动重建索引失败',
+        { error: e && e.message ? String(e.message) : String(e) },
+        true,
+      )
+    } catch {}
+  }
+}
+
+async function genericCatchUpOnce(ctx, cfgOverride) {
+  try {
+    if (!ctx) return
+    const cfg = cfgOverride || (await loadConfig(ctx))
+    if (!cfg || !cfg.enabled) return
+    if (typeof ctx.listLibraryFiles !== 'function') return
+    const libraryRoot = await getLibraryRootRequired(ctx)
+    const caseInsensitive = isWindowsPath(libraryRoot)
+
+    // 读 meta.files（只用来判断“缺失/更新”）
+    let filesMap = {}
+    try {
+      const dataDir = await getIndexDataDir(ctx, cfg, libraryRoot, { ensure: false })
+      const metaPath = joinFs(dataDir, META_FILE)
+      const meta = await readJsonMaybe(ctx, metaPath)
+      if (!meta || meta.schemaVersion !== SCHEMA_VERSION) {
+        scheduleIndexBootstrap(ctx, cfg)
+        return
+      }
+      filesMap = meta && meta.files && typeof meta.files === 'object' ? meta.files : {}
+    } catch {
+      filesMap = {}
+    }
+
+    // 扫描：md/txt + Office
+    let files = []
+    let officeFiles = []
+    try {
+      files = await ctx.listLibraryFiles({
+        extensions: cfg.includeExtensions,
+        maxDepth: cfg.maxDepth,
+        includeDirs: cfg.includeDirs,
+        excludeDirs: cfg.excludeDirs,
+      })
+    } catch {
+      files = []
+    }
+    try {
+      officeFiles = await ctx.listLibraryFiles({
+        extensions: OFFICE_EXTENSIONS,
+        maxDepth: cfg.maxDepth,
+        includeDirs: cfg.includeDirs,
+        excludeDirs: cfg.excludeDirs,
+      })
+    } catch {
+      officeFiles = []
+    }
+
+    // 合并去重
+    try {
+      const byRel = new Map()
+      for (const f of files || []) {
+        const rel = normalizeRelativePath(f && f.relative ? f.relative : '')
+        if (!rel) continue
+        byRel.set(caseInsensitive ? rel.toLowerCase() : rel, f)
+      }
+      for (const f of officeFiles || []) {
+        const rel = normalizeRelativePath(f && f.relative ? f.relative : '')
+        if (!rel) continue
+        const key = caseInsensitive ? rel.toLowerCase() : rel
+        if (!byRel.has(key)) byRel.set(key, f)
+      }
+      files = Array.from(byRel.values())
+    } catch {}
+
+    if (cfg.includeDirs && cfg.includeDirs.length) {
+      files = (files || []).filter((f) =>
+        matchDirPrefix(String(f && f.relative ? f.relative : ''), cfg.includeDirs, caseInsensitive),
+      )
+    }
+    files = (files || []).filter((f) =>
+      shouldIndexRel(String(f && f.relative ? f.relative : ''), cfg, caseInsensitive),
+    )
+
+    let queued = 0
+    const limit = 200
+    for (const f of files || []) {
+      if (queued >= limit) break
+      const sourceRel = normalizeRelativePath(String(f && f.relative ? f.relative : ''))
+      if (!sourceRel) continue
+      const indexRel = isOfficeRel(sourceRel) ? buildOfficeDerivedRel(sourceRel) : sourceRel
+      if (!indexRel) continue
+      const rec = filesMap && Object.prototype.hasOwnProperty.call(filesMap, indexRel) ? filesMap[indexRel] : null
+      const mtime = typeof f.mtime === 'number' ? f.mtime : 0
+      const indexedAt = rec && typeof rec.mtimeMs === 'number' ? rec.mtimeMs : 0
+      const missing = !rec
+      const newer = !!(mtime && indexedAt && mtime > indexedAt + 1000)
+      if (!missing && !newer) continue
+      enqueueIncrementalTask('upsert', sourceRel)
+      queued++
+    }
+
+    if (queued > 0) {
+      await dbg(ctx, 'Catch-up：已入队', { queued, total: (files || []).length }, true)
+    }
+  } catch {}
+}
+
 async function officeCatchUpOnce(ctx, cfgOverride) {
   try {
     if (!ctx) return
@@ -2368,7 +2740,17 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     let sourceType = 'text'
     try {
       if (isOfficeRel(sourceRel)) {
-        const md = await convertOfficeToMarkdown(ctx, absPath, sourceRel)
+        let md = await convertOfficeToMarkdown(ctx, absPath, sourceRel)
+        const clippedOffice = clipTextForIndex(md, INDEX_MAX_FILE_CHARS)
+        if (clippedOffice.clipped) {
+          await dbg(
+            ctx,
+            'Office 文档过大：已截断用于索引',
+            { rel: sourceRel, indexRel, originalChars: clippedOffice.originalChars, keptChars: String(clippedOffice.text || '').length },
+            true,
+          )
+          md = clippedOffice.text
+        }
         indexRel = await writeOfficeDerivedMarkdown(ctx, libraryRoot, sourceRel, md)
         text = md
         sourceType = 'office'
@@ -2395,15 +2777,15 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
       return
     }
 
-    const maxFileChars = INDEX_MAX_FILE_CHARS
-    if (String(text || '').length > maxFileChars) {
-      const removed = removeFileFromMeta(meta, indexRel)
-      meta.files[indexRel] = { mtimeMs: Date.now(), size: String(text || '').length, hash: '', chunkIds: [] }
-      meta.updatedAt = Date.now()
-      await ctx.writeTextFile(metaPath, JSON.stringify(meta, null, 2))
-      FLYSMART_CACHE = { libraryKey: cfgKey, meta, vectors }
-      await dbg(ctx, '增量索引：跳过超大文件（已清理旧索引）', { rel: sourceRel, indexRel, chars: String(text || '').length, oldChunks: removed.oldChunks }, true)
-      return
+    const clipped = clipTextForIndex(text, INDEX_MAX_FILE_CHARS)
+    if (clipped.clipped) {
+      await dbg(
+        ctx,
+        '文档过大：已截断用于索引',
+        { rel: sourceRel, indexRel, originalChars: clipped.originalChars, keptChars: String(clipped.text || '').length },
+        true,
+      )
+      text = clipped.text
     }
 
     let fp = { size: 0, hash: '' }
@@ -2436,7 +2818,16 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     }
 
     const lines = String(text || '').split(/\r?\n/)
-    const parts = chunkByLines(lines, cfg.chunk)
+    let parts = chunkByLines(lines, cfg.chunk)
+    if (parts.length > INDEX_MAX_CHUNKS_PER_FILE) {
+      await dbg(
+        ctx,
+        '分块过多：已截断 chunk 数用于索引',
+        { rel: sourceRel, indexRel, chunks: parts.length, kept: INDEX_MAX_CHUNKS_PER_FILE },
+        true,
+      )
+      parts = parts.slice(0, INDEX_MAX_CHUNKS_PER_FILE)
+    }
     if (!parts.length) {
       await dbg(ctx, '增量索引：无可索引内容，跳过', { rel: sourceRel, indexRel }, true)
       meta.files[indexRel] = { mtimeMs: Date.now(), size: fp.size, hash: fp.hash, chunkIds: [] }
@@ -2807,25 +3198,25 @@ async function searchIndex(ctx, query, opt) {
     opt && typeof opt.contextMaxChars === 'number' && Number.isFinite(opt.contextMaxChars)
       ? Math.max(200, Math.min(20000, Math.floor(opt.contextMaxChars)))
       : cfg.search.contextMaxChars
-  const fileCache = new Map() // absPath -> { lines, blocks }
+  const fileCache = new Map() // relativePath -> { lines, blocks, filePath }
   const seenBlocks = new Set()
 
   for (const it of items) {
     if (out.length >= topK) break
-    const absPath = joinAbs(root, it.relativePath)
-    if (!absPath) continue
-
-    let cached = fileCache.get(absPath)
+    const rel = String(it.relativePath || '')
+    if (!rel) continue
+    let cached = fileCache.get(rel)
     if (!cached) {
       try {
-        const text = await readTextBestEffort(ctx, absPath, 12000)
+        const r = await readMarkdownForIndexRel(ctx, root, rel, 12000)
+        const text = r && typeof r.text === 'string' ? r.text : ''
         const lines = String(text || '').split(/\r?\n/)
         const blocks = splitMarkdownBlocks(lines, 2)
-        cached = { lines, blocks }
-        fileCache.set(absPath, cached)
+        cached = { lines, blocks, filePath: r && r.absPath ? String(r.absPath) : joinAbs(root, rel) }
+        fileCache.set(rel, cached)
       } catch {
-        cached = { lines: [], blocks: [] }
-        fileCache.set(absPath, cached)
+        cached = { lines: [], blocks: [], filePath: joinAbs(root, rel) }
+        fileCache.set(rel, cached)
       }
     }
     if (!cached.lines || !cached.lines.length) continue
@@ -2844,7 +3235,7 @@ async function searchIndex(ctx, query, opt) {
     out.push({
       id: it.id,
       score: it.score,
-      filePath: absPath,
+      filePath: cached.filePath || joinAbs(root, rel),
       relative: it.relativePath,
       heading: info.heading || it.heading,
       startLine: info.startLine,
@@ -2863,8 +3254,10 @@ async function explainHit(ctx, hitId) {
   const c = meta.chunks[hitId]
   if (!c) throw new Error('未找到命中记录')
   const root = await getLibraryRootRequired(ctx)
-  const absPath = joinAbs(root, String(c.relativePath || ''))
-  const text = await readTextBestEffort(ctx, absPath, 12000)
+  const rel = String(c.relativePath || '')
+  const r = await readMarkdownForIndexRel(ctx, root, rel, 12000)
+  const absPath = r && r.absPath ? String(r.absPath) : joinAbs(root, rel)
+  const text = r && typeof r.text === 'string' ? r.text : ''
   const lines = String(text || '').split(/\r?\n/)
   const blocks = splitMarkdownBlocks(lines, 2)
   const info = buildSnippetInfoFromLines(
