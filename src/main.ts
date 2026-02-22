@@ -1663,7 +1663,17 @@ function initNetworkProxyFetchShim(): void {
   const proxiedFetch = async (input: any, init?: any): Promise<any> => {
     try {
       if (!nativeFetch) nativeFetch = (window.fetch as any)?.bind(window)
-      const url = resolveHttpUrl(input)
+
+      // Request 场景：仅在 init 为空时做“无损搬运”，否则保留原生语义
+      let url = resolveHttpUrl(input)
+      let reqFromRequest: Request | null = null
+      try {
+        if (!url && typeof Request !== 'undefined' && input instanceof Request) {
+          if (init != null) return nativeFetch(input, init)
+          reqFromRequest = input
+          url = resolveHttpUrl(reqFromRequest.url)
+        }
+      } catch {}
       if (!url) return nativeFetch(input, init)
 
       const http = await loadHttp()
@@ -1671,6 +1681,23 @@ function initNetworkProxyFetchShim(): void {
 
       const req: any = init ? { ...init } : {}
       req.headers = normalizeHeaders(req.headers)
+
+      // 从 Request 搬运 method/headers/body（仅当 init 为空）
+      if (reqFromRequest) {
+        try {
+          req.method = reqFromRequest.method || req.method || 'GET'
+          req.headers = normalizeHeaders(reqFromRequest.headers)
+          const m = String(req.method || 'GET').toUpperCase()
+          if (m !== 'GET' && m !== 'HEAD') {
+            // 读取 body 会消耗流：只在 clone 成功且能读到 bytes 时处理，否则降级走原生 fetch
+            const clone = reqFromRequest.clone()
+            const ab = await clone.arrayBuffer()
+            req.body = ab
+          }
+        } catch {
+          return nativeFetch(input, init)
+        }
+      }
 
       // tauri plugin-http 不等价于浏览器 fetch：不支持的 body 类型直接降级，避免“为了代理把行为搞崩”
       const body = req.body
@@ -8643,31 +8670,63 @@ function bindEvents() {
       const line = val.slice(lineStart, lineEnd)
       if (!line) return false
 
+      // 围栏代码块里不要做列表续写（否则写代码时会被“聪明”地打断）
+      try {
+        const fenceRE = /^ {0,3}(```+|~~~+)/
+        const preText = val.slice(0, lineStart)
+        const preLines = preText.split('\n')
+        let insideFence = false
+        let fenceCh = ''
+        for (const ln of preLines) {
+          const m = ln.match(fenceRE)
+          if (m) {
+            const ch = m[1][0]
+            if (!insideFence) { insideFence = true; fenceCh = ch }
+            else if (ch === fenceCh) { insideFence = false; fenceCh = '' }
+          }
+        }
+        if (insideFence) return false
+      } catch {}
+
+      // 兼容 blockquote 内的列表：先剥离 > 前缀，再匹配列表头；续写时再把 > 前缀拼回去
+      let quotePrefix = ''
+      let rest = line
+      try {
+        const mQ = line.match(/^(\s*(?:>\s*)+)(.*)$/)
+        if (mQ) { quotePrefix = mQ[1] || ''; rest = mQ[2] || '' }
+      } catch {}
+
       // 无序：- / + / *
-      const mUl = line.match(/^(\s*)([-+*])(\s+)(\[(?: |x|X)\]\s+)?(.*)$/)
+      const mUl = rest.match(/^(\s*)([-+*])(\s+)(\[(?: |x|X)\]\s+)?(.*)$/)
       // 有序：1. / 1)
-      const mOl = line.match(/^(\s*)(\d+)([.)])(\s+)(\[(?: |x|X)\]\s+)?(.*)$/)
+      const mOl = rest.match(/^(\s*)(\d+)([.)])(\s+)(\[(?: |x|X)\]\s+)?(.*)$/)
       if (!mUl && !mOl) return false
 
-      const indent = (mUl ? mUl[1] : mOl![1]) || ''
+      const indentWithin = (mUl ? mUl[1] : mOl![1]) || ''
       const hasTask = !!(mUl ? mUl[4] : mOl![5])
       const tail = (mUl ? mUl[5] : mOl![6]) || ''
 
-      const prefixLen = (() => {
-        if (mUl) return (mUl[1] + mUl[2] + mUl[3] + (mUl[4] || '')).length
-        return (mOl![1] + mOl![2] + mOl![3] + mOl![4] + (mOl![5] || '')).length
+      const markerPartLen = (() => {
+        if (mUl) return (mUl[2] + mUl[3] + (mUl[4] || '')).length
+        return (mOl![2] + mOl![3] + mOl![4] + (mOl![5] || '')).length
       })()
+      const prefixStart = lineStart + quotePrefix.length + indentWithin.length
+      const prefixEnd = prefixStart + markerPartLen
 
       // 光标在表头内部时不接管，避免“回车把表头拆了”这种诡异行为
-      if (s < lineStart + prefixLen) return false
+      if (s < prefixEnd) return false
 
       // 空项：退出列表（不再插入新表头）
       if (tail.trim() === '' && s === lineEnd) {
         e.preventDefault()
         e.stopPropagation()
-        ta.selectionStart = lineStart
-        ta.selectionEnd = lineStart + prefixLen
+        // blockquote 内：保留 > 前缀，仅删列表标记；否则删完整前缀（包含缩进）
+        const delStart = quotePrefix ? prefixStart : lineStart
+        ta.selectionStart = delStart
+        ta.selectionEnd = prefixEnd
         deleteUndoable(ta)
+        const caret = quotePrefix ? prefixStart : lineStart
+        try { ta.selectionStart = ta.selectionEnd = caret } catch {}
         dirty = true
         try { refreshTitle(); refreshStatus() } catch {}
         if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
@@ -8678,12 +8737,12 @@ function bindEvents() {
       const nextPrefix = (() => {
         if (mUl) {
           const bullet = mUl[2]
-          return indent + bullet + ' ' + (hasTask ? '[ ] ' : '')
+          return quotePrefix + indentWithin + bullet + ' ' + (hasTask ? '[ ] ' : '')
         }
         const num = Number.parseInt(mOl![2], 10)
         const nextNum = Number.isFinite(num) ? (num + 1) : 1
         const delim = mOl![3]
-        return indent + String(nextNum) + delim + ' ' + (hasTask ? '[ ] ' : '')
+        return quotePrefix + indentWithin + String(nextNum) + delim + ' ' + (hasTask ? '[ ] ' : '')
       })()
 
       e.preventDefault()
