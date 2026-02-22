@@ -2,6 +2,11 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v1.3.1
+- Added: Network proxy settings (HTTP/HTTPS) in Theme Settings; when enabled, plugin requests also route through the proxy on desktop and can bypass some CORS limitations
+- Added: In Source mode, pressing Enter on ordered/unordered lists auto-continues the list marker; ordered list numbers increment; Enter on an empty item exits the list
+- Updated: Built-in “flymd-RAG Knowledge Index” v0.1.6 — Office docs (Word/Excel: docx/xlsx/xls) can be converted to Markdown and indexed for semantic search
+
 ## Update v1.3.0
 - Added: AI Assistant quick action “Summary” (summarizes the current document by default when there is no selection)
 - Improved: Editor “scroll past end” bottom whitespace + auto stick-to-bottom when typing near the end
