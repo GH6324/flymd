@@ -11,6 +11,7 @@
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { readFile, writeFile, mkdir, exists, remove, BaseDirectory } from '@tauri-apps/plugin-fs'
 import { homeDir, desktopDir, join } from '@tauri-apps/api/path'
+import { invoke } from '@tauri-apps/api/core'
 import { t } from './i18n'
 import { getPasteUrlTitleFetchEnabled, setPasteUrlTitleFetchEnabled } from './core/pasteUrlTitle'
 import { getContentFontSize, setContentFontSize } from './core/uiZoom'
@@ -700,6 +701,27 @@ function createPanel(): HTMLDivElement {
           <button class="theme-reset-layout-btn" id="reset-layout-btn">${t('theme.layout.reset')}</button>
         </div>
       </div>
+    </div>
+    <div class="theme-section theme-network-section">
+      <div class="theme-title">${t('theme.networkSection')}</div>
+      <div class="theme-option">
+        <label class="theme-checkbox-label">
+          <input type="checkbox" id="net-proxy-enabled" class="theme-checkbox" />
+          <span>${t('theme.netProxy.enable')}</span>
+        </label>
+      </div>
+      <div class="theme-field-row">
+        <label for="net-proxy-url">${t('theme.netProxy.url')}</label>
+        <input type="text" id="net-proxy-url" class="theme-text-input" placeholder="http://127.0.0.1:7890" />
+      </div>
+      <div class="theme-field-row">
+        <label for="net-proxy-no-proxy">${t('theme.netProxy.noProxy')}</label>
+        <input type="text" id="net-proxy-no-proxy" class="theme-text-input" placeholder="localhost,127.0.0.1,*.local" />
+      </div>
+      <div class="theme-field-actions">
+        <button class="theme-apply-btn" id="net-proxy-apply">${t('theme.netProxy.apply')}</button>
+      </div>
+      <div class="theme-hint">${t('theme.netProxy.tip')}</div>
     </div>
   `
   return panel
@@ -1604,6 +1626,108 @@ export function initThemeUI(): void {
         setDarkMode(darkModeToggle.checked)
       })
     }
+
+    // 网络代理（Tauri 后端 reqwest / plugin-http）
+    type NetworkProxyPrefs = { enabled: boolean; proxyUrl: string; noProxy: string }
+    const NET_PROXY_KEY = 'flymd:net:proxy'
+    const loadNetProxy = (): { prefs: NetworkProxyPrefs; hasSaved: boolean } => {
+      try {
+        const raw = localStorage.getItem(NET_PROXY_KEY)
+        if (!raw) return { prefs: { enabled: false, proxyUrl: '', noProxy: '' }, hasSaved: false }
+        const v = JSON.parse(raw || '{}') as any
+        return {
+          prefs: {
+            enabled: !!v.enabled,
+            proxyUrl: typeof v.proxyUrl === 'string' ? v.proxyUrl : '',
+            noProxy: typeof v.noProxy === 'string' ? v.noProxy : '',
+          },
+          hasSaved: true,
+        }
+      } catch {
+        return { prefs: { enabled: false, proxyUrl: '', noProxy: '' }, hasSaved: false }
+      }
+    }
+    const saveNetProxy = (prefs: NetworkProxyPrefs) => {
+      try { localStorage.setItem(NET_PROXY_KEY, JSON.stringify(prefs)) } catch {}
+    }
+    const applyNetProxy = async (prefs: NetworkProxyPrefs) => {
+      try {
+        const enabled = !!prefs.enabled
+        const proxyUrl = String(prefs.proxyUrl || '').trim()
+        const noProxy = String(prefs.noProxy || '').trim()
+        await invoke('set_network_proxy', { enabled, proxyUrl, noProxy })
+      } catch (e) {
+        try { console.warn('[Theme][Proxy] apply failed', e) } catch {}
+        throw e
+      }
+    }
+
+    const proxyEnabled = panel.querySelector('#net-proxy-enabled') as HTMLInputElement | null
+    const proxyUrlInput = panel.querySelector('#net-proxy-url') as HTMLInputElement | null
+    const noProxyInput = panel.querySelector('#net-proxy-no-proxy') as HTMLInputElement | null
+    const proxyApplyBtn = panel.querySelector('#net-proxy-apply') as HTMLButtonElement | null
+
+    const syncProxyUI = (prefs: NetworkProxyPrefs) => {
+      try {
+        if (proxyEnabled) proxyEnabled.checked = !!prefs.enabled
+        if (proxyUrlInput) proxyUrlInput.value = prefs.proxyUrl || ''
+        if (noProxyInput) noProxyInput.value = prefs.noProxy || ''
+        const dis = !prefs.enabled
+        if (proxyUrlInput) proxyUrlInput.disabled = dis
+        if (noProxyInput) noProxyInput.disabled = dis
+        if (proxyApplyBtn) proxyApplyBtn.disabled = dis
+      } catch {}
+    }
+
+    const validateNetProxy = (prefs: NetworkProxyPrefs): string => {
+      try {
+        if (!prefs.enabled) return ''
+        const u = String(prefs.proxyUrl || '').trim()
+        if (!u) return t('theme.netProxy.errEmpty')
+        if (!/^https?:\/\//i.test(u)) return t('theme.netProxy.errScheme')
+        return ''
+      } catch { return '' }
+    }
+
+    const applyFromUI = async () => {
+      const prefs: NetworkProxyPrefs = {
+        enabled: !!(proxyEnabled && proxyEnabled.checked),
+        proxyUrl: String(proxyUrlInput?.value || ''),
+        noProxy: String(noProxyInput?.value || ''),
+      }
+      const err = validateNetProxy(prefs)
+      if (err) { alert(err); return }
+      saveNetProxy(prefs)
+      syncProxyUI(prefs)
+      try { await applyNetProxy(prefs) } catch { alert(t('theme.netProxy.errApplyFailed')); return }
+      try { window.dispatchEvent(new CustomEvent('flymd:netproxy:changed', { detail: { ...prefs } })) } catch {}
+    }
+
+    // 初始化：同步 UI + 尝试把已保存的代理设置下发到后端（即使面板未打开也能生效）
+    try {
+      const loaded = loadNetProxy()
+      syncProxyUI(loaded.prefs)
+      // 只在用户曾经保存过该配置时才触发下发，避免无端清空用户通过环境变量注入的代理
+      if (loaded.hasSaved) {
+        void applyNetProxy(loaded.prefs).catch(() => {})
+      }
+    } catch {}
+
+    if (proxyEnabled) {
+      proxyEnabled.addEventListener('change', async () => {
+        const cur = loadNetProxy().prefs
+        cur.enabled = !!proxyEnabled.checked
+        saveNetProxy(cur)
+        syncProxyUI(cur)
+        const err = validateNetProxy(cur)
+        if (err) { if (cur.enabled) alert(err); return }
+        try { await applyNetProxy(cur) } catch { alert(t('theme.netProxy.errApplyFailed')); return }
+        try { window.dispatchEvent(new CustomEvent('flymd:netproxy:changed', { detail: { ...cur } })) } catch {}
+      })
+    }
+    if (proxyApplyBtn) proxyApplyBtn.addEventListener('click', () => { void applyFromUI() })
+    if (proxyUrlInput) proxyUrlInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); void applyFromUI() } })
+    if (noProxyInput) noProxyInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); void applyFromUI() } })
 
     // 关闭按钮
     const closeBtn = panel.querySelector('.theme-panel-close') as HTMLButtonElement | null

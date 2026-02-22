@@ -1563,6 +1563,8 @@ try { initWindowsCompositorPoke() } catch {}
 // 应用已保存主题并挂载主题 UI
 try { applySavedTheme() } catch {}
 try { initThemeUI() } catch {}
+// 网络代理：当用户启用代理时，让插件侧 fetch 也走 tauri plugin-http（绕开 CORS 且吃到后端代理设置）
+try { initNetworkProxyFetchShim() } catch {}
 // 将专注模式切换函数暴露到全局，供主题面板调用
 ;(window as any).flymdToggleFocusMode = async (enabled: boolean) => {
   try {
@@ -1587,6 +1589,148 @@ try { initWindowResize() } catch {}
 const editor = document.getElementById('editor') as HTMLTextAreaElement
 const preview = document.getElementById('preview') as HTMLDivElement
 const filenameLabel = document.getElementById('filename') as HTMLDivElement
+
+function initNetworkProxyFetchShim(): void {
+  const NET_PROXY_KEY = 'flymd:net:proxy'
+  let installed = false
+  let nativeFetch: any = null
+  let httpFetch: any = null
+  let httpBody: any = null
+  let httpImportPromise: Promise<any> | null = null
+
+  const readEnabled = (): boolean => {
+    try {
+      const raw = localStorage.getItem(NET_PROXY_KEY)
+      if (!raw) return false
+      const v = JSON.parse(raw || '{}') as any
+      return !!v.enabled
+    } catch { return false }
+  }
+
+  const loadHttp = async (): Promise<{ fetch: any; Body?: any } | null> => {
+    if (httpFetch) return { fetch: httpFetch, Body: httpBody }
+    if (!httpImportPromise) {
+      httpImportPromise = (async () => {
+        try {
+          const mod: any = await import('@tauri-apps/plugin-http')
+          if (typeof mod?.fetch !== 'function') return null
+          httpFetch = mod.fetch
+          httpBody = mod.Body
+          return { fetch: httpFetch, Body: httpBody }
+        } catch {
+          return null
+        }
+      })()
+    }
+    return await httpImportPromise
+  }
+
+  const normalizeHeaders = (h: any): Record<string, string> | any => {
+    try {
+      if (!h) return h
+      if (typeof Headers !== 'undefined' && h instanceof Headers) {
+        const out: Record<string, string> = {}
+        h.forEach((v: string, k: string) => { out[k] = v })
+        return out
+      }
+      if (Array.isArray(h)) {
+        const out: Record<string, string> = {}
+        for (const it of h) {
+          if (!Array.isArray(it) || it.length < 2) continue
+          const k = String(it[0] || '')
+          const v = String(it[1] || '')
+          if (k) out[k] = v
+        }
+        return out
+      }
+      return h
+    } catch {
+      return h
+    }
+  }
+
+  const resolveHttpUrl = (input: any): string | null => {
+    try {
+      if (typeof input !== 'string') return null
+      const u = new URL(input, window.location.href)
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+      return u.toString()
+    } catch {
+      return null
+    }
+  }
+
+  const proxiedFetch = async (input: any, init?: any): Promise<any> => {
+    try {
+      if (!nativeFetch) nativeFetch = (window.fetch as any)?.bind(window)
+      const url = resolveHttpUrl(input)
+      if (!url) return nativeFetch(input, init)
+
+      const http = await loadHttp()
+      if (!http || typeof http.fetch !== 'function') return nativeFetch(input, init)
+
+      const req: any = init ? { ...init } : {}
+      req.headers = normalizeHeaders(req.headers)
+
+      // tauri plugin-http 不等价于浏览器 fetch：不支持的 body 类型直接降级，避免“为了代理把行为搞崩”
+      const body = req.body
+      try {
+        if (typeof FormData !== 'undefined' && body instanceof FormData) return nativeFetch(input, init)
+        if (typeof ReadableStream !== 'undefined' && body instanceof ReadableStream) return nativeFetch(input, init)
+        if (typeof Blob !== 'undefined' && body instanceof Blob) return nativeFetch(input, init)
+      } catch {}
+
+      // 兼容 bytes：把 ArrayBuffer/Uint8Array 包装成 plugin-http 的 Body.bytes
+      try {
+        const Body = (http as any).Body
+        if (Body && typeof Body.bytes === 'function') {
+          if (body instanceof Uint8Array) req.body = Body.bytes(body)
+          else if (body instanceof ArrayBuffer) req.body = Body.bytes(new Uint8Array(body))
+        }
+      } catch {}
+
+      // URLSearchParams -> string（让 Content-Type 由调用者 headers 决定）
+      try { if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) req.body = body.toString() } catch {}
+
+      return await http.fetch(url, req)
+    } catch {
+      // 兜底：任何异常都回到原始 fetch
+      try { return nativeFetch(input, init) } catch { throw new Error('fetch failed') }
+    }
+  }
+
+  const install = () => {
+    try {
+      if (installed) return
+      if (!nativeFetch) nativeFetch = (window.fetch as any)?.bind(window)
+      if (typeof nativeFetch !== 'function') return
+      ;(window as any).fetch = proxiedFetch as any
+      installed = true
+    } catch {}
+  }
+
+  const uninstall = () => {
+    try {
+      if (!installed) return
+      if (nativeFetch && typeof nativeFetch === 'function') {
+        ;(window as any).fetch = nativeFetch
+      }
+      installed = false
+    } catch {}
+  }
+
+  const update = () => {
+    try {
+      if (readEnabled()) install()
+      else uninstall()
+    } catch {}
+  }
+
+  update()
+  try {
+    window.addEventListener('flymd:netproxy:changed', () => { update() })
+  } catch {}
+}
 
 // 编辑器底部 padding 的“基线值”（从 CSS 计算得到，包含文末留白）
 let _editorPadBottomBasePx = 40
@@ -8483,9 +8627,83 @@ function bindEvents() {
     }
   }
 
+  // 源码模式：列表回车续写（无序/有序；有序数字递增；空项回车退出列表）
+  function tryHandleListEnter(ta: HTMLTextAreaElement, e: KeyboardEvent): boolean {
+    try {
+      if (!e || e.key !== 'Enter') return false
+      if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return false
+      const s = ta.selectionStart >>> 0
+      const epos = ta.selectionEnd >>> 0
+      if (s !== epos) return false
+
+      const val = String(ta.value || '')
+      const lineStart = val.lastIndexOf('\n', Math.max(0, s - 1)) + 1
+      const nl = val.indexOf('\n', s)
+      const lineEnd = nl === -1 ? val.length : nl
+      const line = val.slice(lineStart, lineEnd)
+      if (!line) return false
+
+      // 无序：- / + / *
+      const mUl = line.match(/^(\s*)([-+*])(\s+)(\[(?: |x|X)\]\s+)?(.*)$/)
+      // 有序：1. / 1)
+      const mOl = line.match(/^(\s*)(\d+)([.)])(\s+)(\[(?: |x|X)\]\s+)?(.*)$/)
+      if (!mUl && !mOl) return false
+
+      const indent = (mUl ? mUl[1] : mOl![1]) || ''
+      const hasTask = !!(mUl ? mUl[4] : mOl![5])
+      const tail = (mUl ? mUl[5] : mOl![6]) || ''
+
+      const prefixLen = (() => {
+        if (mUl) return (mUl[1] + mUl[2] + mUl[3] + (mUl[4] || '')).length
+        return (mOl![1] + mOl![2] + mOl![3] + mOl![4] + (mOl![5] || '')).length
+      })()
+
+      // 光标在表头内部时不接管，避免“回车把表头拆了”这种诡异行为
+      if (s < lineStart + prefixLen) return false
+
+      // 空项：退出列表（不再插入新表头）
+      if (tail.trim() === '' && s === lineEnd) {
+        e.preventDefault()
+        e.stopPropagation()
+        ta.selectionStart = lineStart
+        ta.selectionEnd = lineStart + prefixLen
+        deleteUndoable(ta)
+        dirty = true
+        try { refreshTitle(); refreshStatus() } catch {}
+        if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+        return true
+      }
+
+      // 续写：插入换行 + 下一条表头
+      const nextPrefix = (() => {
+        if (mUl) {
+          const bullet = mUl[2]
+          return indent + bullet + ' ' + (hasTask ? '[ ] ' : '')
+        }
+        const num = Number.parseInt(mOl![2], 10)
+        const nextNum = Number.isFinite(num) ? (num + 1) : 1
+        const delim = mOl![3]
+        return indent + String(nextNum) + delim + ' ' + (hasTask ? '[ ] ' : '')
+      })()
+
+      e.preventDefault()
+      e.stopPropagation()
+      ta.selectionStart = s
+      ta.selectionEnd = s
+      insertUndoable(ta, '\n' + nextPrefix)
+      dirty = true
+      try { refreshTitle(); refreshStatus() } catch {}
+      if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   // 源码模式：成对标记补全（自动/环绕/跳过/成对删除）
   try {
     (editor as HTMLTextAreaElement).addEventListener('keydown', (e: KeyboardEvent) => { if ((e as any).defaultPrevented) return; if (e.ctrlKey || e.metaKey || e.altKey) return
+      try { if (tryHandleListEnter(editor as HTMLTextAreaElement, e)) return } catch {}
       // 反引号特殊处理：支持 ``` 围栏（空选区自动补全围栏；有选区则环绕为代码块）
       if (e.key === '`') {
         try { if (_btTimer) { clearTimeout(_btTimer); _btTimer = null } } catch {}

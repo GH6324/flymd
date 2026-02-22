@@ -70,6 +70,79 @@ fn install_windows_maximized_resizable_workaround(win: &tauri::WebviewWindow) {
 static STARTUP_LOG_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
 static PANIC_HOOK_INSTALLED: OnceLock<()> = OnceLock::new();
 
+// 网络代理设置：由前端写入（主题面板），用于影响 Rust 侧 reqwest/tauri-plugin-http 的新请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkProxyPrefs {
+  enabled: bool,
+  proxy_url: String,
+  no_proxy: String,
+}
+
+static NETWORK_PROXY_PREFS: OnceLock<std::sync::Mutex<NetworkProxyPrefs>> = OnceLock::new();
+
+fn default_network_proxy_prefs() -> NetworkProxyPrefs {
+  NetworkProxyPrefs {
+    enabled: false,
+    proxy_url: "".into(),
+    no_proxy: "".into(),
+  }
+}
+
+fn apply_network_proxy_env(p: &NetworkProxyPrefs) -> Result<(), String> {
+  use std::env;
+  if !p.enabled {
+    env::remove_var("HTTP_PROXY");
+    env::remove_var("HTTPS_PROXY");
+    env::remove_var("NO_PROXY");
+    return Ok(());
+  }
+
+  let u = p.proxy_url.trim();
+  if u.is_empty() {
+    return Err("proxyUrl 为空".into());
+  }
+
+  let parsed = url::Url::parse(u).map_err(|e| format!("proxyUrl 非法：{e}"))?;
+  let scheme = parsed.scheme().to_ascii_lowercase();
+  if scheme != "http" && scheme != "https" {
+    return Err("proxyUrl 仅支持 http/https".into());
+  }
+
+  env::set_var("HTTP_PROXY", u);
+  env::set_var("HTTPS_PROXY", u);
+  let np = p.no_proxy.trim();
+  if np.is_empty() {
+    env::remove_var("NO_PROXY");
+  } else {
+    env::set_var("NO_PROXY", np);
+  }
+  Ok(())
+}
+
+#[tauri::command]
+fn set_network_proxy(enabled: bool, proxy_url: Option<String>, no_proxy: Option<String>) -> Result<NetworkProxyPrefs, String> {
+  let prefs = NetworkProxyPrefs {
+    enabled,
+    proxy_url: proxy_url.unwrap_or_default(),
+    no_proxy: no_proxy.unwrap_or_default(),
+  };
+  apply_network_proxy_env(&prefs)?;
+  let lock = NETWORK_PROXY_PREFS.get_or_init(|| std::sync::Mutex::new(default_network_proxy_prefs()));
+  {
+    let mut guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+    *guard = prefs.clone();
+  }
+  Ok(prefs)
+}
+
+#[tauri::command]
+fn get_network_proxy() -> Result<NetworkProxyPrefs, String> {
+  let lock = NETWORK_PROXY_PREFS.get_or_init(|| std::sync::Mutex::new(default_network_proxy_prefs()));
+  let guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+  Ok(guard.clone())
+}
+
 fn now_epoch_ms() -> u128 {
   std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
@@ -1721,6 +1794,8 @@ fn main() {
       git_commit_snapshot,
       git_restore_file_version,
       run_installer,
+      set_network_proxy,
+      get_network_proxy,
       // Android SAF 命令
       android_pick_document,
       android_create_document,
