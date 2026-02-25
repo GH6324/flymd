@@ -403,14 +403,22 @@ export async function enterStickyNoteModeCore(
     try {
       const store = await deps.getStore()
       if (store) {
-        const currentSize = await win.innerSize()
-        const currentPos = await win.outerPosition()
+        const [currentSize, currentPos, scaleFactor] = await Promise.all([
+          win.innerSize(),
+          win.outerPosition(),
+          typeof (win as any)?.scaleFactor === 'function'
+            ? (win as any).scaleFactor()
+            : Promise.resolve(1),
+        ])
         if (currentSize && currentPos) {
+          const factor = Number(scaleFactor) || 1
           await store.set('windowStateBeforeSticky', {
-            width: currentSize.width,
-            height: currentSize.height,
-            x: currentPos.x,
-            y: currentPos.y,
+            // innerSize/outerPosition 返回物理像素；存储时统一转成逻辑像素，避免 Windows 缩放下恢复错位/变形。
+            unit: 'logical',
+            width: Math.round((Number(currentSize.width) || 0) / factor),
+            height: Math.round((Number(currentSize.height) || 0) / factor),
+            x: Math.round((Number(currentPos.x) || 0) / factor),
+            y: Math.round((Number(currentPos.y) || 0) / factor),
           } as any)
           await store.save()
         }
@@ -512,14 +520,29 @@ export async function restoreWindowStateBeforeStickyCore(
     const store = await deps.getStore()
     if (!store) return
     const saved = (await store.get('windowStateBeforeSticky')) as
-      | { width: number; height: number; x: number; y: number }
+      | { width: number; height: number; x: number; y: number; unit?: string }
       | null
     if (!saved || !saved.width || !saved.height) return
     const win = deps.getCurrentWindow()
     const { LogicalSize, LogicalPosition } = await deps.importDpi()
-    await win.setSize(new LogicalSize(saved.width, saved.height))
+
+    // 兼容旧数据：早期版本保存的是物理像素（没有 unit 字段）。
+    let factor = 1
+    try {
+      if (typeof (win as any)?.scaleFactor === 'function') {
+        factor = Number(await (win as any).scaleFactor()) || 1
+      }
+    } catch {}
+
+    const isLogical = saved.unit === 'logical'
+    const width = isLogical ? saved.width : saved.width / factor
+    const height = isLogical ? saved.height : saved.height / factor
+    const x = isLogical ? saved.x : saved.x / factor
+    const y = isLogical ? saved.y : saved.y / factor
+
+    await win.setSize(new LogicalSize(Math.round(width), Math.round(height)))
     if (typeof saved.x === 'number' && typeof saved.y === 'number') {
-      await win.setPosition(new LogicalPosition(saved.x, saved.y))
+      await win.setPosition(new LogicalPosition(Math.round(x), Math.round(y)))
     }
     await store.delete('windowStateBeforeSticky')
     await store.save()

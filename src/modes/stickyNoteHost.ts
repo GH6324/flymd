@@ -339,11 +339,21 @@ export function createStickyNoteWindowHost(
       )
 
       const win = deps.getCurrentWindow()
-      const currentSize = await win.innerSize()
+      const [currentSize, scaleFactor] = await Promise.all([
+        win.innerSize(),
+        // Windows 常见 125%/150% 缩放：innerSize 是物理像素，setSize(LogicalSize) 需要逻辑像素。
+        // 这里若混用单位，会出现“每触发一次就按缩放比例变大”的离谱行为。
+        typeof win.scaleFactor === 'function' ? win.scaleFactor() : Promise.resolve(1),
+      ])
+      const factor = Number(scaleFactor) || 1
+      const currentLogicalWidth = (Number(currentSize?.width) || 0) / factor
+      const currentLogicalHeight = (Number(currentSize?.height) || 0) / factor
 
-      if (Math.abs(currentSize.height - targetHeight) > 10) {
+      if (Math.abs(currentLogicalHeight - targetHeight) > 10) {
         const { LogicalSize } = await deps.importDpi()
-        await win.setSize(new LogicalSize(currentSize.width, targetHeight))
+        await win.setSize(
+          new LogicalSize(Math.round(currentLogicalWidth), Math.round(targetHeight)),
+        )
       }
     } catch (e) {
       console.error('[便签模式] 调整窗口高度失败:', e)
@@ -432,4 +442,3 @@ export function createStickyNoteWindowHost(
     createStickyNoteControls,
   }
 }
-
