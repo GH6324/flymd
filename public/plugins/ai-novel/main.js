@@ -3843,6 +3843,11 @@ async function openSettingsDialog(ctx) {
   const secBackend = document.createElement('div')
   secBackend.className = 'ain-card'
   secBackend.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${t('账户', 'Account')}</div>`
+  const trialHint = document.createElement('div')
+  trialHint.className = 'ain-muted'
+  trialHint.style.marginTop = '6px'
+  trialHint.textContent = t('新用户免费获得50万字符', 'New users get 500k free characters')
+  secBackend.appendChild(trialHint)
   const projHint = document.createElement('div')
   projHint.className = 'ain-muted'
   projHint.style.marginTop = '6px'
