@@ -323,12 +323,29 @@ export function createStickyNoteWindowHost(
     try {
       const previewEl = deps.getPreviewElement()
       if (!previewEl) return
+      // 预览被隐藏时（切到源码模式）scrollHeight 可能变成 0；此时调整窗口高度只会把窗口“吸”到最小值。
+      try {
+        if (previewEl.classList.contains('hidden')) return
+        const st = window.getComputedStyle(previewEl)
+        if (st.display === 'none' || st.visibility === 'hidden') return
+      } catch {}
       const previewBody = previewEl.querySelector(
         '.preview-body',
       ) as HTMLElement | null
       if (!previewBody) return
 
-      const contentHeight = previewBody.scrollHeight
+      // 便签待办的 tooltip 是绝对定位元素：在某些浏览器里会参与 scrollHeight 计算，
+      // 导致“点一下复选框窗口高度就跳”的错觉。测量时临时隐藏它们，避免抖动。
+      let contentHeight = 0
+      try {
+        document.body.classList.add('sticky-note-measuring')
+        contentHeight = previewBody.scrollHeight
+      } finally {
+        try {
+          document.body.classList.remove('sticky-note-measuring')
+        } catch {}
+      }
+      if (!contentHeight || contentHeight <= 0) return
       const controlsHeight = 50
       const padding = 30
 

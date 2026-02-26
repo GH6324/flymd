@@ -8471,6 +8471,11 @@ body.sticky-note-mode .task-tooltip {
   font-weight: 400;
 }
 
+/* 便签窗口高度自适应测量时：临时隐藏 tooltip，避免其参与 scrollHeight 导致窗口抖动 */
+body.sticky-note-mode.sticky-note-measuring .task-tooltip {
+  display: none !important;
+}
+
 /* 鼠标悬停时显示tooltip */
 body.sticky-note-mode li.task-list-item:hover .task-tooltip {
   opacity: 1;
