@@ -203,13 +203,17 @@ export async function setOutlineDocked(docked: boolean, persist = true): Promise
 export async function syncOutlineDockFromStore(): Promise<void> {
   try {
     if (!_deps) return
+    const fromLs = readDockedFromLocalStorage()
+    if (fromLs != null) {
+      _outlineDocked = fromLs
+      return
+    }
     const store = _deps.getStore()
     if (!store) return
     const v = await store.get(OUTLINE_DOCKED_KEY)
     const picked = typeof v === 'boolean' ? v : _outlineDocked
 
     // 优先 localStorage（更接近用户刚点的那一下），仅在缺失时用 Store 补齐
-    const fromLs = readDockedFromLocalStorage()
     const finalPicked = (fromLs != null) ? fromLs : picked
     _outlineDocked = !!finalPicked
     writeDockedToLocalStorage(_outlineDocked)

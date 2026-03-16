@@ -73,6 +73,12 @@ const DEFAULT_PREFS: ThemePrefs = {
 
 const _themes = new Map<string, ThemeDefinition>()
 const _palettes: Array<{ id: string; label: string; color: string }> = []
+const THEME_FONT_DB_KEY = 'flymd:theme:fonts'
+const THEME_FONTS_DIR = 'fonts'
+const THEME_NET_PROXY_KEY = 'flymd:net:proxy'
+let _themeUiBound = false
+let _themePanelReady = false
+let _themeRuntimeBootstrapped = false
 
 // 工具：读当前 :root/.container 上的变量（若无则返回空串）
 function getCssVar(name: string): string {
@@ -85,6 +91,76 @@ function getCssVar(name: string): string {
 
 function getContainer(): HTMLElement | null {
   return document.querySelector('.container') as HTMLElement | null
+}
+
+type CustomThemeFont = { id: string; name: string; rel: string; ext: string; family: string }
+
+function loadThemeFontDb(): CustomThemeFont[] {
+  try {
+    const raw = localStorage.getItem(THEME_FONT_DB_KEY)
+    if (!raw) return []
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? arr as CustomThemeFont[] : []
+  } catch {
+    return []
+  }
+}
+
+function getThemeFontFormat(ext: string): string {
+  const e = String(ext || '').toLowerCase()
+  if (e === 'ttf') return 'truetype'
+  if (e === 'otf') return 'opentype'
+  if (e === 'woff2') return 'woff2'
+  return 'woff'
+}
+
+async function injectThemeFontFace(font: CustomThemeFont): Promise<void> {
+  try {
+    if (!font?.id || !font?.rel || !font?.family) return
+    if (document.querySelector(`style[data-user-font="${font.id}"]`)) return
+    const bytes = await readFile(`${THEME_FONTS_DIR}/${font.rel}` as any, { baseDir: BaseDirectory.AppLocalData } as any) as Uint8Array
+    const fmt = getThemeFontFormat(font.ext)
+    const mime = fmt === 'woff2' ? 'font/woff2' : (fmt === 'woff' ? 'font/woff' : 'font/ttf')
+    const blob = new Blob([bytes as any], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const style = document.createElement('style')
+    style.dataset.userFont = font.id
+    style.textContent = `@font-face{font-family:'${font.family}';src:url(${url}) format('${fmt}');font-weight:normal;font-style:normal;font-display:swap;}`
+    document.head.appendChild(style)
+  } catch {}
+}
+
+function loadThemeNetProxyPrefs(): { enabled: boolean; proxyUrl: string; noProxy: string } | null {
+  try {
+    const raw = localStorage.getItem(THEME_NET_PROXY_KEY)
+    if (!raw) return null
+    const v = JSON.parse(raw || '{}') as any
+    return {
+      enabled: !!v.enabled,
+      proxyUrl: typeof v.proxyUrl === 'string' ? v.proxyUrl : '',
+      noProxy: typeof v.noProxy === 'string' ? v.noProxy : '',
+    }
+  } catch {
+    return null
+  }
+}
+
+function bootstrapThemeRuntime(): void {
+  if (_themeRuntimeBootstrapped) return
+  _themeRuntimeBootstrapped = true
+  try {
+    const fonts = loadThemeFontDb()
+    for (const font of fonts) void injectThemeFontFace(font)
+  } catch {}
+  try {
+    const prefs = loadThemeNetProxyPrefs()
+    if (!prefs) return
+    void invoke('set_network_proxy', {
+      enabled: !!prefs.enabled,
+      proxyUrl: String(prefs.proxyUrl || '').trim(),
+      noProxy: String(prefs.noProxy || '').trim(),
+    }).catch(() => {})
+  } catch {}
 }
 
 // 工具：解析颜色字符串（十六进制或 rgb/rgba），用于计算菜单栏/标签栏/侧栏等“外圈 UI”的衍生色
@@ -769,12 +845,14 @@ function fillSwatches(panel: HTMLElement, prefs: ThemePrefs) {
   if (gridToggle) gridToggle.checked = !!prefs.gridBackground
 }
 
-export function initThemeUI(): void {
+function ensureThemePanelReady(): HTMLDivElement | null {
   try {
+    if (_themePanelReady) return document.getElementById('theme-panel') as HTMLDivElement | null
+    _themePanelReady = true
     // 兼容新 ribbon 和旧 menubar 布局
     const menu = document.querySelector('.ribbon') || document.querySelector('.menubar')
     const container = getContainer()
-    if (!menu || !container) return
+    if (!menu || !container) { _themePanelReady = false; return null }
 
     let panel = document.getElementById('theme-panel') as HTMLDivElement | null
     if (!panel) {
@@ -858,28 +936,14 @@ export function initThemeUI(): void {
     } catch {}
 
     // 自定义字体数据库（保存在 localStorage，仅记录元数据，文件存放于 AppLocalData/fonts）
-    type CustomFont = { id: string; name: string; rel: string; ext: string; family: string }
-    const FONT_DB_KEY = 'flymd:theme:fonts'
-    const FONTS_DIR = 'fonts'
-    function loadFontDb(): CustomFont[] {
-      try { const raw = localStorage.getItem(FONT_DB_KEY); if (!raw) return []; const arr = JSON.parse(raw); if (Array.isArray(arr)) return arr as CustomFont[] } catch {} return []
-    }
-    function saveFontDb(list: CustomFont[]) { try { localStorage.setItem(FONT_DB_KEY, JSON.stringify(list)) } catch {} }
+    type CustomFont = CustomThemeFont
+    function loadFontDb(): CustomFont[] { return loadThemeFontDb() }
+    function saveFontDb(list: CustomFont[]) { try { localStorage.setItem(THEME_FONT_DB_KEY, JSON.stringify(list)) } catch {} }
     function sanitizeId(s: string): string { return s.replace(/[^a-zA-Z0-9_-]+/g, '-') }
-    function getFormat(ext: string): string { const e = ext.toLowerCase(); if (e === 'ttf') return 'truetype'; if (e === 'otf') return 'opentype'; if (e === 'woff2') return 'woff2'; return 'woff' }
-    async function ensureFontsDir() { try { await mkdir(FONTS_DIR as any, { baseDir: BaseDirectory.AppLocalData, recursive: true } as any) } catch {} }
+    function getFormat(ext: string): string { return getThemeFontFormat(ext) }
+    async function ensureFontsDir() { try { await mkdir(THEME_FONTS_DIR as any, { baseDir: BaseDirectory.AppLocalData, recursive: true } as any) } catch {} }
     async function injectFontFace(f: CustomFont): Promise<void> {
-      try {
-        const bytes = await readFile(`${FONTS_DIR}/${f.rel}` as any, { baseDir: BaseDirectory.AppLocalData } as any) as Uint8Array
-        const fmt = getFormat(f.ext)
-        const blob = new Blob([bytes as any], { type: fmt === 'woff2' ? 'font/woff2' : (fmt === 'woff' ? 'font/woff' : 'font/ttf') })
-        const url = URL.createObjectURL(blob)
-        const css = `@font-face{font-family:'${f.family}';src:url(${url}) format('${fmt}');font-weight:normal;font-style:normal;font-display:swap;}`
-        const style = document.createElement('style')
-        style.dataset.userFont = f.id
-        style.textContent = css
-        document.head.appendChild(style)
-      } catch {}
+      await injectThemeFontFace(f)
     }
     // 启动时恢复已安装字体：将数据库中的字体全部注册为 @font-face，
     // 确保升级或重启应用后，"本地: XXX" 选项仍然真实指向对应字体文件
@@ -927,7 +991,7 @@ export function initThemeUI(): void {
         saveFontDb(db)
         // 删除字体文件本体
         try {
-          await remove(`${FONTS_DIR}/${f.rel}` as any, { baseDir: BaseDirectory.AppLocalData } as any)
+          await remove(`${THEME_FONTS_DIR}/${f.rel}` as any, { baseDir: BaseDirectory.AppLocalData } as any)
         } catch {}
         // 移除已注入的 @font-face 样式
         try {
@@ -1186,7 +1250,7 @@ export function initThemeUI(): void {
             const family = 'UserFont-' + sanitizeId(stem)
             const rel = `${id}.${ext}`
             const bytes = await readFile(p as any)
-            await writeFile(`${FONTS_DIR}/${rel}` as any, bytes as any, { baseDir: BaseDirectory.AppLocalData } as any)
+            await writeFile(`${THEME_FONTS_DIR}/${rel}` as any, bytes as any, { baseDir: BaseDirectory.AppLocalData } as any)
             const rec: CustomFont = { id, name: stem, rel, ext, family }
             db.push(rec)
             await injectFontFace(rec)
@@ -1629,10 +1693,9 @@ export function initThemeUI(): void {
 
     // 网络代理（Tauri 后端 reqwest / plugin-http）
     type NetworkProxyPrefs = { enabled: boolean; proxyUrl: string; noProxy: string }
-    const NET_PROXY_KEY = 'flymd:net:proxy'
     const loadNetProxy = (): { prefs: NetworkProxyPrefs; hasSaved: boolean } => {
       try {
-        const raw = localStorage.getItem(NET_PROXY_KEY)
+        const raw = localStorage.getItem(THEME_NET_PROXY_KEY)
         if (!raw) return { prefs: { enabled: false, proxyUrl: '', noProxy: '' }, hasSaved: false }
         const v = JSON.parse(raw || '{}') as any
         return {
@@ -1648,7 +1711,7 @@ export function initThemeUI(): void {
       }
     }
     const saveNetProxy = (prefs: NetworkProxyPrefs) => {
-      try { localStorage.setItem(NET_PROXY_KEY, JSON.stringify(prefs)) } catch {}
+      try { localStorage.setItem(THEME_NET_PROXY_KEY, JSON.stringify(prefs)) } catch {}
     }
     const applyNetProxy = async (prefs: NetworkProxyPrefs) => {
       try {
@@ -1738,21 +1801,6 @@ export function initThemeUI(): void {
       })
     }
 
-    // 主题按钮：切换面板显隐
-    const btn = document.getElementById('btn-theme') as HTMLDivElement | null
-    if (btn) {
-      btn.addEventListener('click', () => {
-        try {
-          const wasHidden = panel!.classList.contains('hidden')
-          panel!.classList.toggle('hidden')
-          // 面板关闭时，确保预览被还原为已保存值
-          if (!wasHidden && panel!.classList.contains('hidden')) {
-            revertAllPreviews()
-          }
-        } catch {}
-      })
-    }
-
     // 点击外部关闭
     document.addEventListener('click', (ev) => {
       try {
@@ -1773,6 +1821,29 @@ export function initThemeUI(): void {
           ev.preventDefault()
           ev.stopPropagation()
         }
+      } catch {}
+    })
+    return panel
+  } catch {
+    _themePanelReady = false
+    return null
+  }
+}
+
+export function initThemeUI(): void {
+  try {
+    bootstrapThemeRuntime()
+    if (_themeUiBound) return
+    _themeUiBound = true
+    const btn = document.getElementById('btn-theme') as HTMLDivElement | null
+    if (!btn) return
+    btn.addEventListener('click', () => {
+      try {
+        const panel = ensureThemePanelReady()
+        if (!panel) return
+        const wasHidden = panel.classList.contains('hidden')
+        panel.classList.toggle('hidden')
+        if (!wasHidden && panel.classList.contains('hidden')) revertAllPreviews()
       } catch {}
     })
   } catch {}
