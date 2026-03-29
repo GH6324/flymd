@@ -1,15 +1,21 @@
 // 专注模式相关的窗口装饰与自定义标题栏逻辑
 
+import { bindWindowMaximizedState } from '../windows/maximizedState'
+
 export type FocusTitlebarDeps = {
   getCurrentWindow: () => any
   // 退出专注模式回调，由 main.ts 提供（内部会调用 toggleFocusMode(false)）
   onExitFocus: () => Promise<void> | void
 }
 
+let disposeCustomTitlebarMaximizedBinding: (() => void) | null = null
+let customTitlebarBindingSerial = 0
+
 // 创建自定义标题栏控件
 export function createCustomTitleBar(deps: FocusTitlebarDeps): void {
   // 如果已存在，先移除
   removeCustomTitleBar()
+  const bindingSerial = ++customTitlebarBindingSerial
 
   // 创建容器
   const titleBar = document.createElement('div')
@@ -58,20 +64,19 @@ export function createCustomTitleBar(deps: FocusTitlebarDeps): void {
   // 最大化/还原按钮
   const maxBtn = document.createElement('button')
   maxBtn.className = 'custom-titlebar-btn custom-titlebar-maximize'
-  maxBtn.innerHTML = '＋'
-  maxBtn.title = '最大化'
+  const applyMaximizedState = (isMaximized: boolean) => {
+    maxBtn.innerHTML = isMaximized ? '□' : '＋'
+    maxBtn.title = isMaximized ? '还原' : '最大化'
+  }
+  applyMaximizedState(false)
   maxBtn.addEventListener('click', async () => {
     try {
       const win = deps.getCurrentWindow()
       const isMaximized = await win.isMaximized()
       if (isMaximized) {
         await win.unmaximize()
-        maxBtn.innerHTML = '＋'
-        maxBtn.title = '最大化'
       } else {
         await win.maximize()
-        maxBtn.innerHTML = '□'
-        maxBtn.title = '还原'
       }
     } catch (err) {
       console.error('最大化/还原失败:', err)
@@ -107,10 +112,26 @@ export function createCustomTitleBar(deps: FocusTitlebarDeps): void {
 
   // 添加标记类
   document.body.classList.add('custom-titlebar-active')
+
+  void bindWindowMaximizedState(deps.getCurrentWindow, applyMaximizedState).then((binding) => {
+    if (bindingSerial !== customTitlebarBindingSerial) {
+      try { binding.dispose() } catch {}
+      return
+    }
+    disposeCustomTitlebarMaximizedBinding = binding.dispose
+  }).catch(() => {
+    if (bindingSerial === customTitlebarBindingSerial) {
+      disposeCustomTitlebarMaximizedBinding = null
+    }
+  })
 }
 
 // 移除自定义标题栏
 export function removeCustomTitleBar(): void {
+  customTitlebarBindingSerial += 1
+  try { disposeCustomTitlebarMaximizedBinding?.() } catch {}
+  disposeCustomTitlebarMaximizedBinding = null
+
   const titleBar = document.getElementById('custom-titlebar')
   if (titleBar) {
     titleBar.remove()

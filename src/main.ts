@@ -41,7 +41,8 @@ import { transcodeToWebpIfNeeded } from './utils/image'
 import { protectExcelDollarRefs } from './utils/excelFormula'
 import { guessSyncedDocImageAbsPath } from './utils/localImagePath'
 import { resolveLocalImageAbsPathFromSrc, toDocRelativeImagePathIfInImages } from './utils/localImageSrcResolve'
-import { TAB_INDENT, normalizeTabIndentText, ensureLeadingTabIndent, removeLeadingTabIndent, getLeadingTabIndentLength, getTabIndentLengthEndingAt } from './utils/tabIndent'
+import { TAB_INDENT, applyTabIndentEdit, normalizeTabIndentText, getLeadingTabIndentLength, getTabIndentLengthEndingAt } from './utils/tabIndent'
+import { bindWindowMaximizedState } from './windows/maximizedState'
 import {
   copySelectionAsRichHtmlWithEmbeddedImages,
   hasSelectionInside,
@@ -1656,6 +1657,176 @@ try { initWindowResize() } catch {}
 const editor = document.getElementById('editor') as HTMLTextAreaElement
 const preview = document.getElementById('preview') as HTMLDivElement
 const filenameLabel = document.getElementById('filename') as HTMLDivElement
+const PREVIEW_LOCAL_DOC_EXT_RE = /\.(md|markdown|txt|pdf)$/i
+let _previewLinkEventsBound = false
+
+function decodePreviewHrefPath(input: string): string {
+  try { return decodeURIComponent(input) } catch {}
+  try { return decodeURI(input) } catch {}
+  return input
+}
+
+function stripPreviewHrefSuffix(input: string): string {
+  const q = input.indexOf('?')
+  const h = input.indexOf('#')
+  let end = input.length
+  if (q >= 0) end = Math.min(end, q)
+  if (h >= 0) end = Math.min(end, h)
+  return input.slice(0, end)
+}
+
+function normalizePreviewFsPath(input: string): string {
+  const preferBackslash = !!(currentFilePath && currentFilePath.includes('\\'))
+  let raw = String(input || '').trim()
+  if (!raw) return ''
+  raw = raw.replace(/\\/g, '/')
+
+  let prefix = ''
+  if (/^[A-Za-z]:\//.test(raw)) {
+    prefix = raw.slice(0, 2)
+    raw = raw.slice(2)
+  } else if (raw.startsWith('//')) {
+    const parts = raw.slice(2).split('/').filter(Boolean)
+    if (parts.length >= 2) {
+      prefix = `//${parts[0]}/${parts[1]}`
+      raw = parts.slice(2).join('/')
+    } else {
+      prefix = '//'
+      raw = parts.join('/')
+    }
+  } else if (raw.startsWith('/')) {
+    prefix = '/'
+    raw = raw.slice(1)
+  }
+
+  const out: string[] = []
+  for (const part of raw.split('/')) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      if (out.length > 0 && out[out.length - 1] !== '..') out.pop()
+      else if (!prefix) out.push('..')
+      continue
+    }
+    out.push(part)
+  }
+
+  let result = ''
+  if (prefix === '/') {
+    result = '/' + out.join('/')
+  } else if (prefix === '//') {
+    result = '//' + out.join('/')
+  } else if (prefix.startsWith('//')) {
+    result = out.length > 0 ? `${prefix}/${out.join('/')}` : prefix
+  } else if (prefix) {
+    result = out.length > 0 ? `${prefix}/${out.join('/')}` : `${prefix}/`
+  } else {
+    result = out.join('/')
+  }
+
+  if (preferBackslash && (/^[A-Za-z]:/.test(result) || result.startsWith('//'))) {
+    return result.replace(/\//g, '\\')
+  }
+  return result
+}
+
+function fileUrlToPreviewPath(input: string): string | null {
+  try {
+    const url = new URL(input)
+    if (url.protocol !== 'file:') return null
+    let pathname = decodePreviewHrefPath(url.pathname || '')
+    if (/^\/[A-Za-z]:\//.test(pathname)) pathname = pathname.slice(1)
+    if (url.host) pathname = `//${url.host}${pathname}`
+    return normalizePreviewFsPath(pathname)
+  } catch {
+    return null
+  }
+}
+
+function resolvePreviewLocalDocPath(href: string): string | null {
+  const rawHref = String(href || '').trim()
+  if (!rawHref || rawHref.startsWith('#')) return null
+
+  const bareHref = stripPreviewHrefSuffix(rawHref)
+  if (!bareHref) return null
+
+  const decodedHref = decodePreviewHrefPath(bareHref)
+  if (!PREVIEW_LOCAL_DOC_EXT_RE.test(decodedHref)) return null
+
+  if (/^file:/i.test(decodedHref)) {
+    return fileUrlToPreviewPath(decodedHref)
+  }
+  if (/^[A-Za-z]:[\\/]/.test(decodedHref) || /^\\\\/.test(decodedHref)) {
+    return normalizePreviewFsPath(decodedHref)
+  }
+  if (/^[A-Za-z][A-Za-z\d+.-]*:/.test(decodedHref)) {
+    return null
+  }
+  if (decodedHref.startsWith('//')) {
+    return null
+  }
+  if (decodedHref.startsWith('/')) {
+    if (currentFilePath && currentFilePath.includes('\\')) return null
+    return normalizePreviewFsPath(decodedHref)
+  }
+  if (!currentFilePath) return null
+
+  const baseDir = currentFilePath.replace(/[\\/][^\\/]*$/, '')
+  const sep = baseDir.includes('\\') ? '\\' : '/'
+  return normalizePreviewFsPath(`${baseDir}${sep}${decodedHref}`)
+}
+
+async function openPreviewLocalDoc(filePath: string, openInNewTab: boolean): Promise<void> {
+  const win = window as any
+  if (openInNewTab && typeof win.flymdOpenFile === 'function') {
+    await win.flymdOpenFile(filePath)
+    return
+  }
+  if (typeof win.flymdOpenFileOriginal === 'function') {
+    try {
+      win.__flymdOpenFileInternal = true
+      await win.flymdOpenFileOriginal(filePath)
+    } finally {
+      try { win.__flymdOpenFileInternal = false } catch {}
+    }
+    return
+  }
+  await openFile2(filePath)
+}
+
+function ensurePreviewLinkHandlingBound(): void {
+  if (_previewLinkEventsBound || !preview) return
+  preview.addEventListener('click', (ev) => {
+    void (async () => {
+      try {
+        if (ev.defaultPrevented || ev.button !== 0) return
+        const targetNode = ev.target as Node | null
+        const targetEl = targetNode instanceof Element ? targetNode : targetNode?.parentElement
+        const link = targetEl?.closest('a[href]') as HTMLAnchorElement | null
+        if (!link || !preview.contains(link)) return
+
+        const href = String(link.getAttribute('href') || '').trim()
+        if (!href || href.startsWith('#')) return
+
+        const resolvedPath = resolvePreviewLocalDocPath(href)
+        if (!resolvedPath) return
+
+        ev.preventDefault()
+        try { ev.stopPropagation() } catch {}
+
+        if (!(await exists(resolvedPath))) {
+          showError(`链接目标不存在: ${resolvedPath}`)
+          return
+        }
+
+        await openPreviewLocalDoc(resolvedPath, !!(ev.ctrlKey || ev.metaKey))
+      } catch (err) {
+        showError('打开链接失败', err)
+      }
+    })()
+  }, true)
+  _previewLinkEventsBound = true
+}
+try { ensurePreviewLinkHandlingBound() } catch {}
 
 function initNetworkProxyFetchShim(): void {
   const NET_PROXY_KEY = 'flymd:net:proxy'
@@ -1912,30 +2083,34 @@ try {
   const minBtn = document.getElementById('window-minimize') as HTMLButtonElement | null
   const maxBtn = document.getElementById('window-maximize') as HTMLButtonElement | null
   const closeBtn = document.getElementById('window-close') as HTMLButtonElement | null
+  const svgMaximize = '<svg viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" stroke="currentColor" stroke-width="1" fill="none"/></svg>'
+  const svgRestore = '<svg viewBox="0 0 10 10"><rect x="3" y="1" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/><rect x="1" y="3" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/></svg>'
+  const applyMainWindowMaximizedState = (isMaximized: boolean) => {
+    if (!maxBtn) return
+    maxBtn.innerHTML = isMaximized ? svgRestore : svgMaximize
+    maxBtn.title = isMaximized ? '还原' : '最大化'
+  }
   if (minBtn) {
     minBtn.addEventListener('click', async () => {
       try { await getCurrentWindow().minimize() } catch {}
     })
   }
   if (maxBtn) {
-    // SVG 图标：最大化（单方框）和还原（双重叠方框）
-    const svgMaximize = '<svg viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" stroke="currentColor" stroke-width="1" fill="none"/></svg>'
-    const svgRestore = '<svg viewBox="0 0 10 10"><rect x="3" y="1" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/><rect x="1" y="3" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/></svg>'
+    applyMainWindowMaximizedState(false)
     maxBtn.addEventListener('click', async () => {
       try {
         const win = getCurrentWindow()
         const isMax = await win.isMaximized()
         if (isMax) {
           await win.unmaximize()
-          maxBtn.innerHTML = svgMaximize
-          maxBtn.title = '最大化'
         } else {
           await win.maximize()
-          maxBtn.innerHTML = svgRestore
-          maxBtn.title = '还原'
         }
       } catch {}
     })
+    if (isTauriRuntime()) {
+      void bindWindowMaximizedState(getCurrentWindow, applyMainWindowMaximizedState)
+    }
   }
   if (closeBtn) {
     closeBtn.addEventListener('click', async () => {
@@ -3770,6 +3945,11 @@ async function renderPreview(opts?: RenderPreviewOptions) {
     const href = el.getAttribute('href') || ''
     // 脚注/反向脚注链接：保持为页内跳转，不改 target
     if (href.startsWith('#fn') || href.startsWith('#fnref')) return
+    if (resolvePreviewLocalDocPath(href)) {
+      el.removeAttribute('target')
+      el.removeAttribute('rel')
+      return
+    }
     el.target = '_blank'
     el.rel = 'noopener noreferrer'
   })
@@ -6765,13 +6945,7 @@ function initWindowResize() {
   ;(async () => {
     if (!isTauriRuntime()) return
     try {
-      const win = getCurrentWindow()
-      try { setMaximizedClass(await win.isMaximized()) } catch {}
-      try {
-        await win.listen('flymd://window-maximized-changed', (ev: any) => {
-          try { setMaximizedClass(!!(ev && typeof ev === 'object' ? (ev as any).payload : ev)) } catch {}
-        })
-      } catch {}
+      await bindWindowMaximizedState(getCurrentWindow, setMaximizedClass)
     } catch {}
   })()
 
@@ -8240,55 +8414,19 @@ function bindEvents() {
         if (!isEditMode()) return
         if (e.key !== 'Tab' || e.ctrlKey || e.metaKey) return
         e.preventDefault()
-        const val = String(ta.value || '')
-        const start = ta.selectionStart >>> 0; const end = ta.selectionEnd >>> 0
-        const isShift = !!e.shiftKey
-        const lineStart = val.lastIndexOf('\n', start - 1) + 1
-        const sel = val.slice(lineStart, end)
-        if (start === end) {
-          if (isShift) {
-            const leadingIndentLength = getLeadingTabIndentLength(val.slice(lineStart))
-            if (leadingIndentLength > 0) {
-              const nv = val.slice(0, lineStart) + val.slice(lineStart + leadingIndentLength)
-              ta.value = nv
-              const newPos = Math.max(lineStart, start - leadingIndentLength)
-              ta.selectionStart = ta.selectionEnd = newPos
-            }
-          } else {
-            const curLine = val.slice(lineStart)
-            if (getLeadingTabIndentLength(curLine) === 0) {
-              const nv = val.slice(0, lineStart) + TAB_INDENT + curLine
-              ta.value = nv
-              const newPos = start + TAB_INDENT.length
-              ta.selectionStart = ta.selectionEnd = newPos
-            }
-          }
-        } else if (start !== end && sel.includes('\n')) {
-          const lines = val.slice(lineStart, end).split('\n')
-          const changed = lines.map((ln) => {
-            if (isShift) {
-              const next = removeLeadingTabIndent(ln)
-              if (next !== ln) return next
-              if (ln.startsWith(' \t')) return ln.slice(1)
-              if (ln.startsWith('\t')) return ln.slice(1)
-              return ln
-            }
-            return ensureLeadingTabIndent(ln)
-          }).join('\n')
-          const newVal = val.slice(0, lineStart) + changed + val.slice(end)
-          const delta = changed.length - (end - lineStart)
-          ta.value = newVal; ta.selectionStart = lineStart; ta.selectionEnd = end + delta
-        } else {
-          if (isShift) {
-            const curLineStart = lineStart
-            const cur = val.slice(curLineStart)
-            const indentLength = getTabIndentLengthEndingAt(cur, start - curLineStart)
-            if (indentLength > 0) { const nv = val.slice(0, start - indentLength) + val.slice(start); ta.value = nv; ta.selectionStart = ta.selectionEnd = start - indentLength }
-            else if ((start - curLineStart) > 0 && val.slice(curLineStart, curLineStart + 1) === '\t') { const nv = val.slice(0, curLineStart) + val.slice(curLineStart + 1); ta.value = nv; const shift = (start > curLineStart) ? 1 : 0; ta.selectionStart = ta.selectionEnd = start - shift }
-          } else {
-            const nv = val.slice(0, start) + TAB_INDENT + val.slice(end); ta.value = nv; ta.selectionStart = ta.selectionEnd = start + TAB_INDENT.length
-          }
+        try { e.stopImmediatePropagation() } catch {}
+        try { e.stopPropagation() } catch {}
+        const result = applyTabIndentEdit(
+          String(ta.value || ''),
+          ta.selectionStart >>> 0,
+          ta.selectionEnd >>> 0,
+          !!e.shiftKey,
+        )
+        if (result.changed) {
+          ta.value = result.value
         }
+        ta.selectionStart = result.selectionStart
+        ta.selectionEnd = result.selectionEnd
         try { dirty = true; refreshTitle(); refreshStatus() } catch {}
         if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       }
@@ -9136,74 +9274,17 @@ function bindEvents() {
       e.preventDefault()
       try {
         const ta = editor as HTMLTextAreaElement
-        const val = String(ta.value || '')
-        const start = ta.selectionStart >>> 0
-        const end = ta.selectionEnd >>> 0
-        const isShift = !!e.shiftKey
-        // 选区起始行与结束行的起始偏移
-        const lineStart = val.lastIndexOf('\n', start - 1) + 1
-        const lineEndBoundary = val.lastIndexOf('\n', Math.max(end - 1, 0)) + 1
-        const sel = val.slice(lineStart, end)
-        if (start === end) {
-          if (isShift) {
-            const leadingIndentLength = getLeadingTabIndentLength(val.slice(lineStart))
-            if (leadingIndentLength > 0) {
-              const nv = val.slice(0, lineStart) + val.slice(lineStart + leadingIndentLength)
-              ta.value = nv
-              const newPos = Math.max(lineStart, start - leadingIndentLength)
-              ta.selectionStart = ta.selectionEnd = newPos
-            }
-          } else {
-            const curLine = val.slice(lineStart)
-            if (getLeadingTabIndentLength(curLine) === 0) {
-              const nv = val.slice(0, lineStart) + TAB_INDENT + curLine
-              ta.value = nv
-              const newPos = start + TAB_INDENT.length
-              ta.selectionStart = ta.selectionEnd = newPos
-            }
-          }
-        } else if (start !== end && sel.includes('\n')) {
-          // 多行：逐行缩进或反缩进
-          const lines = val.slice(lineStart, end).split('\n')
-          const changed = lines.map((ln) => {
-            if (isShift) {
-              const next = removeLeadingTabIndent(ln)
-              if (next !== ln) return next
-              if (ln.startsWith(' \t')) return ln.slice(1) // 宽松回退
-              if (ln.startsWith('\t')) return ln.slice(1)
-              return ln
-            } else {
-              return ensureLeadingTabIndent(ln)
-            }
-          }).join('\n')
-          const newVal = val.slice(0, lineStart) + changed + val.slice(end)
-          const delta = changed.length - (end - lineStart)
-          ta.value = newVal
-          // 调整新选区：覆盖处理的整段
-          ta.selectionStart = lineStart
-          ta.selectionEnd = end + delta
-        } else {
-          // 单行：在光标处插入/删除缩进
-          const curLineStart = lineStart
-          if (isShift) {
-            const cur = val.slice(curLineStart)
-            const indentLength = getTabIndentLengthEndingAt(cur, start - curLineStart)
-            if (indentLength > 0) {
-              const newVal = val.slice(0, start - indentLength) + val.slice(start)
-              ta.value = newVal
-              ta.selectionStart = ta.selectionEnd = start - indentLength
-            } else if ((start - curLineStart) > 0 && val.slice(curLineStart, curLineStart + 1) === '\t') {
-              const newVal = val.slice(0, curLineStart) + val.slice(curLineStart + 1)
-              ta.value = newVal
-              const shift = (start > curLineStart) ? 1 : 0
-              ta.selectionStart = ta.selectionEnd = start - shift
-            }
-          } else {
-            const newVal = val.slice(0, start) + TAB_INDENT + val.slice(end)
-            ta.value = newVal
-            ta.selectionStart = ta.selectionEnd = start + TAB_INDENT.length
-          }
+        const result = applyTabIndentEdit(
+          String(ta.value || ''),
+          ta.selectionStart >>> 0,
+          ta.selectionEnd >>> 0,
+          !!e.shiftKey,
+        )
+        if (result.changed) {
+          ta.value = result.value
         }
+        ta.selectionStart = result.selectionStart
+        ta.selectionEnd = result.selectionEnd
         dirty = true
         try { refreshTitle(); refreshStatus() } catch {}
         if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
