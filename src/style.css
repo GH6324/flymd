@@ -895,7 +895,7 @@ body.compact-titlebar .window-btn.window-close:hover {
 }
 
 .editor-shell.line-numbers-disabled {
-  grid-template-columns: 0 minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .editor-shell.line-numbers-disabled .editor-gutter {
@@ -911,6 +911,9 @@ body.compact-titlebar .window-btn.window-close:hover {
 
 .editor-line-number {
   box-sizing: border-box;
+  position: absolute;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: flex-start;
   justify-content: flex-end;

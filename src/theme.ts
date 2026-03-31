@@ -61,6 +61,7 @@ export interface ThemeDefinition {
 }
 
 const STORE_KEY = 'flymd:theme:prefs'
+const SOURCE_LINE_NUMBERS_KEY = 'flymd:sourceLineNumbers:enabled'
 
 const DEFAULT_PREFS: ThemePrefs = {
   editBg: '#ffffff',
@@ -79,6 +80,24 @@ const THEME_NET_PROXY_KEY = 'flymd:net:proxy'
 let _themeUiBound = false
 let _themePanelReady = false
 let _themeRuntimeBootstrapped = false
+
+function getSourceLineNumbersEnabled(): boolean {
+  try {
+    return localStorage.getItem(SOURCE_LINE_NUMBERS_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+function setSourceLineNumbersEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem(SOURCE_LINE_NUMBERS_KEY, enabled ? 'true' : 'false')
+  } catch {}
+  try {
+    const ev = new CustomEvent('flymd:sourceLineNumbers:changed', { detail: { enabled } })
+    window.dispatchEvent(ev)
+  } catch {}
+}
 
 // 工具：读当前 :root/.container 上的变量（若无则返回空串）
 function getCssVar(name: string): string {
@@ -631,6 +650,13 @@ function createPanel(): HTMLDivElement {
           <span class="theme-toggle-text">${t('theme.sourceMode')}</span>
           <div class="theme-toggle-switch">
             <input type="checkbox" id="sourcemode-default-toggle" class="theme-toggle-input" />
+            <span class="theme-toggle-slider"></span>
+          </div>
+        </label>
+        <label class="theme-toggle-label theme-toggle-third theme-toggle-boxed" for="source-line-numbers-toggle">
+          <span class="theme-toggle-text">${t('theme.sourceLineNumbers')}</span>
+          <div class="theme-toggle-switch">
+            <input type="checkbox" id="source-line-numbers-toggle" class="theme-toggle-input" />
             <span class="theme-toggle-slider"></span>
           </div>
         </label>
@@ -1528,6 +1554,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     // 默认模式相关开关（所见 / 源码）
     const wysiwygDefaultToggle = panel.querySelector('#wysiwyg-default-toggle') as HTMLInputElement | null
     const sourcemodeDefaultToggle = panel.querySelector('#sourcemode-default-toggle') as HTMLInputElement | null
+    const sourceLineNumbersToggle = panel.querySelector('#source-line-numbers-toggle') as HTMLInputElement | null
     const wysiwygHtmlTableToggle = panel.querySelector('#wysiwyg-html-table-toggle') as HTMLInputElement | null
     const pasteUrlTitleToggle = panel.querySelector('#paste-url-title-toggle') as HTMLInputElement | null
 
@@ -1622,6 +1649,13 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         }
 
         setSourcemodeDefault(enabled)
+      })
+    }
+
+    if (sourceLineNumbersToggle) {
+      sourceLineNumbersToggle.checked = getSourceLineNumbersEnabled()
+      sourceLineNumbersToggle.addEventListener('change', () => {
+        setSourceLineNumbersEnabled(sourceLineNumbersToggle.checked)
       })
     }
 

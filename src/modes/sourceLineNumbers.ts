@@ -20,6 +20,13 @@ type InputPatchHint = {
   endLinePos: number
 }
 
+type VisibleRange = {
+  startLine: number
+  endLine: number
+}
+
+const SOURCE_LINE_NUMBERS_KEY = 'flymd:sourceLineNumbers:enabled'
+
 function px(value: string | null | undefined, fallback = 0): number {
   const parsed = Number.parseFloat(String(value || ''))
   return Number.isFinite(parsed) ? parsed : fallback
@@ -76,6 +83,22 @@ function rebuildLineStartsFrom(lines: string[], lineStarts: number[], startLine:
   lineStarts.length = lines.length
 }
 
+function rebuildRowOffsetsFrom(rowHeights: number[], rowOffsets: number[], startLine: number): number {
+  if (!rowHeights.length) {
+    rowOffsets.length = 0
+    return 0
+  }
+  if (startLine <= 0) {
+    rowOffsets[0] = 0
+    startLine = 1
+  }
+  for (let i = startLine; i < rowHeights.length; i++) {
+    rowOffsets[i] = rowOffsets[i - 1] + rowHeights[i - 1]
+  }
+  rowOffsets.length = rowHeights.length
+  return rowOffsets[rowHeights.length - 1] + rowHeights[rowHeights.length - 1]
+}
+
 function findLineByPos(lineStarts: number[], pos: number, textLength: number): number {
   if (!lineStarts.length) return 0
   const safePos = Math.max(0, Math.min(pos >>> 0, textLength))
@@ -87,6 +110,27 @@ function findLineByPos(lineStarts: number[], pos: number, textLength: number): n
     else hi = mid - 1
   }
   return Math.max(0, Math.min(hi, lineStarts.length - 1))
+}
+
+function findLineByYOffset(rowOffsets: number[], offset: number, totalHeight: number): number {
+  if (!rowOffsets.length) return 0
+  const safeOffset = Math.max(0, Math.min(offset, Math.max(0, totalHeight - 1)))
+  let lo = 0
+  let hi = rowOffsets.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (rowOffsets[mid] <= safeOffset) lo = mid + 1
+    else hi = mid - 1
+  }
+  return Math.max(0, Math.min(hi, rowOffsets.length - 1))
+}
+
+function getSourceLineNumbersEnabled(): boolean {
+  try {
+    return localStorage.getItem(SOURCE_LINE_NUMBERS_KEY) !== 'false'
+  } catch {
+    return true
+  }
 }
 
 function commonPrefixLength(a: string, b: string): number {
@@ -225,7 +269,8 @@ function createRow(): HTMLDivElement {
   return row
 }
 
-function setRowHeight(row: HTMLDivElement, height: number): void {
+function setRowGeometry(row: HTMLDivElement, top: number, height: number): void {
+  row.style.top = `${top}px`
   row.style.height = `${height}px`
 }
 
@@ -238,18 +283,25 @@ function measureLineHeight(
   return Math.max(metrics.lineHeight, probe.offsetHeight || 0)
 }
 
-function syncScroll(editor: HTMLTextAreaElement, lineNumbers: HTMLDivElement): void {
-  lineNumbers.style.transform = `translateY(${-editor.scrollTop}px)`
-}
-
-function setActiveRow(rowEls: HTMLDivElement[], nextRow: number, prevRow: number): number {
-  const maxRow = rowEls.length
-  const safeRow = Math.max(1, Math.min(nextRow, maxRow || 1))
-  if (prevRow > 0 && prevRow <= maxRow && prevRow !== safeRow) {
-    rowEls[prevRow - 1].classList.remove('active')
+function setActiveRow(
+  renderedRows: HTMLDivElement[],
+  renderedStartLine: number,
+  renderedEndLine: number,
+  lineCount: number,
+  nextRow: number,
+  prevRow: number,
+): number {
+  const maxRow = Math.max(1, lineCount || 1)
+  const safeRow = Math.max(1, Math.min(nextRow, maxRow))
+  if (prevRow > 0 && prevRow !== safeRow) {
+    const prevIndex = prevRow - 1
+    if (prevIndex >= renderedStartLine && prevIndex < renderedEndLine) {
+      renderedRows[prevIndex - renderedStartLine]?.classList.remove('active')
+    }
   }
-  if (safeRow > 0 && safeRow <= maxRow) {
-    rowEls[safeRow - 1].classList.add('active')
+  const nextIndex = safeRow - 1
+  if (nextIndex >= renderedStartLine && nextIndex < renderedEndLine) {
+    renderedRows[nextIndex - renderedStartLine]?.classList.add('active')
   }
   return safeRow
 }
@@ -290,9 +342,8 @@ function hookEditorTextMutations(editor: HTMLTextAreaElement, onTextChanged: () 
 
 function installLineNumbers(): void {
   try {
-    const container = document.querySelector('.container') as HTMLDivElement | null
     const editor = document.getElementById('editor') as HTMLTextAreaElement | null
-    if (!container || !editor) return
+    if (!editor) return
     const flymd = getFlymd()
     if (flymd.__flymdSourceLineNumbersInit) return
     flymd.__flymdSourceLineNumbersInit = true
@@ -327,19 +378,26 @@ function installLineNumbers(): void {
     surface.appendChild(editor)
     surface.appendChild(measure)
 
-    let lastText = ''
+    let lastText = String(editor.value || '')
     let lastMetricsKey = ''
     let activeRow = 0
-    let rowEls: HTMLDivElement[] = []
-    let lines: string[] = ['']
-    let lineStarts: number[] = [0]
-    let rowHeights: number[] = [0]
+    let lines: string[] = splitLines(lastText)
+    let lineStarts: number[] = buildLineStarts(lines)
+    let rowHeights: number[] = []
+    let rowOffsets: number[] = []
+    let totalHeight = 0
     let currentMetrics: Metrics | null = null
-    let needsTextRefresh = true
+    let needsTextRefresh = false
     let needsLayoutRefresh = true
     let raf = 0
     let lastGutterWidth = ''
+    let lastScrollTop = Number.NaN
+    let renderedStartLine = -1
+    let renderedEndLine = -1
+    let renderedRows: HTMLDivElement[] = []
     let pendingInputPatch: InputPatchHint | null = null
+    let lineNumbersPrefEnabled = getSourceLineNumbersEnabled()
+    let lineNumbersActive = false
 
     flymd.flymdGetSourceEditorPositionInfo = (pos: number) => {
       try {
@@ -378,7 +436,44 @@ function installLineNumbers(): void {
       }
     }
 
+    const clearRenderedRows = (resetHeight = false) => {
+      if (renderedRows.length || lineNumbers.childElementCount) {
+        lineNumbers.replaceChildren()
+      }
+      renderedRows = []
+      renderedStartLine = -1
+      renderedEndLine = -1
+      if (resetHeight) lineNumbers.style.height = '0px'
+      lineNumbers.style.counterReset = 'flymd-line 0'
+    }
+
+    const rebuildTextState = (text: string) => {
+      lines = splitLines(text)
+      lineStarts = buildLineStarts(lines)
+      lastText = text
+    }
+
+    const resetLayoutState = (metrics: Metrics) => {
+      rowHeights = new Array<number>(lines.length).fill(metrics.lineHeight)
+      rowOffsets = new Array<number>(lines.length).fill(0)
+      totalHeight = rebuildRowOffsetsFrom(rowHeights, rowOffsets, 0)
+      clearRenderedRows(false)
+    }
+
+    const rebuildAllState = (metrics: Metrics | null, text: string) => {
+      rebuildTextState(text)
+      if (metrics) resetLayoutState(metrics)
+      else {
+        rowHeights = []
+        rowOffsets = []
+        totalHeight = 0
+        clearRenderedRows(true)
+      }
+      activeRow = 0
+    }
+
     const syncGutterWidth = () => {
+      if (!lineNumbersPrefEnabled) return false
       const digits = Math.max(2, String(Math.max(1, lines.length)).length)
       const widthPx = Math.max(48, 20 + digits * 10)
       const next = `${widthPx}px`
@@ -388,119 +483,200 @@ function installLineNumbers(): void {
       return true
     }
 
-    const buildAllRows = (metrics: Metrics, text: string) => {
-      lines = splitLines(text)
-      lineStarts = buildLineStarts(lines)
-      rowHeights = new Array<number>(lines.length).fill(metrics.lineHeight)
-      rowEls = new Array<HTMLDivElement>(lines.length)
-      const frag = document.createDocumentFragment()
-      for (let i = 0; i < lines.length; i++) {
-        const row = createRow()
-        setRowHeight(row, metrics.lineHeight)
-        rowEls[i] = row
-        frag.appendChild(row)
-      }
-      lineNumbers.replaceChildren(frag)
-      lastText = text
-      activeRow = 0
-    }
-
     const remeasureRange = (startLine: number, count: number, metrics: Metrics) => {
+      if (!rowHeights.length) return false
       const safeStart = Math.max(0, Math.min(startLine, lines.length))
       const safeEnd = Math.max(safeStart, Math.min(lines.length, safeStart + Math.max(0, count)))
+      let changedFrom = -1
       for (let i = safeStart; i < safeEnd; i++) {
         const height = measureLineHeight(measureProbe, metrics, lines[i] || '')
-        rowHeights[i] = height
-        if (rowEls[i]) setRowHeight(rowEls[i], height)
+        if (rowHeights[i] !== height) {
+          rowHeights[i] = height
+          if (changedFrom < 0) changedFrom = i
+        }
       }
+      if (changedFrom >= 0) {
+        totalHeight = rebuildRowOffsetsFrom(rowHeights, rowOffsets, changedFrom)
+        return true
+      }
+      return false
     }
 
     const remeasureAll = (metrics: Metrics) => {
-      remeasureRange(0, lines.length, metrics)
+      if (!rowHeights.length || rowHeights.length !== lines.length) {
+        resetLayoutState(metrics)
+      }
+      const changed = remeasureRange(0, lines.length, metrics)
+      if (!changed) totalHeight = rebuildRowOffsetsFrom(rowHeights, rowOffsets, 0)
     }
 
-    const applyTextPatch = (text: string, metrics: Metrics, hint: InputPatchHint | null) => {
-      if (!rowEls.length) {
-        buildAllRows(metrics, text)
-        remeasureAll(metrics)
-        return
-      }
+    const applyTextPatch = (text: string, metrics: Metrics | null, hint: InputPatchHint | null) => {
+      if (text === lastText) return
       const patch = (hint ? createLinePatchFromHint(lastText, text, hint) : null)
         || createLinePatch(lastText, text, lines, lineStarts)
-      if (!patch) return
+      if (!patch) {
+        lastText = text
+        return
+      }
 
       const startLine = patch.startLine
       const oldLineCount = patch.oldLineCount
-      const newLines = patch.newLines
-      const newLineCount = newLines.length
-      const sharedCount = Math.min(oldLineCount, newLineCount)
-      const nextSibling = rowEls[startLine + oldLineCount] ?? null
-      const reusedRows = rowEls.slice(startLine, startLine + sharedCount)
-      const newRows = [...reusedRows]
+      const newLineCount = patch.newLines.length
 
-      if (newLineCount > oldLineCount) {
-        const frag = document.createDocumentFragment()
-        for (let i = 0; i < newLineCount - oldLineCount; i++) {
-          const row = createRow()
-          newRows.push(row)
-          frag.appendChild(row)
-        }
-        lineNumbers.insertBefore(frag, nextSibling)
+      lines.splice(startLine, oldLineCount, ...patch.newLines)
+      if (lineStarts.length) {
+        lineStarts.splice(startLine, oldLineCount, ...new Array<number>(newLineCount).fill(0))
       }
-
-      if (oldLineCount > newLineCount) {
-        const obsolete = rowEls.slice(startLine + newLineCount, startLine + oldLineCount)
-        for (const row of obsolete) {
-          try { row.remove() } catch {}
-        }
-      }
-
-      for (const row of newRows) {
-        row.classList.remove('active')
-      }
-
-      lines.splice(startLine, oldLineCount, ...newLines)
-      rowEls.splice(startLine, oldLineCount, ...newRows)
-      rowHeights.splice(startLine, oldLineCount, ...new Array<number>(newLineCount).fill(metrics.lineHeight))
       rebuildLineStartsFrom(lines, lineStarts, startLine)
-      remeasureRange(startLine, newLineCount, metrics)
       lastText = text
       activeRow = 0
+      clearRenderedRows(false)
+
+      if (!metrics || !rowHeights.length) return
+
+      rowHeights.splice(startLine, oldLineCount, ...new Array<number>(newLineCount).fill(metrics.lineHeight))
+      totalHeight = rebuildRowOffsetsFrom(rowHeights, rowOffsets, startLine)
+      remeasureRange(startLine, newLineCount, metrics)
+    }
+
+    const getVisibleRange = (metrics: Metrics): VisibleRange => {
+      if (!lines.length || !rowOffsets.length) return { startLine: 0, endLine: 0 }
+      const viewportHeight = Math.max(
+        metrics.lineHeight * 6,
+        editor.clientHeight - metrics.paddingTop - metrics.paddingBottom,
+      )
+      const buffer = Math.max(metrics.lineHeight * 24, viewportHeight * 0.75)
+      const startOffset = Math.max(0, editor.scrollTop - buffer)
+      const endOffset = editor.scrollTop + viewportHeight + buffer
+      const startIndex = findLineByYOffset(rowOffsets, startOffset, totalHeight)
+      const endIndex = findLineByYOffset(rowOffsets, endOffset, totalHeight)
+      return {
+        startLine: Math.max(0, startIndex - 1),
+        endLine: Math.min(lines.length, endIndex + 2),
+      }
+    }
+
+    const syncScroll = () => {
+      const scrollTop = editor.scrollTop
+      if (scrollTop === lastScrollTop) return false
+      lastScrollTop = scrollTop
+      lineNumbers.style.transform = `translateY(${-scrollTop}px)`
+      return true
+    }
+
+    const renderVisibleRows = (force = false) => {
+      if (!lineNumbersActive || !currentMetrics || !rowHeights.length || !rowOffsets.length || !lines.length) {
+        clearRenderedRows(true)
+        activeRow = 0
+        return
+      }
+
+      const range = getVisibleRange(currentMetrics)
+      if (range.endLine <= range.startLine) {
+        clearRenderedRows(true)
+        activeRow = 0
+        return
+      }
+
+      lineNumbers.style.height = `${Math.max(0, totalHeight)}px`
+      lineNumbers.style.counterReset = `flymd-line ${range.startLine}`
+
+      if (force || range.startLine !== renderedStartLine || range.endLine !== renderedEndLine) {
+        const frag = document.createDocumentFragment()
+        const nextRows: HTMLDivElement[] = []
+        for (let i = range.startLine; i < range.endLine; i++) {
+          const row = createRow()
+          setRowGeometry(row, rowOffsets[i] ?? 0, rowHeights[i] ?? currentMetrics.lineHeight)
+          nextRows.push(row)
+          frag.appendChild(row)
+        }
+        renderedRows = nextRows
+        renderedStartLine = range.startLine
+        renderedEndLine = range.endLine
+        lineNumbers.replaceChildren(frag)
+      }
+
+      const nextRow = findLineByPos(lineStarts, editor.selectionStart >>> 0, lastText.length) + 1
+      activeRow = setActiveRow(
+        renderedRows,
+        renderedStartLine,
+        renderedEndLine,
+        lines.length,
+        nextRow,
+        activeRow,
+      )
     }
 
     const flush = () => {
       raf = 0
       if (!editor.isConnected) return
 
+      const prefEnabled = getSourceLineNumbersEnabled()
+      if (prefEnabled !== lineNumbersPrefEnabled) {
+        lineNumbersPrefEnabled = prefEnabled
+        needsLayoutRefresh = true
+      }
+
       const mode = getEditorMode()
       const wysiwyg = isWysiwygMode()
       const stickyNote = document.body.classList.contains('sticky-note-mode')
-      shell.classList.toggle('line-numbers-disabled', mode !== 'edit' || wysiwyg || stickyNote)
+      const nextLineNumbersActive = lineNumbersPrefEnabled && mode === 'edit' && !wysiwyg && !stickyNote
+      const activeChanged = nextLineNumbersActive !== lineNumbersActive
+      lineNumbersActive = nextLineNumbersActive
+      shell.classList.toggle('line-numbers-disabled', !lineNumbersActive)
 
       const text = String(editor.value || '')
-
-      if (!currentMetrics) {
-        currentMetrics = readMetrics(editor)
-        buildAllRows(currentMetrics, text)
-      }
-
       const textChanged = needsTextRefresh || text !== lastText
-      if (textChanged && currentMetrics) {
-        applyTextPatch(text, currentMetrics, pendingInputPatch)
-        pendingInputPatch = null
+
+      if (textChanged) {
+        if (lineNumbersPrefEnabled) {
+          if (!currentMetrics) currentMetrics = readMetrics(editor)
+          applyTextPatch(text, currentMetrics, pendingInputPatch)
+        } else {
+          applyTextPatch(text, null, pendingInputPatch)
+        }
+      }
+      pendingInputPatch = null
+
+      if (lineNumbersPrefEnabled) {
+        if (!currentMetrics) currentMetrics = readMetrics(editor)
+        const gutterWidthChanged = syncGutterWidth()
+        const layoutNeedsRefresh =
+          needsLayoutRefresh
+          || gutterWidthChanged
+          || !lastMetricsKey
+          || !rowHeights.length
+          || rowHeights.length !== lines.length
+
+        let forceRender = textChanged || activeChanged
+
+        if (layoutNeedsRefresh && currentMetrics) {
+          currentMetrics = readMetrics(editor)
+          lastMetricsKey = applyMeasureStyle(shell, editor, gutter, measure, currentMetrics)
+          remeasureAll(currentMetrics)
+          forceRender = true
+        }
+
+        if (lineNumbersActive) {
+          const scrolled = syncScroll()
+          renderVisibleRows(forceRender || scrolled)
+        } else {
+          clearRenderedRows(true)
+          activeRow = 0
+          lastScrollTop = Number.NaN
+        }
+      } else {
+        currentMetrics = null
+        lastMetricsKey = ''
+        lastGutterWidth = ''
+        rowHeights = []
+        rowOffsets = []
+        totalHeight = 0
+        clearRenderedRows(true)
+        activeRow = 0
+        lastScrollTop = Number.NaN
       }
 
-      const gutterWidthChanged = syncGutterWidth()
-      const shouldRefreshLayout = needsLayoutRefresh || gutterWidthChanged || !lastMetricsKey
-      if (shouldRefreshLayout) {
-        currentMetrics = readMetrics(editor)
-        lastMetricsKey = applyMeasureStyle(shell, editor, gutter, measure, currentMetrics)
-        remeasureAll(currentMetrics)
-      }
-
-      syncScroll(editor, lineNumbers)
-      const nextRow = findLineByPos(lineStarts, editor.selectionStart >>> 0, text.length) + 1
-      activeRow = setActiveRow(rowEls, nextRow, activeRow)
       needsTextRefresh = false
       needsLayoutRefresh = false
     }
@@ -519,11 +695,6 @@ function installLineNumbers(): void {
 
     const flushNowIfNeeded = () => {
       const liveText = String(editor.value || '')
-      if (!currentMetrics) {
-        currentMetrics = readMetrics(editor)
-        buildAllRows(currentMetrics, liveText)
-        return
-      }
       if (!raf && !needsLayoutRefresh && !needsTextRefresh && liveText === lastText) return
       if (raf) {
         try { window.cancelAnimationFrame(raf) } catch {}
@@ -563,6 +734,8 @@ function installLineNumbers(): void {
     window.addEventListener('flymd:mode:changed', () => schedule('layout'))
     window.addEventListener('flymd:theme:changed', () => schedule('layout'))
     window.addEventListener('flymd:localeChanged', () => schedule('layout'))
+    window.addEventListener('flymd:uiZoom:changed', () => schedule('layout'))
+    window.addEventListener('flymd:sourceLineNumbers:changed', () => schedule('layout'))
     document.addEventListener('selectionchange', () => {
       if (document.activeElement === editor) schedule('selection')
     })
@@ -597,6 +770,8 @@ function installLineNumbers(): void {
       }
     } catch {}
 
+    rebuildAllState(lineNumbersPrefEnabled ? readMetrics(editor) : null, lastText)
+    if (lineNumbersPrefEnabled) currentMetrics = readMetrics(editor)
     schedule('layout')
   } catch {}
 }

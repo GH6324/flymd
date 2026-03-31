@@ -3560,8 +3560,16 @@ function refreshStatus() {
       return null
     }
   })()
-  const row = fastInfo?.row ?? 1
-  const col = fastInfo?.col ?? 1
+  let row = fastInfo?.row ?? 0
+  let col = fastInfo?.col ?? 0
+  if (!fastInfo) {
+    const until = editor.value.slice(0, pos)
+    const parts = until.split('\n')
+    row = parts.length
+    col = (parts[parts.length - 1]?.length ?? 0) + 1
+  }
+  if (row < 1) row = 1
+  if (col < 1) col = 1
   const chars = fastInfo?.chars ?? editor.value.length
   status.textContent = fmtStatus(row, col) + `, 字 ${chars}`
 }
