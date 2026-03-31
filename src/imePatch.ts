@@ -75,6 +75,47 @@
       try { return !!(ev && (ev.isComposing || (ev.data && (ev.inputType || '').includes('Composition')))) } catch { return false }
     }
 
+    const isRelevantFallbackInputData = (data: string): boolean => {
+      if (!data) return false
+      if (
+        data === '~~'
+        || data === '～～'
+        || data === '```'
+        || data === '**'
+        || /^[\uFF0A]{2}$/.test(data)
+        || data === '\uFFE5\uFFE5'
+        || data === '\u00A5\u00A5'
+        || data === '\uFFE5\u00A5'
+        || data === '\u00A5\uFFE5'
+      ) return true
+      if (data.length !== 1) return false
+      if (codeClose(data)) return true
+      switch (data.charCodeAt(0)) {
+        case 0x29: // )
+        case 0x5D: // ]
+        case 0x7D: // }
+        case 0x22: // "
+        case 0x27: // '
+        case 0x60: // `
+        case 0x2A: // *
+        case 0x5F: // _
+        case 0x007E: // ~
+        case 0xFF5E: // ～
+        case 0x00A5: // ¥
+        case 0xFFE5: // ￥
+        case 0x300B: // 》
+        case 0x3011: // 】
+        case 0xFF09: // ）
+        case 0x300D: // 」
+        case 0x300F: // 』
+        case 0x201D: // ”
+        case 0x2019: // ’
+          return true
+        default:
+          return false
+      }
+    }
+
     // collapse duplicates like 《《《|》》》 -> 《|》 at caret
     const collapseDuplicatePairAtCaret = (ta: HTMLTextAreaElement): boolean => {
       try {
@@ -198,20 +239,47 @@
         if ((ev as any).target !== ta) return
         if (!isEditMode()) return
         if (isComposingEv(ev)) return
+        const evType = String((ev as any).type || '')
+        const inputType = String((ev as any).inputType || '')
+        const rawData = typeof (ev as any).data === 'string' ? String((ev as any).data || '') : ''
+        if (evType !== 'compositionend' && !/insert(Text|CompositionText|FromComposition)/i.test(inputType)) {
+          rememberPrev()
+          return
+        }
+        if (!isRelevantFallbackInputData(rawData)) {
+          rememberPrev()
+          return
+        }
         const prev = String((window as any)._edPrevVal ?? '')
         const ps = ((window as any)._edPrevSelS >>> 0) || 0
         const pe = ((window as any)._edPrevSelE >>> 0) || ps
         const cur = String(ta.value || '')
-        // diff by LCP/LCS
-        let a = 0; const minLen = Math.min(prev.length, cur.length)
-        while (a < minLen && prev.charCodeAt(a) === cur.charCodeAt(a)) a++
-        let b = 0; const prevRemain = prev.length - a; const curRemain = cur.length - a
-        while (b < prevRemain && b < curRemain && prev.charCodeAt(prev.length - 1 - b) === cur.charCodeAt(cur.length - 1 - b)) b++
-        const inserted = cur.slice(a, cur.length - b)
-        const removed = prev.slice(a, prev.length - b)
+        let a = Math.max(0, Math.min(ps, prev.length))
+        let b = Math.max(0, prev.length - Math.max(a, Math.min(pe, prev.length)))
+        let inserted = rawData
+        let removed = prev.slice(a, prev.length - b)
+        const right = prev.slice(prev.length - b)
+        const snapshotAligned = (
+          cur.length >= a
+          && cur.length >= right.length
+          && cur.slice(0, a) === prev.slice(0, a)
+          && cur.slice(cur.length - right.length) === right
+        )
+        if (!snapshotAligned) {
+          // 只有快照对不上时才退回整串 diff，避免长文本下每次输入都扫完整篇内容。
+          a = 0
+          const minLen = Math.min(prev.length, cur.length)
+          while (a < minLen && prev.charCodeAt(a) === cur.charCodeAt(a)) a++
+          b = 0
+          const prevRemain = prev.length - a
+          const curRemain = cur.length - a
+          while (b < prevRemain && b < curRemain && prev.charCodeAt(prev.length - 1 - b) === cur.charCodeAt(cur.length - 1 - b)) b++
+          inserted = cur.slice(a, cur.length - b)
+          removed = prev.slice(a, prev.length - b)
+        }
         const hadSel = (pe > ps) || (removed.length > 0)
         // 英文输入法下 '*' 交由 editor 的 keydown 连击逻辑，这里跳过，避免与 keydown 路径重复
-        if (String((ev as any).type || '') !== 'compositionend' && inserted === '*') { rememberPrev(); return }
+        if (evType !== 'compositionend' && inserted === '*') { rememberPrev(); return }
         // 单个 ~ / ～：若与左侧同类波浪相邻，则展开为成对补全
         if (inserted === '~' || inserted === '～') {
           const ch = inserted

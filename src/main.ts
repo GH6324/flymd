@@ -3535,17 +3535,30 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
   }
 
 // 插入链接 / 重命名 对话框逻辑已拆分到 ./ui/linkDialogs
+let _lastRenderedTitleLabel = ''
+let _lastRenderedTitleTooltip = ''
+let _lastRenderedOsTitle = ''
 // 更新标题和未保存标记
 function refreshTitle() {
   // 以文件名为主；未保存附加 *；悬浮显示完整路径；同步 OS 窗口标题
   const full = currentFilePath || ''
   const name = full ? (full.split(/[/\\]/).pop() || t('filename.untitled')) : t('filename.untitled')
   const label = name + (dirty ? ' *' : '')
-  filenameLabel.textContent = label
-  try { filenameLabel.title = full || name } catch {}
-  document.title = label
+  const titleTip = full || name
+  if (_lastRenderedTitleLabel !== label) {
+    filenameLabel.textContent = label
+    document.title = label
+    _lastRenderedTitleLabel = label
+  }
+  if (_lastRenderedTitleTooltip !== titleTip) {
+    try { filenameLabel.title = titleTip } catch {}
+    _lastRenderedTitleTooltip = titleTip
+  }
   const osTitle = `${label} - 飞速MarkDown`
-  try { void getCurrentWindow().setTitle(osTitle).catch(() => {}) } catch {}
+  if (_lastRenderedOsTitle !== osTitle) {
+    try { void getCurrentWindow().setTitle(osTitle).catch(() => {}) } catch {}
+    _lastRenderedOsTitle = osTitle
+  }
   // 内容变化时刷新大纲（包括所见模式）
   try { scheduleOutlineUpdate() } catch {}
 }
@@ -9876,8 +9889,12 @@ function bindEvents() {
 
   // 文本变化
   editor.addEventListener('input', () => {
+    const wasDirty = dirty
     dirty = true
-    refreshTitle()
+    if (!wasDirty) refreshTitle()
+    else {
+      try { scheduleOutlineUpdateFromSource() } catch {}
+    }
     // 便签模式：内容一变就自动保存（防抖）
     try { _stickyAutoSaver.schedule() } catch {}
   })
