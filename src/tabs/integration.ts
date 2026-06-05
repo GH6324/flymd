@@ -218,6 +218,46 @@ async function confirmTabClose(tab: TabDocument): Promise<boolean> {
   return true
 }
 
+function hasUnsavedTabsForExit(): boolean {
+  tabManager.syncActiveTabState()
+  return tabManager.hasUnsavedTabs()
+}
+
+async function saveAllDirtyTabsForExit(): Promise<boolean> {
+  const flymd = getFlymd()
+  const saveFile = flymd.flymdSaveFile
+  if (typeof saveFile !== 'function') return false
+
+  tabManager.syncActiveTabState()
+  const dirtyTabs = [...tabManager.getUnsavedTabs()]
+
+  for (const candidate of dirtyTabs) {
+    const tab = tabManager.findTabById(candidate.id)
+    if (!tab || !tab.dirty) continue
+
+    const switched = await tabManager.switchToTab(tab.id)
+    if (!switched) return false
+
+    await saveFile()
+    tabManager.syncActiveTabState()
+
+    const activeTab = tabManager.getActiveTab()
+    const mainDirty = !!flymd.flymdIsDirty?.()
+    if (activeTab?.dirty || mainDirty) {
+      return false
+    }
+  }
+
+  tabManager.syncActiveTabState()
+  return !tabManager.hasUnsavedTabs()
+}
+
+function exposeExitHooks(): void {
+  const flymd = getFlymd()
+  flymd.flymdHasUnsavedTabs = hasUnsavedTabsForExit
+  flymd.flymdSaveAllDirtyTabsForExit = saveAllDirtyTabsForExit
+}
+
 /**
  * 初始化标签系统
  * 在 DOM 就绪后调用
@@ -290,6 +330,7 @@ export async function initTabSystem(): Promise<void> {
   hookSaveFile()
   hookFileSavedEvent()
   hookKeyboardShortcuts()
+  exposeExitHooks()
 
   // 监听编辑器变化，同步 dirty 状态
   setupDirtySync()

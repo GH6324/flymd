@@ -808,6 +808,34 @@ let currentFrontMatter: string | null = null
 let dirty = false // 是否有未保存更改（此处需加分号，避免下一行以括号开头被解析为对 false 的函数调用）
 // 暴露一个轻量只读查询函数，避免直接访问变量引起耦合
 ;(window as any).flymdIsDirty = () => dirty
+
+function hasUnsavedChangesForExit(): boolean {
+  try {
+    const hasUnsavedTabs = (window as any).flymdHasUnsavedTabs
+    if (typeof hasUnsavedTabs === 'function') {
+      return dirty || !!hasUnsavedTabs()
+    }
+  } catch {}
+  return dirty
+}
+
+async function saveUnsavedChangesForExit(): Promise<boolean> {
+  const saveAllDirtyTabs = (window as any).flymdSaveAllDirtyTabsForExit
+  if (typeof saveAllDirtyTabs === 'function') {
+    return !!(await saveAllDirtyTabs())
+  }
+
+  const wasDirty = dirty
+  if (!wasDirty) return true
+
+  if (!currentFilePath) {
+    await saveAs()
+  } else {
+    await saveFile()
+  }
+
+  return wasDirty && !dirty
+}
 // 自动保存句柄（通过模块化实现，避免 main.ts 膨胀）
 let _autoSaveHandles: AutoSaveHandles | null = null
 function getAutoSave(): AutoSaveHandles {
@@ -10560,7 +10588,7 @@ function bindEvents() {
         try { await destroyWin() } catch {}
       }
 
-      if (!dirty) {
+      if (!hasUnsavedChangesForExit()) {
         await exitNow()
         return
       }
@@ -10589,19 +10617,9 @@ function bindEvents() {
 
       if (wantSave) {
         try {
-          const wasDirty = dirty
-          if (!currentFilePath) {
-            await saveAs()
-          } else {
-            await saveFile()
-          }
-          // 仅当 dirty 从 true 变为 false 时视为保存成功；
+          // 仅当所有未保存标签都变为干净时视为保存成功；
           // 如果用户在文件选择器中点击了“取消”或保存失败，保持窗口不退出
-          if (wasDirty && !dirty) {
-            shouldExit = true
-          } else {
-            shouldExit = false
-          }
+          shouldExit = await saveUnsavedChangesForExit()
         } catch (e) {
           showError('保存失败', e)
           shouldExit = false
@@ -10622,7 +10640,7 @@ function bindEvents() {
     if (!isTauriRuntime()) {
       window.addEventListener('beforeunload', (e) => {
         try { void saveCurrentDocPosNow() } catch {}
-        if (dirty) {
+        if (hasUnsavedChangesForExit()) {
           e.preventDefault()
           ;(e as any).returnValue = ''
         }

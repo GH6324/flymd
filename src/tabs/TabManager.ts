@@ -177,6 +177,16 @@ export class TabManager {
   }
 
   /**
+   * 将当前编辑器状态写回活跃标签。
+   *
+   * 关闭窗口、保存会话等全局检查不能只看 main.ts 的 dirty，
+   * 必须先把当前编辑器状态合并回标签模型。
+   */
+  syncActiveTabState(): void {
+    this.saveCurrentTabState()
+  }
+
+  /**
    * 恢复标签状态到编辑器
    */
   private async restoreTabState(tab: TabDocument): Promise<void> {
