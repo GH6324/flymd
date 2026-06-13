@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-latest
+          - platform: windows-2022
             os: Windows
             arch: x64
           - platform: ubuntu-22.04
@@ -40,14 +40,14 @@ jobs:
 
       # Windows 特定依赖
       - name: Install Windows bundlers (NSIS + WiX)
-        if: matrix.platform == 'windows-latest'
+        if: matrix.os == 'Windows'
         shell: pwsh
         run: |
           choco install nsis -y
           choco install wixtoolset -y
 
       - name: Install Windows build prerequisites (CMake + NASM)
-        if: matrix.platform == 'windows-latest'
+        if: matrix.os == 'Windows'
         shell: pwsh
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
@@ -133,14 +133,14 @@ jobs:
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/
 
       - name: Build Tauri app (Windows)
-        if: matrix.platform == 'windows-latest'
+        if: matrix.os == 'Windows'
         run: npm run tauri:build -- --bundles nsis
       - name: Build Tauri app (Linux)
         if: matrix.platform == 'ubuntu-22.04'
         run: npm run tauri:build -- --bundles deb appimage
 
       - name: Create portable zip (Windows)
-        if: matrix.platform == 'windows-latest'
+        if: matrix.os == 'Windows'
         shell: pwsh
         run: |
           $exe = "src-tauri/target/release/flymd.exe"
@@ -152,7 +152,7 @@ jobs:
           Compress-Archive -Path $exe -DestinationPath $zip -Force
 
       - name: Upload artifacts (Windows Portable)
-        if: matrix.platform == 'windows-latest'
+        if: matrix.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: flymd-${{ matrix.os }}-${{ matrix.arch }}-portable
@@ -160,7 +160,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload artifacts (Windows)
-        if: matrix.platform == 'windows-latest'
+        if: matrix.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: flymd-${{ matrix.os }}-${{ matrix.arch }}
