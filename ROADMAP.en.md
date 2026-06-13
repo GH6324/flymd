@@ -2,6 +2,12 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v1.4.0
+- Fixed: App exit now checks unsaved changes across all open tabs instead of only the current document; “Save and exit” saves each dirty tab in turn to reduce the risk of losing edits in multi-tab sessions
+- Fixed: In WYSIWYG mode, paragraphs containing `\$`, Excel formulas, or other `$` content are no longer rewritten incorrectly by automatic Markdown inline sync, preventing lost backslashes and corrupted Markdown markers such as bold delimiters
+- Improved: Source-mode textarea undo/redo is now always handled by the per-tab custom undo stack, with tighter grouping for continuous typing/deletion, avoiding fallback to the browser's native undo history and the stale-history bugs that come with it
+- Changed: The ASR Notes feature is temporarily offline by hiding only its Plugins menu entry; the underlying implementation remains in place for a later restore
+
 ## Update v1.3.9
 - Added: Pasting remote images from web rich text or Markdown can now download them into the current document's `images/` folder and rewrite links to relative paths, reducing broken hotlinks and offline failures
 - Improved: Source mode and WYSIWYG now share the same image-localization path, with a Theme Settings toggle to control remote-image localization
