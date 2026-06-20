@@ -451,7 +451,6 @@ These are stable model providers I personally use.
 ⭐⭐⭐[rightcode: Highly stable and cost-effective Claude and Codex relay service](https://www.right.codes/register?aff=E8E36524)
 
 
-⭐⭐⭐[PackyCode: Cost-effective Claude, Codex, and Gemini relay service](https://www.packyapi.com/register?aff=Rqk1)
 
 
 
