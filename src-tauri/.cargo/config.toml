@@ -3,3 +3,7 @@ registry = "sparse+https://index.crates.io/"
 
 [net]
 git-fetch-with-cli = true
+
+[build]
+# Windows 16GB 内存机器编译 Tauri + AWS SDK 时，默认并发容易把 rustc 内存峰值打爆。
+jobs = 1

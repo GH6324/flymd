@@ -42,3 +42,9 @@ codegen-units = 1
 opt-level = "z"
 lto = true
 strip = true
+
+[profile.dev]
+# 说明：Windows 下 aws-sdk-s3 等大依赖的 debug 符号会显著抬高 rustc 内存峰值。
+# Tauri 日常开发不依赖 Rust 调试符号，关掉它能避免 dev 编译阶段内存分配失败。
+debug = 0
+incremental = true

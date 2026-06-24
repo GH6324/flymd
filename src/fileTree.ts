@@ -618,38 +618,48 @@ function makeFileSvg(): SVGElement {
   return svg
 }
 
-// VS Code 风格 SVG 图标：PDF 文件（右下角突出徽章）
+// Markdown 图标：与标签栏的 M 图标保持同一语义
+function makeMarkdownSvg(): SVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('width', '20')
+  svg.setAttribute('height', '16')
+  svg.setAttribute('preserveAspectRatio', 'none')
+  svg.classList.add('lib-ico', 'lib-ico-svg', 'lib-ico-markdown')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', 'M20.56 18H3.44C2.65 18 2 17.37 2 16.59V7.41C2 6.63 2.65 6 3.44 6h17.12c.79 0 1.44.63 1.44 1.41v9.18c0 .78-.65 1.41-1.44 1.41zM6.81 15.19v-3.66l1.92 2.35 1.92-2.35v3.66h1.93V8.81h-1.93l-1.92 2.35-1.92-2.35H4.89v6.38h1.92zM19.69 12h-1.92V8.81h-1.92V12h-1.93l2.89 3.28L19.69 12z')
+  path.setAttribute('fill', 'currentColor')
+  path.setAttribute('stroke', 'none')
+  svg.appendChild(path)
+  return svg
+}
+
+// PDF 图标：与 Markdown 的 M 图标一样，直接显示文件类型
 function makePdfSvg(): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('viewBox', '0 0 16 16')
-  svg.setAttribute('width', '16')
+  svg.setAttribute('viewBox', '0 0 32 24')
+  svg.setAttribute('width', '20')
   svg.setAttribute('height', '16')
   svg.classList.add('lib-ico', 'lib-ico-svg', 'lib-ico-pdf')
-  // 文档形状（稍微缩短以给徽章留空间）
-  const docPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  docPath.setAttribute('d', 'M3 1.5h6.5l3 3v8h-9.5v-11z M9.5 1.5v3h3')
-  docPath.setAttribute('fill', 'none')
-  docPath.setAttribute('stroke', 'currentColor')
-  docPath.setAttribute('stroke-width', '1')
-  docPath.setAttribute('stroke-linejoin', 'round')
-  svg.appendChild(docPath)
-  // 右下角突出徽章
   const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
-  badge.setAttribute('x', '7')
-  badge.setAttribute('y', '10')
-  badge.setAttribute('width', '8')
-  badge.setAttribute('height', '5')
-  badge.setAttribute('rx', '1')
+  badge.setAttribute('x', '1.5')
+  badge.setAttribute('y', '5')
+  badge.setAttribute('width', '29')
+  badge.setAttribute('height', '14')
+  badge.setAttribute('rx', '1.8')
   badge.setAttribute('fill', 'currentColor')
   badge.classList.add('pdf-badge')
   svg.appendChild(badge)
-  // PDF 文字（反白）
   const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-  text.setAttribute('x', '11')
-  text.setAttribute('y', '13.5')
-  text.setAttribute('font-size', '3.5')
-  text.setAttribute('font-weight', 'bold')
+  text.setAttribute('x', '16')
+  text.setAttribute('y', '12.4')
+  text.setAttribute('font-size', '8.8')
+  text.setAttribute('font-weight', '800')
+  text.setAttribute('font-family', 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif')
   text.setAttribute('text-anchor', 'middle')
+  text.setAttribute('dominant-baseline', 'middle')
+  text.setAttribute('textLength', '22')
+  text.setAttribute('lengthAdjust', 'spacingAndGlyphs')
   text.classList.add('pdf-text')
   text.textContent = 'PDF'
   svg.appendChild(text)
@@ -866,6 +876,7 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
         }
       })()
       if (ext === 'pdf' || aspIcon === 'pdf') iconEl = makePdfSvg() as unknown as HTMLElement
+      else if (ext === 'md' || ext === 'markdown' || ext === 'txt') iconEl = makeMarkdownSvg() as unknown as HTMLElement
       else iconEl = makeFileSvg() as unknown as HTMLElement
       // 让图标与文字都成为可拖拽起点（某些内核仅触发“被按住元素”的拖拽，不会透传到父元素）
       try { iconEl.setAttribute('draggable', 'true') } catch {}

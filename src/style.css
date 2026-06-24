@@ -2261,6 +2261,8 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .lib-ico-svg text { stroke: none; fill: currentColor; }
 .lib-ico-folder { /* 文件夹图标 */ }
 .lib-ico-file { /* 普通文件图标 */ }
+.lib-ico-svg.lib-ico-markdown { width: 20px; height: 16px; }
+.lib-ico-svg.lib-ico-pdf { width: 20px; height: 16px; }
 .lib-ico-pdf .pdf-badge { fill: currentColor; }
 .lib-ico-pdf .pdf-text { fill: var(--bg); stroke: none; }
 .library .lib-ico { color: var(--muted); }
@@ -5680,8 +5682,11 @@ body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy
 .library .lib-ico-app { width: 16px; height: 16px; border-radius: 3px; object-fit: cover; }
 
 
-/* 库侧栏选中态 */
-.library .lib-node.selected { background: rgba(127,127,127,0.08); }
+/* 库侧栏选中态：保持与标签栏激活态一致，避免后置规则把高亮压回灰色 */
+.library .lib-node.selected { background: var(--accent-light); }
+.library .lib-node.selected .lib-ico-markdown { color: var(--accent); }
+.library .lib-file .lib-ico-pdf { color: #f4a261; }
+.library .lib-node.selected .lib-ico-pdf { color: #e53935; }
 
 
 /* FileTree Modals */
