@@ -693,6 +693,7 @@ try {
 let fileTreeReady = false
 let _libraryVaultListUi: { refresh(): Promise<void> } | null = null
 let _ribbonLibsUi: RibbonLibraryListApi | null = null
+let temporaryLibraryRoot: string | null = null
 let mode: Mode = 'edit'
 // 所见即所得开关（Overlay 模式）
 let wysiwyg = false
@@ -1048,6 +1049,10 @@ async function toggleUploaderEnabledFromMenu(): Promise<boolean> {
 
 async function handleManualSyncFromMenu(): Promise<void> {
   try {
+    if (isTemporaryLibraryActive()) {
+      pluginNotice('临时库不参与 WebDAV 同步', 'err', 2200)
+      return
+    }
     const result = await webdavSyncNow('manual')
     if (!result) {
       pluginNotice('同步失败', 'err', 2200)
@@ -1159,11 +1164,13 @@ async function togglePortableModeFromMenu(): Promise<void> {
 
 async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<ContextMenuItemConfig[]> {
   const items: ContextMenuItemConfig[] = []
-  const syncCfg = await (async () => { try { return await getWebdavSyncConfig() } catch { return null as any } })()
-  const syncEnabled = !!syncCfg?.enabled
-  const syncConfigured = await (async () => { try { return await isWebdavConfiguredForActiveLibrary() } catch { return false } })()
+  const tempLibraryActive = isTemporaryLibraryActive()
+  const syncCfg = tempLibraryActive ? null : await (async () => { try { return await getWebdavSyncConfig() } catch { return null as any } })()
+  const syncEnabled = !tempLibraryActive && !!syncCfg?.enabled
+  const syncConfigured = !tempLibraryActive && await (async () => { try { return await isWebdavConfiguredForActiveLibrary() } catch { return false } })()
   let syncTooltip = ''
-  if (!syncConfigured) syncTooltip = t('sync.tooltip.notConfigured') || '当前库未配置 WebDAV，同步已禁用'
+  if (tempLibraryActive) syncTooltip = '临时库不参与 WebDAV 同步'
+  else if (!syncConfigured) syncTooltip = t('sync.tooltip.notConfigured') || '当前库未配置 WebDAV，同步已禁用'
   else if (!syncEnabled) syncTooltip = t('sync.tooltip.disabled') || '已配置 WebDAV，但同步未启用'
   // 编辑器内置：纯文本粘贴（忽略 HTML / 图片 等富文本）
   items.push({
@@ -1233,7 +1240,7 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
     label: t('sync.now') || '立即同步',
     icon: '🔁',
     tooltip: syncTooltip || undefined,
-    disabled: !syncEnabled || !syncConfigured,
+    disabled: tempLibraryActive || !syncEnabled || !syncConfigured,
     onClick: async () => { await handleManualSyncFromMenu() }
   })
   items.push({
@@ -3314,7 +3321,7 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
         _libraryVaultListUi = initLibraryVaultList(elList, {
           getLibraries,
           getActiveLibraryId,
-          setActiveLibraryId: async (id: string) => { await setActiveLibId(id) },
+          setActiveLibraryId: async (id: string) => { await activatePersistedLibrary(id) },
           onAfterSwitch: async () => { await refreshLibraryUiAndTree(true) },
         })
       }
@@ -5112,6 +5119,7 @@ async function openFile2(preset?: unknown) {
       const ext = (selectedPath.split(/\./).pop() || '').toLowerCase()
       if (ext === 'pdf') {
         await showPdfPreview(selectedPath, { updateRecent: true, forceReload: reopeningSameFile })
+        await syncTemporaryLibraryRootForOpenedPath(selectedPath)
         return
       }
       const rule = (() => {
@@ -5175,6 +5183,7 @@ async function openFile2(preset?: unknown) {
     editor.value = content
     currentFilePath = selectedPath
     dirty = false
+    await syncTemporaryLibraryRootForOpenedPath(selectedPath)
     refreshTitle()
     refreshStatus()
 
@@ -5603,14 +5612,105 @@ async function switchToPreviewAfterOpen() {
 
 
 // 显示/隐藏 关于 弹窗
+function normalizePathForCompare(p: string): string {
+  return normalizePath(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+function samePathLoose(a: string, b: string): boolean {
+  return normalizePathForCompare(a) === normalizePathForCompare(b)
+}
+
+function getParentDir(path: string): string {
+  const p = normalizePath(path).trim()
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  if (idx <= 0) return ''
+  const dir = p.slice(0, idx)
+  if (/^[a-zA-Z]:$/.test(dir)) return dir + p[idx]
+  return dir
+}
+
+function getPathName(path: string): string {
+  const p = normalizePath(path).replace(/[\\/]+$/, '')
+  return p.split(/[\\/]+/).filter(Boolean).pop() || p
+}
+
+function isMarkdownLikeDocPath(path: string): boolean {
+  return /\.(md|markdown|txt)$/i.test(String(path || ''))
+}
+
+async function findPersistedLibraryForPath(path: string): Promise<{ id: string; root: string; name?: string } | null> {
+  try {
+    const p = normalizePath(path)
+    const libs = await getLibraries()
+    for (const lib of libs) {
+      const root = normalizePath((lib as any)?.root || '')
+      if (!root) continue
+      if (samePathLoose(root, p) || isInside(root, p)) return lib
+    }
+  } catch {}
+  return null
+}
+
+function setTemporaryLibraryRoot(root: string | null): boolean {
+  const next = root ? normalizePath(root).replace(/[\\/]+$/, '') : null
+  const cur = temporaryLibraryRoot ? normalizePath(temporaryLibraryRoot).replace(/[\\/]+$/, '') : null
+  if ((next || null) === (cur || null)) return false
+  temporaryLibraryRoot = next || null
+  return true
+}
+
+function clearTemporaryLibraryRoot(): boolean {
+  return setTemporaryLibraryRoot(null)
+}
+
+function isTemporaryLibraryActive(): boolean {
+  return !!temporaryLibraryRoot
+}
+
+async function activatePersistedLibrary(id: string): Promise<void> {
+  clearTemporaryLibraryRoot()
+  await setActiveLibId(id)
+}
+
+async function syncTemporaryLibraryRootForOpenedPath(path: string): Promise<void> {
+  const p = normalizePath(path)
+  if (!p) return
+
+  const persisted = await findPersistedLibraryForPath(p)
+  let nextRoot: string | null = null
+
+  if (persisted) {
+    nextRoot = null
+  } else if (temporaryLibraryRoot && isInside(temporaryLibraryRoot, p)) {
+    nextRoot = temporaryLibraryRoot
+  } else if (isMarkdownLikeDocPath(p)) {
+    nextRoot = getParentDir(p)
+  }
+
+  const changed = setTemporaryLibraryRoot(nextRoot)
+  if (changed) {
+    if (nextRoot) {
+      try { showLibrary(true, false) } catch {}
+    }
+    await refreshLibraryUiAndTree(true)
+  }
+  if (nextRoot && fileTreeReady) {
+    try { await fileTree.revealAndSelect(p) } catch {}
+  }
+}
+
 async function getLibraryRoot(): Promise<string | null> {
+  if (temporaryLibraryRoot) return temporaryLibraryRoot
   // 统一通过 utils 获取当前激活库（兼容 legacy）
   try { return await getActiveLibraryRoot() } catch { return null }
 }
 
 async function setLibraryRoot(p: string) {
   // 兼容旧代码：设置库路径即插入/更新库并设为激活
-  try { await upsertLibrary({ root: p }) } catch {}
+  try {
+    clearTemporaryLibraryRoot()
+    await upsertLibrary({ root: p })
+  } catch {}
 }
 
 // —— 大纲滚动同步 ——
@@ -8247,7 +8347,9 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
   try {
     const id = await getActiveLibraryId()
     let libName = ''
-    if (id) {
+    if (temporaryLibraryRoot) {
+      libName = '临时：' + (getPathName(temporaryLibraryRoot) || temporaryLibraryRoot)
+    } else if (id) {
       const libs = await getLibraries()
       const cur = libs.find(x => x.id === id)
       libName = cur?.name || ''
@@ -8264,7 +8366,7 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
         _ribbonLibsUi = initRibbonLibraryList(ribbonLibs, {
           getLibraries,
           getActiveLibraryId,
-          setActiveLibraryId: async (id: string) => { await setActiveLibId(id) },
+          setActiveLibraryId: async (id: string) => { await activatePersistedLibrary(id) },
           onAfterSwitch: async () => { await refreshLibraryUiAndTree(true) },
           dividerEl: ribbonDivider,
         })
@@ -8318,12 +8420,12 @@ async function showLibraryMenu() {
     const activeId = await getActiveLibraryId()
     const items: TopMenuItemSpec[] = []
     for (const lib of libs) {
-      const cur = lib.id === activeId
+      const cur = !temporaryLibraryRoot && lib.id === activeId
       const label = (cur ? "\u2714\uFE0E " : '') + lib.name
       items.push({
         label,
         action: async () => {
-          try { await setActiveLibId(lib.id) } catch {}
+          try { await activatePersistedLibrary(lib.id) } catch {}
           await refreshLibraryUiAndTree(true)
         }
       })
@@ -8332,7 +8434,10 @@ async function showLibraryMenu() {
     items.push({ label: (t('lib.settings.title') || '库设置') + '…', action: async () => {
       try {
         await openLibrarySettingsDialog({
-          onRefreshUi: async (opt) => { await refreshLibraryUiAndTree(!!opt?.rebuildTree) },
+          onRefreshUi: async (opt) => {
+            if (opt?.rebuildTree) clearTemporaryLibraryRoot()
+            await refreshLibraryUiAndTree(!!opt?.rebuildTree)
+          },
         })
       } catch {}
     } })
@@ -9913,7 +10018,7 @@ function bindEvents() {
           _ribbonLibsUi = initRibbonLibraryList(ribbonLibs, {
             getLibraries,
             getActiveLibraryId,
-            setActiveLibraryId: async (id: string) => { await setActiveLibId(id) },
+            setActiveLibraryId: async (id: string) => { await activatePersistedLibrary(id) },
             onAfterSwitch: async () => { await refreshLibraryUiAndTree(true) },
             dividerEl: ribbonDivider,
           })
@@ -10544,6 +10649,7 @@ function bindEvents() {
 
       const runShutdownSyncIfEnabled = async (): Promise<boolean> => {
         try {
+          if (isTemporaryLibraryActive()) return false
           const cfg = await getWebdavSyncConfig()
           if (!(cfg.enabled && cfg.onShutdown)) return false
 
