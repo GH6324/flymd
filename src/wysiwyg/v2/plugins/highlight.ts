@@ -56,7 +56,9 @@ export class HighlightCodeBlockNodeView implements NodeView {
   private node: Node
   private view: EditorView
   private getPos: () => number | undefined
-  private lastCode: string = ''
+  private lastCode: string | null = null
+  private lastLang: string | null = null
+  private highlightSeq = 0
   private highlightTimer: number | null = null
   // 监听 selectionchange，用于控制语言选择器显隐
   private selectionListener: ((event: Event) => void) | null = null
@@ -115,6 +117,7 @@ export class HighlightCodeBlockNodeView implements NodeView {
     this.highlightLayer.style.whiteSpace = 'pre'
     this.highlightLayer.style.pointerEvents = 'none'
     this.codeWrapper.appendChild(this.highlightLayer)
+    this.renderRawCode(this.getNodeCode())
 
     // 创建 <code> 作为 contentDOM（ProseMirror 可编辑区域）
     // 绝对定位覆盖在 highlightLayer 上方
@@ -389,27 +392,43 @@ export class HighlightCodeBlockNodeView implements NodeView {
     }, 100)
   }
 
+  private getNodeCode(): string {
+    // 节点内容是唯一可信数据源，DOM 填充存在时序差。
+    return this.node.textContent || ''
+  }
+
+  private renderRawCode(code: string) {
+    // 高亮是增强能力；原始代码必须先可见，避免粘贴后出现空白。
+    if (this.highlightLayer.textContent !== code) {
+      this.highlightLayer.textContent = code
+    }
+  }
+
   private async doHighlight() {
+    const code = this.getNodeCode()
+    const lang = this.node.attrs.language || ''
+
+    if (code === this.lastCode && lang === this.lastLang) {
+      return
+    }
+
+    const seq = ++this.highlightSeq
+    this.lastCode = code
+    this.lastLang = lang
+
     try {
-      const code = this.contentDOM.textContent || ''
       console.log('[Highlight Plugin] doHighlight 被调用, code length:', code.length)
 
-      // 如果代码没变化，跳过高亮
-      if (code === this.lastCode) {
-        console.log('[Highlight Plugin] 代码未变化，跳过')
-        return
-      }
-      this.lastCode = code
-
-      if (!code.trim()) {
+      if (!code.length) {
         this.highlightLayer.innerHTML = ''
         return
       }
 
-      const lang = this.node.attrs.language || ''
+      this.renderRawCode(code)
       console.log('[Highlight Plugin] 语言:', lang)
 
       const hljs = await import('highlight.js')
+      if (seq !== this.highlightSeq) return
       console.log('[Highlight Plugin] highlight.js 已加载')
 
       let result: { value: string }
@@ -422,12 +441,13 @@ export class HighlightCodeBlockNodeView implements NodeView {
       }
 
       // 将高亮结果应用到显示层（不影响 contentDOM）
+      if (seq !== this.highlightSeq) return
       this.highlightLayer.innerHTML = result.value
       console.log('[Highlight Plugin] 高亮完成, HTML length:', result.value.length)
     } catch (e) {
       // 高亮失败时显示原始代码
       console.error('[Highlight Plugin] 高亮失败:', e)
-      this.highlightLayer.textContent = this.contentDOM.textContent || ''
+      if (seq === this.highlightSeq) this.renderRawCode(this.getNodeCode())
     }
   }
 
@@ -437,6 +457,8 @@ export class HighlightCodeBlockNodeView implements NodeView {
     // 更新语言属性
     const oldLang = this.node.attrs.language || ''
     const newLang = node.attrs.language || ''
+    const oldCode = this.getNodeCode()
+    const newCode = node.textContent || ''
     if (oldLang !== newLang) {
       if (newLang) {
         this.dom.setAttribute('data-language', newLang)
@@ -453,9 +475,14 @@ export class HighlightCodeBlockNodeView implements NodeView {
 
     this.node = node
 
-    // 检查代码是否变化，触发重新高亮
-    const newCode = this.contentDOM.textContent || ''
-    if (newCode !== this.lastCode) {
+    if (newCode !== oldCode) {
+      this.renderRawCode(newCode)
+      // raw 文本覆盖了高亮 DOM，必须让下一轮重新生成 token。
+      this.lastCode = null
+    }
+
+    // 检查代码或语言是否变化，触发重新高亮
+    if (newCode !== this.lastCode || newLang !== this.lastLang) {
       this.scheduleHighlight()
     }
 
