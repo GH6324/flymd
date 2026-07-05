@@ -17,6 +17,7 @@ import { getPasteUrlTitleFetchEnabled, setPasteUrlTitleFetchEnabled } from './co
 import { getPasteRemoteImagesEnabled, setPasteRemoteImagesEnabled } from './core/pasteRemoteImages'
 import { getSymbolAutoCompletionEnabled, setSymbolAutoCompletionEnabled } from './core/symbolAutoCompletion'
 import { getContentFontSize, setContentFontSize } from './core/uiZoom'
+import { NETWORK_PROXY_DEFAULT_NO_PROXY, normalizeNetworkNoProxy } from './core/networkProxy'
 export type MdStyleId = 'standard' | 'github' | 'notion' | 'journal' | 'card' | 'docs' | 'typora' | 'obsidian' | 'bear' | 'minimalist'
 
 export interface ThemePrefs {
@@ -159,7 +160,7 @@ function loadThemeNetProxyPrefs(): { enabled: boolean; proxyUrl: string; noProxy
     return {
       enabled: !!v.enabled,
       proxyUrl: typeof v.proxyUrl === 'string' ? v.proxyUrl : '',
-      noProxy: typeof v.noProxy === 'string' ? v.noProxy : '',
+      noProxy: normalizeNetworkNoProxy(typeof v.noProxy === 'string' ? v.noProxy : ''),
     }
   } catch {
     return null
@@ -1763,28 +1764,28 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     const loadNetProxy = (): { prefs: NetworkProxyPrefs; hasSaved: boolean } => {
       try {
         const raw = localStorage.getItem(THEME_NET_PROXY_KEY)
-        if (!raw) return { prefs: { enabled: false, proxyUrl: '', noProxy: '' }, hasSaved: false }
+        if (!raw) return { prefs: { enabled: false, proxyUrl: '', noProxy: NETWORK_PROXY_DEFAULT_NO_PROXY }, hasSaved: false }
         const v = JSON.parse(raw || '{}') as any
         return {
           prefs: {
             enabled: !!v.enabled,
             proxyUrl: typeof v.proxyUrl === 'string' ? v.proxyUrl : '',
-            noProxy: typeof v.noProxy === 'string' ? v.noProxy : '',
+            noProxy: normalizeNetworkNoProxy(typeof v.noProxy === 'string' ? v.noProxy : ''),
           },
           hasSaved: true,
         }
       } catch {
-        return { prefs: { enabled: false, proxyUrl: '', noProxy: '' }, hasSaved: false }
+        return { prefs: { enabled: false, proxyUrl: '', noProxy: NETWORK_PROXY_DEFAULT_NO_PROXY }, hasSaved: false }
       }
     }
     const saveNetProxy = (prefs: NetworkProxyPrefs) => {
-      try { localStorage.setItem(THEME_NET_PROXY_KEY, JSON.stringify(prefs)) } catch {}
+      try { localStorage.setItem(THEME_NET_PROXY_KEY, JSON.stringify({ ...prefs, noProxy: normalizeNetworkNoProxy(prefs.noProxy) })) } catch {}
     }
     const applyNetProxy = async (prefs: NetworkProxyPrefs) => {
       try {
         const enabled = !!prefs.enabled
         const proxyUrl = String(prefs.proxyUrl || '').trim()
-        const noProxy = String(prefs.noProxy || '').trim()
+        const noProxy = normalizeNetworkNoProxy(String(prefs.noProxy || ''))
         await invoke('set_network_proxy', { enabled, proxyUrl, noProxy })
       } catch (e) {
         try { console.warn('[Theme][Proxy] apply failed', e) } catch {}
@@ -1823,7 +1824,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       const prefs: NetworkProxyPrefs = {
         enabled: !!(proxyEnabled && proxyEnabled.checked),
         proxyUrl: String(proxyUrlInput?.value || ''),
-        noProxy: String(noProxyInput?.value || ''),
+        noProxy: normalizeNetworkNoProxy(String(noProxyInput?.value || '')),
       }
       const err = validateNetProxy(prefs)
       if (err) { alert(err); return }

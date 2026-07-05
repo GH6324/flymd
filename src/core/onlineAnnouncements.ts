@@ -29,6 +29,7 @@ type OnlineAnnouncementPayload =
 const DEFAULT_URL = 'https://flymd.llingfei.com/announcements.json'
 const LS_SEEN_KEY = 'flymd:onlineAnnouncements:seen:v1'
 const MAX_SEEN_RECORDS = 500
+const FETCH_TIMEOUT_MS = 4500
 
 let _started = false
 
@@ -228,13 +229,13 @@ async function fetchTextSmart(url: string): Promise<string> {
   try {
     const mod: any = await import('@tauri-apps/plugin-http')
     if (typeof mod?.fetch === 'function') {
-      const resp = await mod.fetch(url, {
+      const resp = await pluginHttpFetchWithTimeout(mod.fetch, url, {
         method: 'GET',
         responseType: mod.ResponseType?.Text,
         headers: {
           'cache-control': 'no-cache',
         },
-      })
+      }, FETCH_TIMEOUT_MS)
       const ok =
         resp &&
         (resp.ok === true ||
@@ -249,12 +250,26 @@ async function fetchTextSmart(url: string): Promise<string> {
   } catch {}
 
   const ctl = new AbortController()
-  const timer = window.setTimeout(() => ctl.abort(), 4500)
+  const timer = window.setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS)
   try {
     const r = await fetch(url, { signal: ctl.signal, cache: 'no-store' })
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     return await r.text()
   } finally {
     window.clearTimeout(timer)
+  }
+}
+
+async function pluginHttpFetchWithTimeout(fetcher: any, url: string, init: any, timeoutMs: number): Promise<any> {
+  let timer: number | undefined
+  const timeout = new Promise((_resolve, reject) => {
+    timer = window.setTimeout(() => {
+      reject(new Error('announcement fetch timeout'))
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([fetcher(url, init), timeout])
+  } finally {
+    if (timer != null) window.clearTimeout(timer)
   }
 }

@@ -89,6 +89,29 @@ fn default_network_proxy_prefs() -> NetworkProxyPrefs {
   }
 }
 
+fn normalize_network_no_proxy(raw: &str) -> String {
+  fn add(out: &mut Vec<String>, value: &str) {
+    let v = value.trim();
+    if v.is_empty() {
+      return;
+    }
+    if out.iter().any(|x| x.eq_ignore_ascii_case(v)) {
+      return;
+    }
+    out.push(v.to_string());
+  }
+
+  let mut out: Vec<String> = Vec::new();
+  for part in raw.split(|c| c == ',' || c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+    add(&mut out, part);
+  }
+  // 本机地址必须默认绕过代理，否则 dev 服务、本地接口和 WebView 内部请求都会被拖进慢路径。
+  for part in ["localhost", "127.0.0.1", "::1"] {
+    add(&mut out, part);
+  }
+  out.join(",")
+}
+
 fn apply_network_proxy_env(p: &NetworkProxyPrefs) -> Result<(), String> {
   use std::env;
   if !p.enabled {
@@ -111,7 +134,7 @@ fn apply_network_proxy_env(p: &NetworkProxyPrefs) -> Result<(), String> {
 
   env::set_var("HTTP_PROXY", u);
   env::set_var("HTTPS_PROXY", u);
-  let np = p.no_proxy.trim();
+  let np = normalize_network_no_proxy(p.no_proxy.trim());
   if np.is_empty() {
     env::remove_var("NO_PROXY");
   } else {
@@ -122,11 +145,14 @@ fn apply_network_proxy_env(p: &NetworkProxyPrefs) -> Result<(), String> {
 
 #[tauri::command]
 fn set_network_proxy(enabled: bool, proxy_url: Option<String>, no_proxy: Option<String>) -> Result<NetworkProxyPrefs, String> {
-  let prefs = NetworkProxyPrefs {
+  let mut prefs = NetworkProxyPrefs {
     enabled,
     proxy_url: proxy_url.unwrap_or_default(),
     no_proxy: no_proxy.unwrap_or_default(),
   };
+  if prefs.enabled {
+    prefs.no_proxy = normalize_network_no_proxy(&prefs.no_proxy);
+  }
   apply_network_proxy_env(&prefs)?;
   let lock = NETWORK_PROXY_PREFS.get_or_init(|| std::sync::Mutex::new(default_network_proxy_prefs()));
   {
@@ -2060,6 +2086,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) ->
   let url = "https://api.github.com/repos/flyhunterl/flymd/releases";
   let client = reqwest::Client::builder()
     .user_agent("flymd-updater")
+    .timeout(Duration::from_secs(10))
     .build()
     .map_err(|e| format!("build client error: {e}"))?;
   let resp = client
@@ -2154,6 +2181,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) ->
 async fn download_file(url: String, use_proxy: Option<bool>) -> Result<String, String> {
   let client = reqwest::Client::builder()
     .user_agent("flymd-updater")
+    .timeout(Duration::from_secs(120))
     .build()
     .map_err(|e| format!("build client error: {e}"))?;
 

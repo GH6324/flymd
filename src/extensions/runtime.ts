@@ -178,15 +178,32 @@ export async function getHttpClient(): Promise<{
   }
 }
 
+const HTTP_TEXT_TIMEOUT_MS = 8000
+const HTTP_BINARY_TIMEOUT_MS = 30000
+
+async function httpFetchWithTimeout(fetcher: any, url: string, init: any, timeoutMs: number): Promise<any> {
+  let timer: number | undefined
+  const timeout = new Promise((_resolve, reject) => {
+    timer = window.setTimeout(() => {
+      reject(new Error('http timeout'))
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([fetcher(url, init), timeout])
+  } finally {
+    if (timer != null) window.clearTimeout(timer)
+  }
+}
+
 // 文本抓取：优先 tauri http，失败回退到浏览器 fetch
 export async function fetchTextSmart(url: string): Promise<string> {
   try {
     const http = await getHttpClient()
     if (http && http.fetch) {
-      const resp = await http.fetch(url, {
+      const resp = await httpFetchWithTimeout(http.fetch, url, {
         method: 'GET',
         responseType: http.ResponseType?.Text,
-      })
+      }, HTTP_TEXT_TIMEOUT_MS)
       if (
         resp &&
         (resp.ok === true ||
@@ -204,9 +221,15 @@ export async function fetchTextSmart(url: string): Promise<string> {
   } catch {
     // 回退到原始 fetch
   }
-  const r2 = await fetch(url)
-  if (!r2.ok) throw new Error(`HTTP ${r2.status}`)
-  return await r2.text()
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
+  const timer = ctl ? window.setTimeout(() => ctl.abort(), HTTP_TEXT_TIMEOUT_MS) : undefined
+  try {
+    const r2 = await fetch(url, { signal: ctl?.signal } as any)
+    if (!r2.ok) throw new Error(`HTTP ${r2.status}`)
+    return await r2.text()
+  } finally {
+    if (timer != null) window.clearTimeout(timer)
+  }
 }
 
 // 二进制抓取：同样优先 tauri http，再回退到 fetch
@@ -214,10 +237,10 @@ export async function fetchBinarySmart(url: string): Promise<Uint8Array> {
   try {
     const http = await getHttpClient()
     if (http && http.fetch) {
-      const resp = await http.fetch(url, {
+      const resp = await httpFetchWithTimeout(http.fetch, url, {
         method: 'GET',
         responseType: http.ResponseType?.Binary,
-      })
+      }, HTTP_BINARY_TIMEOUT_MS)
       if (
         resp &&
         (resp.ok === true ||
@@ -244,10 +267,16 @@ export async function fetchBinarySmart(url: string): Promise<Uint8Array> {
   } catch {
     // 回退到原始 fetch
   }
-  const r2 = await fetch(url)
-  if (!r2.ok) throw new Error(`HTTP ${r2.status}`)
-  const buf = await r2.arrayBuffer()
-  return new Uint8Array(buf)
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
+  const timer = ctl ? window.setTimeout(() => ctl.abort(), HTTP_BINARY_TIMEOUT_MS) : undefined
+  try {
+    const r2 = await fetch(url, { signal: ctl?.signal } as any)
+    if (!r2.ok) throw new Error(`HTTP ${r2.status}`)
+    const buf = await r2.arrayBuffer()
+    return new Uint8Array(buf)
+  } finally {
+    if (timer != null) window.clearTimeout(timer)
+  }
 }
 
 // 解析已安装扩展对应的 manifest URL：
