@@ -1,7 +1,8 @@
 // 源码 + 阅读模式分屏布局（左侧源码，右侧阅读预览）
 // 设计原则：
 // - 仅在源码模式（mode === 'edit'）且非所见/非便签模式下启用
-// - 不改动 main.ts 现有逻辑，只通过 window.flymd* 包装器交互
+// - 从阅读模式开启时，自动切回源码再进入分屏
+// - 通过 main.ts 暴露的 window.flymd* 包装器交互，不直接写主入口内部状态
 // - 默认关闭，支持记忆上次开关状态（localStorage）
 // - 支持拖拽调整左右比例，比例持久化到 localStorage
 
@@ -122,8 +123,7 @@ function isStickyNoteMode(): boolean {
   }
 }
 
-// 当前是否处于“允许分屏”的环境：源码模式 + 非所见 + 非便签
-function isSupportedContext(): boolean {
+function getModeState(): { mode: EditorMode; wysiwyg: boolean } {
   const flymd = getFlymd()
   let mode: EditorMode = 'edit'
   let wysiwyg = false
@@ -133,6 +133,31 @@ function isSupportedContext(): boolean {
   try {
     wysiwyg = !!flymd.flymdGetWysiwygEnabled?.()
   } catch {}
+  return { mode, wysiwyg }
+}
+
+function getScrollRatio(el: HTMLElement): number {
+  const range = Math.max(0, el.scrollHeight - el.clientHeight)
+  if (range <= 0) return 0
+  return Math.max(0, Math.min(1, el.scrollTop / range))
+}
+
+function restoreScrollRatio(el: HTMLElement, ratio: number): void {
+  const r = Math.max(0, Math.min(1, ratio))
+  const apply = () => {
+    try {
+      const range = Math.max(0, el.scrollHeight - el.clientHeight)
+      el.scrollTop = range * r
+    } catch {}
+  }
+  apply()
+  window.setTimeout(apply, 50)
+  window.setTimeout(apply, 180)
+}
+
+// 当前是否处于“允许分屏”的环境：源码模式 + 非所见 + 非便签
+function isSupportedContext(): boolean {
+  const { mode, wysiwyg } = getModeState()
   if (isStickyNoteMode()) return false
   return mode === 'edit' && !wysiwyg
 }
@@ -141,29 +166,38 @@ function setSplitEnabled(enabled: boolean, deps: SplitDeps): void {
   const { container, editor, preview } = deps
   if (enabled === splitPreviewEnabled) return
 
+  let restorePreviewRatio: number | null = null
+
   if (enabled) {
-    // 只允许在源码模式下开启
-    if (!isSupportedContext()) {
-      const flymd = getFlymd()
-      let mode: EditorMode = 'edit'
-      let wysiwyg = false
-      try { mode = (flymd.flymdGetMode?.() ?? 'edit') as EditorMode } catch {}
-      try { wysiwyg = !!flymd.flymdGetWysiwygEnabled?.() } catch {}
-      if (mode !== 'edit') {
-        alert('仅在源码模式下支持分屏，请先切换到源码模式')
-      } else if (wysiwyg) {
-        alert('所见模式下暂不支持源码+阅读分屏')
-      } else if (isStickyNoteMode()) {
-        alert('便签模式下暂不支持源码+阅读分屏')
-      } else {
-        alert('当前模式不支持分屏')
-      }
-      return
-    }
-    // 窗口太窄时禁止开启，避免界面严重拥挤
+    // 窗口太窄时禁止开启，避免界面严重拥挤；先判断，避免把阅读模式切到源码后才失败。
     if (window.innerWidth < 1100) {
       alert('窗口太窄，无法开启左右分屏，请放大窗口后再试')
       return
+    }
+
+    // 阅读模式可以自动切回源码再开启；所见/便签仍然拒绝。
+    if (!isSupportedContext()) {
+      const flymd = getFlymd()
+      const { mode, wysiwyg } = getModeState()
+      if (isStickyNoteMode()) {
+        alert('便签模式下暂不支持源码+阅读分屏')
+      } else if (wysiwyg) {
+        alert('所见模式下暂不支持源码+阅读分屏')
+      } else if (mode === 'preview') {
+        restorePreviewRatio = getScrollRatio(preview)
+        const ok = typeof flymd.flymdEnterEditModeForSplit === 'function'
+          ? flymd.flymdEnterEditModeForSplit()
+          : false
+        if (!ok || !isSupportedContext()) {
+          alert('无法自动切换到源码模式，请先切换到源码模式后再开启分屏')
+          return
+        }
+      } else if (mode !== 'edit') {
+        alert('仅在源码模式下支持分屏，请先切换到源码模式')
+      } else {
+        alert('当前模式不支持分屏')
+      }
+      if (!isSupportedContext()) return
     }
   }
 
@@ -188,6 +222,9 @@ function setSplitEnabled(enabled: boolean, deps: SplitDeps): void {
     // 强制显示预览并渲染一次
     try { preview.classList.remove('hidden') } catch {}
     try { flymd.flymdRefreshPreview?.() } catch {}
+    if (restorePreviewRatio != null) {
+      restoreScrollRatio(preview, restorePreviewRatio)
+    }
   } else {
     // 关闭分屏时：移除拖拽手柄，重置CSS变量
     removeResizeHandle()
@@ -200,7 +237,7 @@ function setSplitEnabled(enabled: boolean, deps: SplitDeps): void {
 
   // 分屏开关切换后，同步一次滚动位置，尽量保持阅读/编辑位置接近
   try {
-    if (enabled) {
+    if (enabled && restorePreviewRatio == null) {
       syncPreviewScrollFromEditor(editor, preview)
     }
   } catch {}

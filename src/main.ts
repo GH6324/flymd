@@ -6313,6 +6313,19 @@ try {
     }
     ;(window as any).flymdGetWysiwygEnabled = () => wysiwyg
     ;(window as any).flymdGetEditorContent = () => editor?.value ?? ''
+    ;(window as any).flymdEnterEditModeForSplit = () => {
+      try {
+        if (wysiwyg || mode !== 'preview') return false
+        mode = 'edit'
+        try { preview.classList.add('hidden') } catch {}
+        try { editor.focus({ preventScroll: true } as any) } catch { try { editor.focus() } catch {} }
+        try { syncToggleButton() } catch {}
+        try { window.dispatchEvent(new CustomEvent('flymd:mode:changed', { detail: { mode } })) } catch {}
+        return true
+      } catch {
+        return false
+      }
+    }
     // UI 刷新
     ;(window as any).flymdRefreshTitle = () => refreshTitle()
     ;(window as any).flymdRefreshPreview = () => { try { renderPreview() } catch {} }
