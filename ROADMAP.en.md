@@ -2,6 +2,12 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v1.4.3
+- Fixed: When a temporary library is active, every WebDAV sync entry now skips at the sync-core layer, including startup sync, F5, the settings test button, and menu sync, preventing sync from still targeting the previous saved library
+- Fixed: When the WebDAV provider is under maintenance, the network is unavailable, or remote directory scanning fails, the sync run now skips immediately instead of treating the failure as an empty remote directory, avoiding accidental local deletion or remote-delete prompts
+- Fixed: When launching FlyMD by double-clicking or using “Open with” on a document outside saved libraries, the temporary-library session is established before startup sync is initialized, removing a startup race that could trigger sync against the wrong library
+- Improved: WebDAV sync now has a session-level blocking hook so special library states can be rejected at the single sync entry point instead of relying on UI-only disabled buttons
+
 ## Update v1.4.2
 - Added: “Source + Reading split view” can now be enabled directly from Reading mode; FlyMD automatically switches back to Source mode and opens the split view, reducing friction when editing while reading
 - Fixed: Network proxy settings no longer globally rewrite `window.fetch`; plugin HTTP requests and update checks now have timeouts plus localhost bypasses, preventing severe slowdown after enabling a proxy

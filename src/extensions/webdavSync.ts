@@ -1631,8 +1631,9 @@ async function listRemoteRecursively(
     try {
       __filesRes = await listRemoteDir(baseUrl, auth, full)
     } catch (e) {
-      await syncLog('[remote-scan-error] 列出目录失败: ' + full + ' - ' + ((e as any)?.message || e))
-      __filesRes = { files: [] }
+      const msg = '列出远端目录失败，已中止本轮同步，避免把连接失败误判为空目录: ' + full + ' - ' + ((e as any)?.message || e)
+      await syncLog('[remote-scan-error] ' + msg)
+      throw new Error(msg)
     }
     const files = __filesRes.files || []
 
@@ -2103,8 +2104,37 @@ export function setOnSyncComplete(callback: (() => void | Promise<void>) | null)
   _onSyncComplete = callback
 }
 
+type SyncBlockReasonProvider = () => string | null | undefined | Promise<string | null | undefined>
+let _syncBlockReasonProvider: SyncBlockReasonProvider | null = null
+
+export function setSyncBlockReasonProvider(provider: SyncBlockReasonProvider | null) {
+  _syncBlockReasonProvider = provider
+}
+
+async function getSyncBlockReason(): Promise<string | null> {
+  try {
+    if (!_syncBlockReasonProvider) return null
+    const reason = await _syncBlockReasonProvider()
+    const msg = String(reason || '').trim()
+    return msg || null
+  } catch (e) {
+    console.warn('[WebDAV Sync] 同步门禁检查失败', e)
+    return null
+  }
+}
+
 export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; downloaded: number; skipped?: boolean } | null> {
   try {
+    const blockedReason = await getSyncBlockReason()
+    if (blockedReason) {
+      const msg = blockedReason + '，已跳过同步'
+      await syncLog('[skip] ' + blockedReason + ' (reason=' + reason + ')')
+      console.log('[WebDAV Sync]', msg)
+      updateStatus(msg)
+      clearStatus(2500)
+      return { uploaded: 0, downloaded: 0, skipped: true }
+    }
+
     // 检查是否已有同步在进行
     if (_syncInProgress) {
       const msg = '同步已在进行中，跳过本次请求 (reason=' + reason + ')'
@@ -2165,7 +2195,15 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
       }
     }
     const auth = { username: cfg.username, password: cfg.password }; await syncLog('[prep] root=' + (await getActiveLibraryRoot()) + ' remoteRoot=' + cfg.rootPath)
-    try { await ensureRemoteDir(baseUrl, auth, (cfg.rootPath || '').replace(/\/+$/, '')) } catch {}
+    try {
+      await ensureRemoteDir(baseUrl, auth, (cfg.rootPath || '').replace(/\/+$/, ''))
+    } catch (e) {
+      const msg = '远端目录不可用，已跳过同步：' + String((e as any)?.message || e || '')
+      await syncLog('[remote-unavailable] ' + msg)
+      updateStatus(msg)
+      clearStatus(5000)
+      return { uploaded: 0, downloaded: 0, skipped: true }
+    }
     // 加密必须先对齐盐值，否则“新设备”只会得到 OperationError。
     try {
       cfg = await ensureEncryptionSaltReady(cfg, baseUrl, auth, syncLog)
@@ -3410,29 +3448,26 @@ export async function openWebdavSyncDialog(): Promise<void> {
 }
 // 远端目录保障：逐级 MKCOL 创建目录（已存在则忽略）
 async function mkcol(baseUrl: string, auth: { username: string; password: string }, remotePath: string): Promise<number> {
-  const http = await getHttpClient(); if (!http) return 0
+  const http = await getHttpClient(); if (!http) throw new Error('no http client')
   const url = joinUrl(baseUrl, remotePath)
   const authStr = btoa(`${auth.username}:${auth.password}`)
   const headers: Record<string,string> = { Authorization: `Basic ${authStr}`}
-  try {
-    let status = 0
-    await withHttpRetry('[mkcol] ' + remotePath, async () => {
-      const resp = await (http as any).fetch(url, { method: 'MKCOL', headers })
-      status = Number((resp as any)?.status || 0)
-      // MKCOL 多次调用是幂等的，这里只要能拿到状态码就认为成功一次尝试
-      return true as any
-    })
-    return status
-  } catch {
-    return 0
-  }
+  let status = 0
+  await withHttpRetry('[mkcol] ' + remotePath, async () => {
+    const resp = await (http as any).fetch(url, { method: 'MKCOL', headers })
+    status = Number((resp as any)?.status || 0)
+    // MKCOL 多次调用是幂等的。能拿到 HTTP 响应说明远端可达，目录已存在等状态由后续 PROPFIND 校验。
+    return true as any
+  })
+  return status
 }
 
 async function ensureRemoteDir(baseUrl: string, auth: { username: string; password: string }, remoteDir: string): Promise<void> {
-  try {
-    if (!remoteDir) return
-    const parts = remoteDir.replace(/\\/g,'/').replace(/\/+$/,'').split('/').filter(Boolean)
-    let cur = ''
-    for (const p of parts) { cur += '/' + p; try { await mkcol(baseUrl, auth, cur) } catch {} }
-  } catch {}
+  if (!remoteDir) return
+  const parts = remoteDir.replace(/\\/g,'/').replace(/\/+$/,'').split('/').filter(Boolean)
+  let cur = ''
+  for (const p of parts) {
+    cur += '/' + p
+    await mkcol(baseUrl, auth, cur)
+  }
 }

@@ -62,7 +62,7 @@ import { ribbonIcons } from './icons'
 import { APP_VERSION } from './core/appInfo'
 import type { UpdateAssetInfo, CheckUpdateResp, UpdateExtra } from './core/updateTypes'
 // htmlToMarkdown 改为按需动态导入（仅在粘贴 HTML 时使用）
-import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConfiguredForActiveLibrary, syncNow as webdavSyncNow, setOnSyncComplete, openSyncLog as webdavOpenSyncLog, appendSyncLog as webdavAppendSyncLog } from './extensions/webdavSync'
+import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConfiguredForActiveLibrary, syncNow as webdavSyncNow, setOnSyncComplete, setSyncBlockReasonProvider, openSyncLog as webdavOpenSyncLog, appendSyncLog as webdavAppendSyncLog } from './extensions/webdavSync'
 import { initSpeechTranscribeFeature } from './extensions/speechTranscribe'
 import { initAsrNoteFeature } from './extensions/asrNote'
 // 平台适配层（Android 支持）
@@ -10843,6 +10843,15 @@ function bindEvents() {
     try { logInfo('打点:事件绑定完成') } catch {}
     await revealMainWindowOnce()
 
+    let handledStartupOpenPath = false
+    try {
+      const path = await invoke<string | null>('get_pending_open_path')
+      if (path && typeof path === 'string') {
+        handledStartupOpenPath = true
+        await openFile2(path)
+      }
+    } catch {}
+
     // 性能标记：首次渲染完成
     performance.mark('flymd-first-render')
     scheduleDeferredStartupWork()
@@ -10962,6 +10971,7 @@ function bindEvents() {
             } catch {}
           })
         } catch {}
+        setSyncBlockReasonProvider(() => isTemporaryLibraryActive() ? '临时库不参与 WebDAV 同步' : null)
         await initWebdavSync()
       } catch (e) {
         console.warn('[WebDAV] 延迟初始化失败:', e)
@@ -11037,28 +11047,31 @@ function bindEvents() {
     }
 
     // 兜底：主动询问后端是否有"默认程序/打开方式"传入的待打开路径
-    try {
-      const path = await invoke<string | null>('get_pending_open_path')
-      if (path && typeof path === 'string') {
-        void openFile2(path)
-      } else {
-        // macOS 兜底：通过后端命令读取启动参数，获取 Finder "打开方式"传入的文件
-        try {
-          const ua = navigator.userAgent || ''
-          const isMac = /Macintosh|Mac OS X/i.test(ua)
-          if (isMac) {
-            const args = await invoke<string[]>('get_cli_args')
-            const pick = (args || []).find((a) => {
-              if (!a || typeof a !== 'string') return false
-              const low = a.toLowerCase()
-              if (low.startsWith('-psn_')) return false
-              return /\.(md|markdown|txt|pdf)$/.test(low)
-            })
-            if (pick) { void openFile2(pick) }
-          }
-        } catch {}
-      }
-    } catch {}
+    if (!handledStartupOpenPath) {
+      try {
+        const path = await invoke<string | null>('get_pending_open_path')
+        if (path && typeof path === 'string') {
+          handledStartupOpenPath = true
+          void openFile2(path)
+        } else {
+          // macOS 兜底：通过后端命令读取启动参数，获取 Finder "打开方式"传入的文件
+          try {
+            const ua = navigator.userAgent || ''
+            const isMac = /Macintosh|Mac OS X/i.test(ua)
+            if (isMac) {
+              const args = await invoke<string[]>('get_cli_args')
+              const pick = (args || []).find((a) => {
+                if (!a || typeof a !== 'string') return false
+                const low = a.toLowerCase()
+                if (low.startsWith('-psn_')) return false
+                return /\.(md|markdown|txt|pdf)$/.test(low)
+              })
+              if (pick) { void openFile2(pick) }
+            }
+          } catch {}
+        }
+      } catch {}
+    }
 
     // 尝试加载最近文件（可能失败）
     try {
