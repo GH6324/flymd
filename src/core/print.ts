@@ -129,6 +129,26 @@ function appendPrintCss(doc: Document, extraCss?: string): void {
       padding: 10mm 10mm 12mm 10mm;
     }
 
+    /* 打印/PDF 打印：给列表 marker 留稳定槽位，避免符号压到正文上 */
+    .flymd-print-preview ul,
+    .flymd-print-preview ol {
+      list-style-position: outside !important;
+      margin-left: 0 !important;
+      padding-left: 2.2em !important;
+    }
+    .flymd-print-preview li {
+      padding-left: 0.35em !important;
+    }
+    .flymd-print-preview ul.task-list,
+    .flymd-print-preview ol.task-list {
+      list-style: none !important;
+      padding-left: 1.2em !important;
+    }
+    .flymd-print-preview li.task-list-item {
+      list-style: none !important;
+      padding-left: 0 !important;
+    }
+
     /* 不打印复制按钮/语言标签/模拟光标 */
     .flymd-print-preview .code-copy,
     .flymd-print-preview .code-lang,

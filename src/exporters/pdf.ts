@@ -485,6 +485,26 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
     .flymd-export-preview .preview-body { width: 100% !important; max-width: 100% !important; }
     .flymd-export-preview .preview-body { margin: 0 !important; padding: 10mm 10mm 12mm 10mm; }
 
+    /* 导出 PDF：给列表 marker 留稳定槽位，避免 html2canvas 把符号压到正文上 */
+    .flymd-export-preview ul,
+    .flymd-export-preview ol {
+      list-style-position: outside !important;
+      margin-left: 0 !important;
+      padding-left: 2.2em !important;
+    }
+    .flymd-export-preview li {
+      padding-left: 0.35em !important;
+    }
+    .flymd-export-preview ul.task-list,
+    .flymd-export-preview ol.task-list {
+      list-style: none !important;
+      padding-left: 1.2em !important;
+    }
+    .flymd-export-preview li.task-list-item {
+      list-style: none !important;
+      padding-left: 0 !important;
+    }
+
     /* 不导出交互标记（这些东西会影响布局与分页） */
     .flymd-export-preview .code-copy,
     .flymd-export-preview .code-lang,
