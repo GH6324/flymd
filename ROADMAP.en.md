@@ -2,6 +2,12 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v1.4.4
+- Added: Theme Settings now includes a “Default outline tab” toggle; when enabled, the left library panel opens the Outline tab by default instead of the Files tab
+- Added: Theme Settings now includes a “Disable update checks” toggle; when enabled, both startup background checks and the manual update button stop checking for new versions
+- Fixed: PDF export and printing now use consistent list indentation and marker spacing, preventing unordered-list bullets from taking over the following content area
+- Fixed: Bold boundary compatibility in WYSIWYG and Reading modes, making bold text wrapped by Chinese punctuation, quotes, and brackets render more reliably
+
 ## Update v1.4.3
 - Fixed: When a temporary library is active, every WebDAV sync entry now skips at the sync-core layer, including startup sync, F5, the settings test button, and menu sync, preventing sync from still targeting the previous saved library
 - Fixed: When the WebDAV provider is under maintenance, the network is unavailable, or remote directory scanning fails, the sync run now skips immediately instead of treating the failure as an empty remote directory, avoiding accidental local deletion or remote-delete prompts
