@@ -167,6 +167,7 @@ import { initExtensionsPanel, refreshExtensionsUI as panelRefreshExtensionsUI, s
 import { ensureUpdateOverlay, showUpdateOverlayLinux, showUpdateDownloadedOverlay, showInstallFailedOverlay, loadUpdateExtra, renderUpdateDetailsHTML } from './ui/updateOverlay'
 import { openInBrowser, upMsg } from './core/updateUtils'
 import { getUpdateCheckDisabled } from './core/updateCheckPrefs'
+import { getDefaultOutlineTabEnabled } from './core/defaultOutlineTab'
 import { initLibraryContextMenu } from './ui/libraryContextMenu'
 import { initLibraryVaultList } from './ui/libraryVaultList'
 import { openLibrarySettingsDialog } from './ui/librarySettingsDialog'
@@ -3097,6 +3098,7 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
   panel.id = 'recent-panel'
   panel.className = 'recent-panel hidden'
   containerEl.appendChild(panel)
+  const defaultOutlineTabEnabled = getDefaultOutlineTabEnabled()
 
   // �ĵ��ⲿ(�ⲿ)
     const library = document.createElement('div')
@@ -3113,8 +3115,8 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
       </div>
       <div class="lib-vault-list hidden" id="lib-vault-list"></div>
       <div class="lib-actions">
-        <button class="lib-action-btn lib-icon-btn active" id="lib-tab-files" title="${t('tab.files')}">${ribbonIcons.layers}</button>
-        <button class="lib-action-btn lib-icon-btn" id="lib-tab-outline" title="${t('tab.outline')}">${ribbonIcons.list}</button>
+        <button class="lib-action-btn lib-icon-btn ${defaultOutlineTabEnabled ? '' : 'active'}" id="lib-tab-files" title="${t('tab.files')}">${ribbonIcons.layers}</button>
+        <button class="lib-action-btn lib-icon-btn ${defaultOutlineTabEnabled ? 'active' : ''}" id="lib-tab-outline" title="${t('tab.outline')}">${ribbonIcons.list}</button>
         <button class="lib-action-btn lib-icon-btn" id="lib-layout" title="${t('outline.layout')}">${ribbonIcons.columnsThree}</button>
         <button class="lib-action-btn lib-icon-btn" id="btn-search" title="${t('search.title')}">${ribbonIcons.search}</button>
         <button class="lib-action-btn lib-icon-btn hidden" id="lib-refresh" title="${t('lib.refresh')}">${ribbonIcons.refreshCw}</button>
@@ -3122,8 +3124,8 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
         <button class="lib-action-btn lib-icon-btn" id="lib-pin" title="${t('lib.pin.auto')}">${ribbonIcons.pin}</button>
       </div>
     </div>
-    <div class="lib-tree" id="lib-tree"></div>
-    <div class="lib-outline hidden" id="lib-outline"></div>
+    <div class="lib-tree ${defaultOutlineTabEnabled ? 'hidden' : ''}" id="lib-tree"></div>
+    <div class="lib-outline ${defaultOutlineTabEnabled ? '' : 'hidden'}" id="lib-outline"></div>
   `
   containerEl.appendChild(library)
   // 创建边缘唤醒热区（默认隐藏）
@@ -3182,6 +3184,13 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
       }
       tabFiles?.addEventListener('click', () => activateLibTab('files'))
       tabOutline?.addEventListener('click', () => activateLibTab('outline'))
+      try {
+        window.addEventListener('flymd:library:defaultOutlineTab:changed', (ev) => {
+          const enabled = !!((ev as CustomEvent).detail?.enabled)
+          activateLibTab(enabled ? 'outline' : 'files')
+        })
+      } catch {}
+      activateLibTab(defaultOutlineTabEnabled ? 'outline' : 'files')
       // 大纲标签右键菜单：选择"嵌入 / 剥离 / 右侧"三种布局
       tabOutline?.addEventListener('contextmenu', (ev) => {
         try { ev.preventDefault() } catch {}
